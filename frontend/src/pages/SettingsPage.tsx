@@ -6,6 +6,8 @@ export function SettingsPage() {
   const [form, setForm] = useState({
     allocationMethod: "FIFO",
     nearExpiryDays: 90,
+    auditTrashEnabled: true,
+    auditTrashRetentionDays: 30,
   });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -134,6 +136,58 @@ export function SettingsPage() {
               Batches expiring within this number of days are highlighted on
               the inventory page and operational dashboard. Allowed range:
               7–365 days.
+            </p>
+          </div>
+        </div>
+
+        <div className="form-section">
+          <div className="form-section-title">Audit trash policy</div>
+          <div className="setting-inline">
+            <div>
+              <div className="form-check form-switch mb-3">
+                <input
+                  className="form-check-input"
+                  type="checkbox"
+                  role="switch"
+                  id="auditTrashEnabled"
+                  checked={form.auditTrashEnabled}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      auditTrashEnabled: event.target.checked,
+                    })
+                  }
+                />
+                <label className="form-check-label" htmlFor="auditTrashEnabled">
+                  Enable recoverable audit trash
+                </label>
+              </div>
+              <label className="form-label">Keep trash records for</label>
+              <div className="input-group">
+                <input
+                  className="form-control"
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={form.auditTrashRetentionDays}
+                  disabled={!form.auditTrashEnabled}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      auditTrashRetentionDays: Number(event.target.value),
+                    })
+                  }
+                  required
+                />
+                <span className="input-group-text">days</span>
+              </div>
+            </div>
+            <p>
+              When enabled, administrators can move audit records to a
+              recoverable trash area. Records are permanently removed after
+              1–365 days. Turning trash off prevents new records from being
+              moved there; existing trash remains recoverable until its
+              retention deadline.
             </p>
           </div>
         </div>

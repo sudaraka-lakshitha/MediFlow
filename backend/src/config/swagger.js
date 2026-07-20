@@ -75,7 +75,7 @@ const paths = {
   '/audit-logs/staff-summary': { get: operation('Summarize activity, failures, and security status for each staff member', 'Audit') },
   '/audit-logs/export.csv': { get: operation('Export the filtered staff audit trail as CSV', 'Audit') },
   '/audit-logs/mark-warnings-read': { patch: operation('Mark active failed audit warnings as read', 'Audit') },
-  '/audit-logs/trash': { patch: operation('Move the filtered audit report to the 30-day trash', 'Audit') },
+  '/audit-logs/trash': { patch: operation('Move the filtered audit report to configurable recoverable trash', 'Audit') },
   '/audit-logs/trash/restore-all': { patch: operation('Restore all recoverable audit records from trash', 'Audit') },
   '/audit-logs/{id}/restore': { patch: operation('Restore one recoverable audit record from trash', 'Audit') },
   '/settings/operations': {

@@ -1,9 +1,10 @@
 import { prisma } from '../config/prisma.js';
 import { logger } from '../config/logger.js';
 import { env } from '../config/env.js';
+import { AppError } from '../utils/AppError.js';
+import { operationSettingsService } from './operationSettings.service.js';
 
 const offsetMs = env.REPORT_TIMEZONE_OFFSET_MINUTES * 60_000;
-const trashRetentionMs = 30 * 24 * 60 * 60 * 1000;
 const roleCache = new Map();
 const localBoundary = (dateText, extraDays = 0) => {
   const [year, month, day] = dateText.split('-').map(Number);
@@ -140,6 +141,7 @@ export const auditService = {
 
   async list(query) {
     await this.purgeExpiredTrash();
+    const operationSettings = await operationSettingsService.get();
     const where = buildAuditWhere(query);
     const skip = (query.page - 1) * query.pageSize;
     const activeScope = buildAuditWhere({ view: 'active' });
@@ -178,7 +180,8 @@ export const auditService = {
         patientFailures,
         unreadFailures,
         trashCount,
-        trashRetentionDays: 30,
+        trashEnabled: operationSettings.auditTrashEnabled,
+        trashRetentionDays: operationSettings.auditTrashRetentionDays,
         actions: actions.map((entry) => entry.action),
         entityTypes: entityTypes.map((entry) => entry.entityType).filter(Boolean),
       },
@@ -263,11 +266,15 @@ export const auditService = {
   },
 
   async moveToTrash(query) {
+    const operationSettings = await operationSettingsService.get();
+    if (!operationSettings.auditTrashEnabled) {
+      throw new AppError(409, 'Audit trash is disabled in operation settings.');
+    }
     const result = await prisma.auditLog.updateMany({
       where: buildAuditWhere({ ...query, view: 'active' }),
       data: { deletedAt: new Date(), readAt: new Date() },
     });
-    return { moved: result.count, retentionDays: 30 };
+    return { moved: result.count, retentionDays: operationSettings.auditTrashRetentionDays };
   },
 
   async restore(id) {
@@ -288,7 +295,10 @@ export const auditService = {
   },
 
   async purgeExpiredTrash() {
-    const cutoff = new Date(Date.now() - trashRetentionMs);
+    const operationSettings = await operationSettingsService.get();
+    const cutoff = new Date(
+      Date.now() - operationSettings.auditTrashRetentionDays * 24 * 60 * 60 * 1000,
+    );
     const result = await prisma.auditLog.deleteMany({
       where: { deletedAt: { lt: cutoff } },
     });

@@ -9,7 +9,7 @@ const server = app.listen(env.PORT, () => logger.info(`MediFlow API listening on
 const cleanupUploads = () => prescriptionUploadService.cleanupExpired().then((count) => count && logger.info(`Deleted ${count} expired prescription upload(s).`)).catch((error) => logger.error('Prescription upload cleanup failed.', { error }));
 cleanupUploads();
 const uploadCleanupTimer = setInterval(cleanupUploads, 60 * 60 * 1000); uploadCleanupTimer.unref();
-const cleanupAuditTrash = () => auditService.purgeExpiredTrash().then((count) => count && logger.info(`Deleted ${count} audit record(s) after the 30-day trash retention period.`)).catch((error) => logger.error('Audit trash cleanup failed.', { error }));
+const cleanupAuditTrash = () => auditService.purgeExpiredTrash().then((count) => count && logger.info(`Deleted ${count} expired audit trash record(s).`)).catch((error) => logger.error('Audit trash cleanup failed.', { error }));
 cleanupAuditTrash();
 const auditCleanupTimer = setInterval(cleanupAuditTrash, 60 * 60 * 1000); auditCleanupTimer.unref();
 

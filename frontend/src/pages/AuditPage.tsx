@@ -36,6 +36,7 @@ export function AuditPage() {
     patientFailures: 0,
     unreadFailures: 0,
     trashCount: 0,
+    trashEnabled: true,
     trashRetentionDays: 30,
     actions: [],
     entityTypes: [],
@@ -325,7 +326,7 @@ export function AuditPage() {
           <h2>Administration and audit control</h2>
           <p>
             Review staff activity, investigate staff or patient-side errors,
-            and manage the recoverable 30-day audit archive.
+            and manage the configurable recoverable audit archive.
           </p>
         </div>
         <div className="d-flex gap-2">
@@ -400,6 +401,12 @@ export function AuditPage() {
           <button
             className={`btn ${tab === "trash" ? "btn-primary" : "btn-outline-secondary"}`}
             onClick={() => setTab("trash")}
+            disabled={!meta.trashEnabled && !meta.trashCount}
+            title={
+              meta.trashEnabled
+                ? "Open recoverable audit trash"
+                : "Audit trash is disabled in operation settings"
+            }
           >
             <i className="bi bi-trash3 me-1" />
             Trash
@@ -588,7 +595,7 @@ export function AuditPage() {
               </h3>
               <small className="text-secondary">
                 {tab === "trash"
-                  ? `${number(meta.total)} recoverable record(s) · deleted permanently after 30 days`
+                  ? `${number(meta.total)} recoverable record(s) · deleted permanently after ${meta.trashRetentionDays || 30} days`
                   : `${number(meta.total)} matching audit records · ${meta.failures} failed · ${meta.patientFailures || 0} patient error(s)`}
               </small>
             </div>
@@ -655,7 +662,7 @@ export function AuditPage() {
               </strong>
               <small>
                 {tab === "trash"
-                  ? "Restore records before their individual 30-day retention deadline."
+                  ? `Restore records before their individual ${meta.trashRetentionDays || 30}-day retention deadline.`
                   : `${meta.unreadFailures || 0} unread warning(s). Successful patient activity is excluded; patient errors remain visible.`}
               </small>
             </div>
@@ -675,7 +682,12 @@ export function AuditPage() {
                     type="button"
                     className="btn btn-outline-danger"
                     onClick={() => setConfirmation("trash")}
-                    disabled={busy || !meta.total}
+                    disabled={busy || !meta.total || !meta.trashEnabled}
+                    title={
+                      meta.trashEnabled
+                        ? "Move the current report to recoverable trash"
+                        : "Audit trash is disabled in operation settings"
+                    }
                   >
                     <i className="bi bi-trash3 me-1" />
                     Clear report to trash
@@ -944,14 +956,14 @@ export function AuditPage() {
           ) : (
             <p className="text-secondary">
               {confirmation === "trash"
-                ? `All ${number(meta.total)} records matching the current report filters will leave the active audit view. They remain recoverable in Trash for 30 days.`
+                ? `All ${number(meta.total)} records matching the current report filters will leave the active audit view. They remain recoverable in Trash for ${meta.trashRetentionDays || 30} days.`
                 : `All ${number(meta.trashCount)} currently recoverable audit records will return to the active audit view.`}
             </p>
           )}
           {confirmation === "trash" && (
             <div className="alert alert-warning small">
               This does not delete the records immediately. Permanent deletion
-              happens only after each record has remained in Trash for 30 days.
+              happens only after each record has remained in Trash for {meta.trashRetentionDays || 30} days.
             </div>
           )}
           <div className="d-flex justify-content-end gap-2">
