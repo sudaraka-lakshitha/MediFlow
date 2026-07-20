@@ -1,0 +1,20 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { authenticate } from '../middleware/authenticate.js';
+import { authorize } from '../middleware/authorize.js';
+import { validate } from '../middleware/validate.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
+import { idParams } from '../validators/common.validator.js';
+import { reviewUploadSchema, uploadEstimateQuoteSchema, uploadPrescriptionSchema } from '../validators/prescriptionUpload.validator.js';
+import { prescriptionUploadController } from '../controllers/prescriptionUpload.controller.js';
+
+export const prescriptionUploadRoutes = Router();
+prescriptionUploadRoutes.use(authenticate);
+prescriptionUploadRoutes.get('/', authorize('ADMIN', 'PHARMACIST', 'PATIENT'), asyncHandler(prescriptionUploadController.list));
+prescriptionUploadRoutes.get('/retention', authorize('ADMIN'), asyncHandler(prescriptionUploadController.retention));
+prescriptionUploadRoutes.put('/retention', authorize('ADMIN'), validate({ body: z.object({ days: z.coerce.number().int().min(1).max(365) }) }), asyncHandler(prescriptionUploadController.setRetention));
+prescriptionUploadRoutes.post('/', authorize('PATIENT'), validate({ body: uploadPrescriptionSchema }), asyncHandler(prescriptionUploadController.create));
+prescriptionUploadRoutes.get('/:id/file', authorize('ADMIN', 'PHARMACIST', 'PATIENT'), validate({ params: idParams }), asyncHandler(prescriptionUploadController.file));
+prescriptionUploadRoutes.post('/:id/estimate-quote', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: uploadEstimateQuoteSchema }), asyncHandler(prescriptionUploadController.estimateQuote));
+prescriptionUploadRoutes.put('/:id/review', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: reviewUploadSchema }), asyncHandler(prescriptionUploadController.review));
+prescriptionUploadRoutes.put('/:id/deletion-deadline', authorize('ADMIN'), validate({ params: idParams, body: z.object({ deleteAt: z.coerce.date().refine((date) => date > new Date(), 'Deletion deadline must be in the future.') }) }), asyncHandler(prescriptionUploadController.setDeadline));

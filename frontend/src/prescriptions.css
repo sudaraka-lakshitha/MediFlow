@@ -1,0 +1,446 @@
+.prescription-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(250px, 2fr) minmax(220px, 1.4fr) minmax(
+      180px,
+      1fr
+    ) 110px;
+  gap: 12px;
+  align-items: end;
+}
+
+.liquid-dose-card {
+  background: #f2f8f7;
+  border: 1px solid #cfe5e1;
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.liquid-dose-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 12px;
+}
+
+.liquid-dose-header > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.liquid-dose-header small {
+  color: #66807b;
+}
+.liquid-dose-header .form-select {
+  width: min(270px, 100%);
+}
+
+.liquid-dose-grid {
+  display: grid;
+  grid-template-columns: 1.25fr 0.8fr 1.25fr 0.8fr 1.25fr 1.5fr;
+  gap: 10px;
+  align-items: end;
+}
+
+.liquid-dose-result {
+  min-height: 68px;
+  border-radius: 10px;
+  background: #176b63;
+  color: white;
+  padding: 10px 13px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.liquid-dose-result small,
+.liquid-dose-result span {
+  font-size: 0.7rem;
+  color: #cde9e5;
+}
+.liquid-dose-result strong {
+  font-size: 1.1rem;
+}
+.liquid-volume-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #4c6c67;
+  font-size: 0.85rem;
+}
+.liquid-volume-note i {
+  font-size: 1.3rem;
+  color: #176b63;
+}
+.prescription-editor-split {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.85fr) minmax(600px, 1.5fr);
+  gap: 20px;
+  align-items: start;
+}
+.prescription-source-pane {
+  position: sticky;
+  top: 0;
+  min-width: 0;
+}
+.document-viewer-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.patient-clinical-warning {
+  display: block !important;
+}
+.patient-clinical-warning .alert-heading {
+  display: block;
+  margin-bottom: 8px !important;
+}
+.patient-clinical-details {
+  display: grid;
+  gap: 4px;
+}
+.pickup-date-time-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(140px, .65fr);
+  gap: 10px;
+}
+.friendly-datetime-picker {
+  position: relative;
+  border: 1px solid #d7e2df;
+  border-radius: 12px;
+  padding: 10px;
+  background: #fff;
+}
+.friendly-date-trigger {
+  width: 100%;
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  padding: 0 4px;
+  color: #243f3b;
+  background: transparent;
+  text-align: left;
+}
+.friendly-date-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friendly-date-trigger strong { color: #176b63; white-space: nowrap; }
+.friendly-calendar-popover {
+  margin-top: 10px;
+  border-top: 1px solid #e0e9e7;
+  padding-top: 10px;
+}
+.friendly-calendar-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.friendly-calendar-header > div { display: flex; gap: 5px; }
+.friendly-calendar-header button { width: 32px; height: 32px; border: 0; border-radius: 50%; color: #176b63; background: #eef8f5; }
+.friendly-calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.friendly-calendar-weekdays span { padding: 5px 0; text-align: center; color: #718581; font-size: .66rem; font-weight: 700; text-transform: uppercase; }
+.friendly-calendar-grid button { aspect-ratio: 1; min-width: 0; border: 0; border-radius: 9px; color: #243f3b; background: transparent; font-size: .8rem; }
+.friendly-calendar-grid button:hover:not(:disabled) { color: #176b63; background: #e7f5f1; }
+.friendly-calendar-grid button.outside { color: #a8b5b2; }
+.friendly-calendar-grid button.selected { color: #fff; background: #176b63; box-shadow: 0 4px 10px rgba(23,107,99,.22); font-weight: 800; }
+.friendly-calendar-grid button:disabled { opacity: .25; }
+.friendly-calendar-time { display: grid; grid-template-columns: auto auto minmax(130px,1fr); align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #e0e9e7; }
+.friendly-calendar-time label { font-size: .78rem; font-weight: 700; }
+.friendly-date-selects {
+  display: grid;
+  grid-template-columns: .65fr 1fr .9fr 1.25fr;
+  gap: 7px;
+}
+.friendly-date-selects .form-select {
+  min-width: 0;
+  padding: 9px 30px 9px 10px;
+  font-weight: 600;
+  background-color: #f7faf9;
+}
+.friendly-time-select {
+  color: #176b63;
+}
+.friendly-date-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.friendly-date-shortcuts button,
+.friendly-date-add {
+  border: 1px solid #c7ddd8;
+  border-radius: 999px;
+  padding: 5px 11px;
+  color: #176b63;
+  background: #eef8f5;
+  font-size: .76rem;
+  font-weight: 700;
+}
+.friendly-date-shortcuts button:hover,
+.friendly-date-add:hover { background: #dff2ed; }
+.friendly-date-shortcuts .clear { color: #9b2c38; background: #fff; border-color: #edc8cd; margin-left: auto; }
+.patient-picker-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.patient-picker-row .min-width-0 { min-width: 0; }
+.patient-picker-add {
+  flex: 0 0 46px;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+}
+.patient-source-summary {
+  display: grid;
+  gap: 2px;
+}
+.patient-source-summary span {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 520px) {
+  .pickup-date-time-grid { grid-template-columns: 1fr; }
+  .friendly-date-selects { grid-template-columns: repeat(3, 1fr); }
+  .friendly-time-select { grid-column: 1 / -1; }
+}
+.prescription-source-pane iframe {
+  width: 100%;
+  height: 720px;
+  border: 1px solid #dce6e3;
+  border-radius: 12px;
+  background: #f7f9f8;
+}
+.prescription-editor-form {
+  min-width: 0;
+}
+.bottle-fee-panel {
+  margin: 14px 0;
+  border: 1px solid #bcded8;
+  border-radius: 12px;
+  background: #f2faf8;
+  padding: 13px;
+}
+.bottle-fee-prompt {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+}
+.bottle-fee-prompt > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.bottle-fee-prompt i {
+  color: #176b63;
+  font-size: 1.25rem;
+}
+.bottle-fee-prompt span {
+  display: flex;
+  flex-direction: column;
+}
+.bottle-fee-prompt small {
+  color: #66807b;
+}
+.bottle-fee-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr minmax(130px, auto);
+  align-items: end;
+  gap: 10px;
+  border-top: 1px solid #d3e8e4;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+.bottle-fee-summary {
+  min-height: 43px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border-radius: 9px;
+  background: #dff2ed;
+  color: #176b63;
+  padding: 6px 11px;
+}
+.bottle-fee-summary small {
+  font-size: 0.65rem;
+}
+.bottle-fee-disabled {
+  opacity: 0.78;
+  background: #f5f7f7;
+  border-style: dashed;
+}
+.bottle-fee-help {
+  display: block;
+  margin-top: 7px;
+  color: #6f817e;
+  font-size: 0.72rem;
+}
+.prescription-retail-request {
+  padding: 14px;
+  margin-top: 16px;
+  border: 1px solid #cfe3de;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #f1faf7, #f8fbfa);
+}
+.prescription-retail-heading,
+.prescription-retail-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.prescription-retail-heading {
+  justify-content: space-between;
+}
+.prescription-retail-heading > div > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.prescription-retail-heading strong {
+  color: #20443f;
+  font-size: 0.88rem;
+}
+.prescription-retail-heading small {
+  color: #6e817d;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+.prescription-retail-icon {
+  display: grid;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  color: #176b63;
+  background: #dcefeb;
+  border-radius: 10px;
+}
+.prescription-retail-empty {
+  padding: 12px;
+  margin-top: 12px;
+  color: #6f817e;
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px dashed #bfd6d0;
+  border-radius: 10px;
+  font-size: 0.74rem;
+}
+.prescription-retail-lines {
+  display: grid;
+  gap: 10px;
+  margin-top: 13px;
+}
+.prescription-retail-line {
+  display: grid;
+  grid-template-columns: minmax(250px, 1fr) 140px 150px 42px;
+  align-items: end;
+  gap: 9px;
+  padding: 11px;
+  background: #fff;
+  border: 1px solid #d8e7e3;
+  border-radius: 11px;
+}
+.prescription-retail-price {
+  display: flex;
+  min-height: 43px;
+  flex-direction: column;
+  justify-content: center;
+  padding: 5px 8px;
+}
+.prescription-retail-price small {
+  color: #748783;
+  font-size: 0.65rem;
+}
+.prescription-retail-price strong {
+  color: #176b63;
+  font-size: 0.82rem;
+}
+.interaction-review-card {
+  padding: 18px;
+  margin-bottom: 14px;
+  border: 1px solid #dbe5e3;
+  border-radius: 14px;
+  background: #fff;
+}
+.interaction-review-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.interaction-review-title {
+  min-width: 0;
+}
+.interaction-review-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-self: flex-start;
+  line-height: 1;
+}
+.interaction-review-status .status {
+  display: inline-flex;
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .prescription-filter-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .liquid-dose-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .prescription-editor-split {
+    grid-template-columns: 1fr;
+  }
+  .prescription-source-pane {
+    position: static;
+  }
+  .prescription-source-pane iframe {
+    height: 430px;
+  }
+}
+
+@media (max-width: 700px) {
+  .prescription-filter-grid,
+  .liquid-dose-grid {
+    grid-template-columns: 1fr;
+  }
+  .liquid-dose-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .liquid-dose-header .form-select {
+    width: 100%;
+  }
+  .bottle-fee-prompt {
+    align-items: flex-start;
+  }
+  .bottle-fee-fields {
+    grid-template-columns: 1fr;
+  }
+  .prescription-retail-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .prescription-retail-heading .btn {
+    width: 100%;
+  }
+  .prescription-retail-line {
+    grid-template-columns: minmax(0, 1fr) 42px;
+  }
+  .prescription-retail-line > div:first-child {
+    grid-column: 1 / -1;
+  }
+  .prescription-retail-price {
+    padding-inline: 2px;
+  }
+  .interaction-review-head {
+    flex-direction: column;
+  }
+  .prescription-editor-form > .table-responsive .table {
+    min-width: 680px;
+  }
+}

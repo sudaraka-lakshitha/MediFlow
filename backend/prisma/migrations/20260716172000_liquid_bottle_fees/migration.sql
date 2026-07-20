@@ -1,0 +1,5 @@
+ALTER TABLE "sales"
+ADD COLUMN "container_fee" DECIMAL(12,2) NOT NULL DEFAULT 0;
+
+ALTER TABLE "payment_requests"
+ADD COLUMN "container_fee" DECIMAL(12,2) NOT NULL DEFAULT 0;

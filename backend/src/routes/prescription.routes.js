@@ -1,0 +1,23 @@
+import { Router } from 'express';
+import { prescriptionController } from '../controllers/prescription.controller.js';
+import { authenticate } from '../middleware/authenticate.js';
+import { authorize } from '../middleware/authorize.js';
+import { validate } from '../middleware/validate.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
+import { idParams } from '../validators/common.validator.js';
+import { dispenseQuoteSchema, dispenseSchema, paymentRequestSchema, prescriptionSchema, rejectSchema } from '../validators/prescription.validator.js';
+import { paymentRequestController } from '../controllers/paymentRequest.controller.js';
+
+export const prescriptionRoutes = Router();
+prescriptionRoutes.use(authenticate);
+prescriptionRoutes.get('/', authorize('ADMIN', 'PHARMACIST', 'PATIENT'), asyncHandler(prescriptionController.list));
+prescriptionRoutes.get('/:id', authorize('ADMIN', 'PHARMACIST', 'PATIENT'), validate({ params: idParams }), asyncHandler(prescriptionController.get));
+prescriptionRoutes.post('/', authorize('ADMIN', 'PHARMACIST'), validate({ body: prescriptionSchema }), asyncHandler(prescriptionController.create));
+prescriptionRoutes.put('/:id', authorize('ADMIN', 'PHARMACIST'), validate({ params:idParams, body:prescriptionSchema }), asyncHandler(prescriptionController.update));
+prescriptionRoutes.patch('/:id/pickup-details', authorize('ADMIN', 'PHARMACIST', 'PATIENT'), validate({ params: idParams }), asyncHandler(prescriptionController.updatePickupDetails));
+prescriptionRoutes.delete('/:id', authorize('ADMIN', 'PHARMACIST'), validate({ params:idParams }), asyncHandler(prescriptionController.remove));
+prescriptionRoutes.post('/:id/verify', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams }), asyncHandler(prescriptionController.verify));
+prescriptionRoutes.post('/:id/reject', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: rejectSchema }), asyncHandler(prescriptionController.reject));
+prescriptionRoutes.post('/:id/dispense-quote', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: dispenseQuoteSchema }), asyncHandler(prescriptionController.dispenseQuote));
+prescriptionRoutes.post('/:id/payment-request', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: paymentRequestSchema }), asyncHandler(paymentRequestController.create));
+prescriptionRoutes.post('/:id/dispense', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: dispenseSchema }), asyncHandler(prescriptionController.dispense));

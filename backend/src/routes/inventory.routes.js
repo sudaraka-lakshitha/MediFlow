@@ -1,0 +1,22 @@
+import { Router } from 'express';
+import { inventoryController } from '../controllers/inventory.controller.js';
+import { authenticate } from '../middleware/authenticate.js';
+import { authorize } from '../middleware/authorize.js';
+import { validate } from '../middleware/validate.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
+import { idParams } from '../validators/common.validator.js';
+import { adjustmentSchema, batchRestrictionSchema, expiredStockDispositionSchema, receiveStockSchema, updateBatchSchema } from '../validators/inventory.validator.js';
+
+export const inventoryRoutes = Router();
+inventoryRoutes.use(authenticate, authorize('ADMIN', 'PHARMACIST'));
+inventoryRoutes.get('/batches', asyncHandler(inventoryController.batches));
+inventoryRoutes.get('/movements', asyncHandler(inventoryController.movements));
+inventoryRoutes.get('/alerts', asyncHandler(inventoryController.alerts));
+inventoryRoutes.put('/products/:id/low-stock-note', validate({ params: idParams }), asyncHandler(inventoryController.acknowledgeLowStock));
+inventoryRoutes.delete('/products/:id/low-stock-note', validate({ params: idParams }), asyncHandler(inventoryController.clearLowStockAcknowledgement));
+inventoryRoutes.post('/batches', validate({ body: receiveStockSchema }), asyncHandler(inventoryController.receive));
+inventoryRoutes.put('/batches/:id', validate({params:idParams,body:updateBatchSchema}), asyncHandler(inventoryController.updateBatch));
+inventoryRoutes.patch('/batches/:id/restriction', validate({ params: idParams, body: batchRestrictionSchema }), asyncHandler(inventoryController.setRestriction));
+inventoryRoutes.post('/batches/:id/adjust', validate({ params: idParams, body: adjustmentSchema }), asyncHandler(inventoryController.adjust));
+inventoryRoutes.post('/batches/:id/dispose-expired', validate({ params: idParams, body: expiredStockDispositionSchema }), asyncHandler(inventoryController.disposeExpired));
+inventoryRoutes.delete('/batches/:id', authorize('ADMIN'), validate({ params: idParams }), asyncHandler(inventoryController.deleteBatch));

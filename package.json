@@ -1,0 +1,12 @@
+{
+  "name": "mediflow",
+  "private": true,
+  "scripts": {
+    "dev:api": "npm --prefix backend run dev",
+    "dev:web": "npm --prefix frontend run dev",
+    "test": "npm --prefix backend test",
+    "build": "npm --prefix frontend run build",
+    "lint": "npm --prefix frontend run lint",
+    "verify": "npm test && npm run lint && npm run build"
+  }
+}
