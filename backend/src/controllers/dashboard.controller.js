@@ -47,7 +47,7 @@ export const dashboardController = {
       prisma.sale.findMany({ where: { createdAt: { gte: sevenDays }, status: { not: 'VOIDED' } }, select: { total: true, createdAt: true } }),
       prisma.dispensing.findMany({ where: { dispensedAt: { gte: sevenDays } }, select: { dispensedAt: true } }),
       prisma.prescription.groupBy({ by: ['status'], _count: { _all: true } }),
-      prisma.auditLog.findMany({ where: buildAuditWhere(), include: { user: { select: { fullName: true } } }, orderBy: { createdAt: 'desc' }, take: 8 }),
+      prisma.auditLog.findMany({ where: { ...buildAuditWhere(), success: true }, include: { user: { select: { fullName: true } } }, orderBy: { createdAt: 'desc' }, take: 8 }),
       prisma.prescription.findMany({ include: { patient: { include: { user: { select: { fullName: true } } } } }, orderBy: { createdAt: 'desc' }, take: 6 }),
       prisma.sale.findMany({ include: { patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } }, discountApplications: true }, orderBy: { createdAt: 'desc' }, take: 6 }),
       prisma.product.findMany({ where: { active: true }, include: { batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: new Date() }, restricted: false }, select: { quantityAvailable: true } } } }),

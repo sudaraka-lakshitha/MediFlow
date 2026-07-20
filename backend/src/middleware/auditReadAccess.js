@@ -1,19 +1,15 @@
 import { recordAudit } from '../services/audit.service.js';
 
 const rules = [
+  // Successful reads are audited only when they expose an individual clinical,
+  // financial, or staff-security record. Routine list/dashboard reads are not
+  // stored; failed requests continue to be captured by the error handler.
   { pattern: /^\/api\/prescription-uploads\/(\d+)\/file$/, action: 'PRESCRIPTION_FILE_VIEWED', entityType: 'PRESCRIPTION_UPLOAD' },
   { pattern: /^\/api\/prescriptions\/(\d+)$/, action: 'PRESCRIPTION_VIEWED', entityType: 'PRESCRIPTION' },
   { pattern: /^\/api\/sales\/(\d+)\/invoice\.pdf$/, action: null },
   { pattern: /^\/api\/payment-requests\/(\d+)\/(handoff|receipt)\.pdf$/, action: 'PAYMENT_DOCUMENT_VIEWED', entityType: 'PAYMENT_REQUEST' },
-  { pattern: /^\/api\/patients(?:\/|$)/, action: 'PATIENT_RECORDS_VIEWED', entityType: 'PATIENT' },
-  { pattern: /^\/api\/prescriptions(?:\/|$)/, action: 'PRESCRIPTION_RECORDS_VIEWED', entityType: 'PRESCRIPTION' },
-  { pattern: /^\/api\/prescription-uploads(?:\/|$)/, action: 'PRESCRIPTION_UPLOADS_VIEWED', entityType: 'PRESCRIPTION_UPLOAD' },
-  { pattern: /^\/api\/sales(?:\/|$)/, action: 'SALES_RECORDS_VIEWED', entityType: 'SALE' },
-  { pattern: /^\/api\/payment-requests(?:\/|$)/, action: 'PAYMENT_REQUESTS_VIEWED', entityType: 'PAYMENT_REQUEST' },
-  { pattern: /^\/api\/inventory\/movements(?:\/|$)/, action: 'STOCK_LEDGER_VIEWED', entityType: 'STOCK_MOVEMENT' },
-  { pattern: /^\/api\/inventory\/batches(?:\/|$)/, action: 'INVENTORY_VIEWED', entityType: 'INVENTORY_BATCH' },
+  { pattern: /^\/api\/patients\/(\d+)(?:\/|$)/, action: 'PATIENT_RECORD_VIEWED', entityType: 'PATIENT' },
   { pattern: /^\/api\/users(?:\/|$)/, action: 'STAFF_RECORDS_VIEWED', entityType: 'USER' },
-  { pattern: /^\/api\/reports\/(analytics|custom)(?:\/|$|\?)/, action: 'REPORT_ANALYTICS_VIEWED', entityType: 'REPORT' },
 ];
 
 export const auditReadAccess = (req, res, next) => {
