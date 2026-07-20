@@ -202,6 +202,26 @@ export function AuditPage() {
     }
   };
 
+  const clearAllWarnings = async () => {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await api.patch(
+        "/audit-logs/mark-warnings-read",
+        {},
+        { params: { view: "active" } },
+      );
+      setNotice(response.data.message);
+      await loadAudit();
+      refreshAttention();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const moveReportToTrash = async () => {
     setBusy(true);
     setError("");
@@ -312,6 +332,15 @@ export function AuditPage() {
           <button className="btn btn-outline-secondary" onClick={load}>
             <i className="bi bi-arrow-clockwise me-1" />
             Refresh
+          </button>
+          <button
+            type="button"
+            className="btn btn-outline-danger"
+            onClick={clearAllWarnings}
+            disabled={busy || !meta.unreadFailures}
+          >
+            <i className="bi bi-check2-all me-1" />
+            Clear all warnings
           </button>
           <button
             className="btn btn-primary"
