@@ -10,7 +10,7 @@ export const userRepository = {
     },
   }),
   list: (search = '') => prisma.user.findMany({
-    where: { role: { not: 'PATIENT' }, OR: [{ email: { contains: search, mode: 'insensitive' } }, { fullName: { contains: search, mode: 'insensitive' } }] },
+    where: { role: { not: 'PATIENT' }, OR: [{ email: { contains: search } }, { fullName: { contains: search } }] },
     select: {
       id: true, email: true, fullName: true, phone: true, role: true, cashierAccess: true, active: true,
       mustChangePassword: true, lastLoginAt: true, passwordChangedAt: true, createdAt: true,

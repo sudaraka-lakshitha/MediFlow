@@ -3,7 +3,7 @@ import { prisma } from '../config/prisma.js';
 export const catalogRepository = {
   categories: () => prisma.category.findMany({ orderBy: { name: 'asc' } }),
   products: (search = '') => prisma.product.findMany({
-    where: { OR: [{ genericName: { contains: search, mode: 'insensitive' } }, { brandName: { contains: search, mode: 'insensitive' } }, { sku: { contains: search, mode: 'insensitive' } }] },
+    where: { OR: [{ genericName: { contains: search } }, { brandName: { contains: search } }, { sku: { contains: search } }] },
     include: {
       category: true,
       manufacturer: true,

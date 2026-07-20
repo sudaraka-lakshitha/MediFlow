@@ -19,8 +19,8 @@ export const drugInformationService = {
     const query = rawQuery.trim().slice(0, 80);
     if (query.length < 2) return [];
     const [products, concepts] = await Promise.all([
-      prisma.product.findMany({ where: { productType: 'MEDICINE', active: true, OR: [{ genericName: { contains: query, mode: 'insensitive' } }, { brandName: { contains: query, mode: 'insensitive' } }, { activeIngredient: { contains: query, mode: 'insensitive' } }] }, select: { genericName: true, brandName: true, strength: true, id: true }, take: 12 }),
-      prisma.drugConcept.findMany({ where: { OR: [{ displayName: { contains: query, mode: 'insensitive' } }, { normalizedName: { contains: query, mode: 'insensitive' } }] }, select: { displayName: true }, take: 8 }),
+      prisma.product.findMany({ where: { productType: 'MEDICINE', active: true, OR: [{ genericName: { contains: query } }, { brandName: { contains: query } }, { activeIngredient: { contains: query } }] }, select: { genericName: true, brandName: true, strength: true, id: true }, take: 12 }),
+      prisma.drugConcept.findMany({ where: { OR: [{ displayName: { contains: query } }, { normalizedName: { contains: query } }] }, select: { displayName: true }, take: 8 }),
     ]);
     return [...new Map([...products.map((item) => ({ value: item.genericName, label: `${item.genericName} ${item.strength}`, description: item.brandName || 'Local catalogue', productId: item.id })), ...concepts.map((item) => ({ value: item.displayName, label: item.displayName, description: 'Medicine reference' }))].map((item) => [item.label.toLowerCase(), item])).values()].slice(0, 15);
   },
@@ -36,7 +36,7 @@ export const drugInformationService = {
       fetchJson(`https://rxnav.nlm.nih.gov/REST/approximateTerm.json?term=${encoded}&maxEntries=10&option=1`),
       fetchJson(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encoded}/property/Title,MolecularFormula,MolecularWeight,CanonicalSMILES,InChIKey/JSON`),
       fetchJson(`https://api.fda.gov/drug/label.json?${labelSearch}`),
-      prisma.product.findMany({ where: { productType: 'MEDICINE', active: true, OR: [{ genericName: { contains: query, mode: 'insensitive' } }, { brandName: { contains: query, mode: 'insensitive' } }, { activeIngredient: { contains: query, mode: 'insensitive' } }] }, include: { manufacturer: true, category: true }, take: 10 }),
+      prisma.product.findMany({ where: { productType: 'MEDICINE', active: true, OR: [{ genericName: { contains: query } }, { brandName: { contains: query } }, { activeIngredient: { contains: query } }] }, include: { manufacturer: true, category: true }, take: 10 }),
     ]);
 
     const rx = settledValue(rxResult); const pubchem = settledValue(pubchemResult); const labels = settledValue(labelResult);
