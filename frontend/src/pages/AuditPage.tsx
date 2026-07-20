@@ -7,7 +7,12 @@ import { Modal } from "../components/Modal";
 import { Alert, Empty, Loading, Metric, Status } from "../components/Ui";
 
 type AuditTab = "staff" | "audit" | "trash" | "errors";
-type AuditConfirmation = "trash" | "restore-all" | "clear-errors" | null;
+type AuditConfirmation =
+  | "trash"
+  | "trash-selected"
+  | "restore-all"
+  | "clear-errors"
+  | null;
 
 const dateValue = (date: Date) => {
   const offset = date.getTimezoneOffset() * 60_000;
@@ -63,6 +68,7 @@ export function AuditPage() {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [selectedAuditIds, setSelectedAuditIds] = useState<number[]>([]);
   const [confirmation, setConfirmation] =
     useState<AuditConfirmation>(null);
 
@@ -82,6 +88,12 @@ export function AuditPage() {
     const response = await api.get("/audit-logs", { params: requestParams });
     setAudit(response.data.data);
     setMeta(response.data.meta);
+    const visibleIds = new Set<number>(
+      response.data.data.map((row: { id: number }) => row.id),
+    );
+    setSelectedAuditIds((current) =>
+      current.filter((id) => visibleIds.has(id)),
+    );
   }, [requestParams]);
 
   const loadStaff = useCallback(async () => {
@@ -245,6 +257,26 @@ export function AuditPage() {
     }
   };
 
+  const moveSelectedToTrash = async () => {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await api.patch("/audit-logs/trash-selected", {
+        ids: selectedAuditIds,
+      });
+      setNotice(response.data.message);
+      setSelectedAuditIds([]);
+      await loadAudit();
+      refreshAttention();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+      setConfirmation(null);
+    }
+  };
+
   const restoreAuditRecord = async (id: number) => {
     setBusy(true);
     setError("");
@@ -311,6 +343,22 @@ export function AuditPage() {
   const selectedStaff = staff.find(
     (member) => String(member.id) === String(filters.userId),
   );
+  const pageAuditIds = tab === "audit" ? audit.map((row) => row.id as number) : [];
+  const allPageAuditSelected =
+    pageAuditIds.length > 0 &&
+    pageAuditIds.every((id) => selectedAuditIds.includes(id));
+  const toggleAuditRecord = (id: number) =>
+    setSelectedAuditIds((current) =>
+      current.includes(id)
+        ? current.filter((selectedId) => selectedId !== id)
+        : [...current, id],
+    );
+  const toggleCurrentAuditPage = () =>
+    setSelectedAuditIds((current) =>
+      allPageAuditSelected
+        ? current.filter((id) => !pageAuditIds.includes(id))
+        : [...new Set([...current, ...pageAuditIds])],
+    );
   const errorSuggestions = errors.flatMap((row) => [
     row.message || "",
     row.path || "",
@@ -681,6 +729,22 @@ export function AuditPage() {
                   <button
                     type="button"
                     className="btn btn-outline-danger"
+                    onClick={() => setConfirmation("trash-selected")}
+                    disabled={
+                      busy || !selectedAuditIds.length || !meta.trashEnabled
+                    }
+                    title={
+                      meta.trashEnabled
+                        ? "Move selected records to recoverable trash"
+                        : "Audit trash is disabled in operation settings"
+                    }
+                  >
+                    <i className="bi bi-trash3 me-1" />
+                    Delete selected ({selectedAuditIds.length})
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline-danger"
                     onClick={() => setConfirmation("trash")}
                     disabled={busy || !meta.total || !meta.trashEnabled}
                     title={
@@ -710,6 +774,18 @@ export function AuditPage() {
             <table className="table">
               <thead>
                 <tr>
+                  <th className="audit-select-cell">
+                    {tab === "audit" && (
+                      <input
+                        className="form-check-input"
+                        type="checkbox"
+                        aria-label="Select all audit records on this page"
+                        checked={allPageAuditSelected}
+                        onChange={toggleCurrentAuditPage}
+                        disabled={!pageAuditIds.length}
+                      />
+                    )}
+                  </th>
                   <th>Time</th>
                   <th>Actor</th>
                   <th>Action</th>
@@ -729,6 +805,18 @@ export function AuditPage() {
                         : undefined
                     }
                   >
+                    <td className="audit-select-cell">
+                      {tab === "audit" && (
+                        <input
+                          className="form-check-input"
+                          type="checkbox"
+                          aria-label={`Select audit record ${row.id}`}
+                          checked={selectedAuditIds.includes(row.id)}
+                          onChange={() => toggleAuditRecord(row.id)}
+                          disabled={busy}
+                        />
+                      )}
+                    </td>
                     <td>{new Date(row.createdAt).toLocaleString()}</td>
                     <td>
                       <strong>{row.user?.fullName || "System"}</strong>
@@ -934,6 +1022,8 @@ export function AuditPage() {
           title={
             confirmation === "trash"
               ? "Clear audit report to trash?"
+              : confirmation === "trash-selected"
+                ? "Delete selected audit records?"
               : confirmation === "clear-errors"
                 ? "Clear all error logs?"
                 : "Restore all audit records?"
@@ -957,10 +1047,12 @@ export function AuditPage() {
             <p className="text-secondary">
               {confirmation === "trash"
                 ? `All ${number(meta.total)} records matching the current report filters will leave the active audit view. They remain recoverable in Trash for ${meta.trashRetentionDays || 30} days.`
+                : confirmation === "trash-selected"
+                  ? `${number(selectedAuditIds.length)} selected audit record(s) will move to recoverable Trash for ${meta.trashRetentionDays || 30} days.`
                 : `All ${number(meta.trashCount)} currently recoverable audit records will return to the active audit view.`}
             </p>
           )}
-          {confirmation === "trash" && (
+          {(confirmation === "trash" || confirmation === "trash-selected") && (
             <div className="alert alert-warning small">
               This does not delete the records immediately. Permanent deletion
               happens only after each record has remained in Trash for {meta.trashRetentionDays || 30} days.
@@ -983,6 +1075,8 @@ export function AuditPage() {
               onClick={
                 confirmation === "trash"
                   ? moveReportToTrash
+                  : confirmation === "trash-selected"
+                    ? moveSelectedToTrash
                   : confirmation === "clear-errors"
                     ? clearErrorLog
                     : restoreAllAuditRecords
@@ -993,6 +1087,8 @@ export function AuditPage() {
                 ? "Working…"
                 : confirmation === "trash"
                   ? "Move to trash"
+                  : confirmation === "trash-selected"
+                    ? "Delete selected to trash"
                   : confirmation === "clear-errors"
                     ? "Clear all error logs"
                     : "Restore all"}

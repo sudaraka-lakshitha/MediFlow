@@ -15,6 +15,10 @@ export const auditController = {
     const data = await auditService.moveToTrash(req.validatedQuery);
     res.json({ data, message: `${data.moved} audit record(s) moved to trash for ${data.retentionDays} days.` });
   },
+  moveSelectedToTrash: async (req, res) => {
+    const data = await auditService.moveSelectedToTrash(req.body.ids);
+    res.json({ data, message: `${data.moved} selected audit record(s) moved to trash for ${data.retentionDays} days.` });
+  },
   restore: async (req, res) => {
     const data = await auditService.restore(Number(req.params.id));
     res.json({ data, message: data.restored ? 'Audit record restored.' : 'Audit record was not found in trash.' });

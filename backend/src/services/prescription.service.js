@@ -30,13 +30,21 @@ const ageOnDate = (dateOfBirth, onDate) => {
   return age;
 };
 
-const validatePatientAge = async (patientId, prescriptionDate, products) => {
-  const patient = await prisma.patientProfile.findUnique({ where: { id: patientId }, select: { dateOfBirth: true } });
-  if (!patient?.dateOfBirth) throw new AppError(400, 'Record the patient date of birth before prescribing medicine so age suitability can be checked.');
-  const age = ageOnDate(patient.dateOfBirth, prescriptionDate);
-  if (age < 0 || age > 130) throw new AppError(400, 'The patient date of birth is invalid for the prescription date.');
+const validatePatientAge = async (data, products) => {
+  let dateOfBirth = data.recipientDateOfBirth;
+  if (data.orderedForSelf) {
+    const patient = await prisma.patientProfile.findUnique({ where: { id: data.patientId }, select: { dateOfBirth: true } });
+    dateOfBirth = patient?.dateOfBirth;
+  }
+  if (!dateOfBirth) {
+    throw new AppError(400, data.orderedForSelf
+      ? 'Record the patient date of birth before prescribing medicine so age suitability can be checked.'
+      : 'Record the recipient date of birth so medicine age suitability can be checked.');
+  }
+  const age = ageOnDate(dateOfBirth, data.prescriptionDate);
+  if (age < 0 || age > 130) throw new AppError(400, 'The medicine recipient date of birth is invalid for the prescription date.');
   const unsuitable = products.filter((product) => (product.minimumAgeYears != null && age < product.minimumAgeYears) || (product.maximumAgeYears != null && age > product.maximumAgeYears));
-  if (unsuitable.length) throw new AppError(400, `${unsuitable.map((product) => product.genericName).join(', ')} ${unsuitable.length === 1 ? 'is' : 'are'} outside the configured age range for this patient (${age} years). Review the medicine or update its verified age guidance.`);
+  if (unsuitable.length) throw new AppError(400, `${unsuitable.map((product) => product.genericName).join(', ')} ${unsuitable.length === 1 ? 'is' : 'are'} outside the configured age range for this medicine recipient (${age} years). Review the medicine or update its verified age guidance.`);
 };
 
 const patientView = (prescription) => ({
@@ -71,7 +79,7 @@ export const prescriptionService = {
     ]);
     if (products.length !== new Set(data.items.map((item) => item.productId)).size) throw new AppError(400, 'One or more selected products are unavailable.');
     if (retailProducts.length !== new Set(data.retailItems.map((item) => item.productId)).size) throw new AppError(400, 'One or more selected retail items are unavailable or require a prescription.');
-    await validatePatientAge(data.patientId, data.prescriptionDate, products);
+    await validatePatientAge(data, products);
     const items = data.items.map((rawItem) => {
       const item = normalizeLiquidDose(rawItem);
       const product = products.find((candidate) => candidate.id === item.productId);
@@ -89,7 +97,8 @@ export const prescriptionService = {
         patientId: data.patientId, sourceUploadId: data.sourceUploadId || null, prescriberTitle: data.prescriberTitle || null,
         prescriberName: data.prescriberName, prescriberReference: data.prescriberReference,
         prescriptionDate: data.prescriptionDate, orderedForSelf:data.orderedForSelf, recipientName:data.orderedForSelf?null:data.recipientName,
-        recipientRelationship:data.orderedForSelf?null:data.recipientRelationship, notes: data.notes,
+        recipientRelationship:data.orderedForSelf?null:data.recipientRelationship,
+        recipientDateOfBirth:data.orderedForSelf?null:data.recipientDateOfBirth, notes: data.notes,
         pickupNote: data.pickupNote || null, plannedPickupAt: data.plannedPickupAt || null,
         createdById: userId,
         items: { create: items },
@@ -107,9 +116,9 @@ export const prescriptionService = {
       prisma.product.findMany({ where: { id: { in:data.retailItems.map((item)=>item.productId) }, active:true, prescriptionRequired:false }, select:{ id:true } }),
     ]);
     if(retailProducts.length!==new Set(data.retailItems.map((item)=>item.productId)).size)throw new AppError(400,'One or more selected retail items are unavailable or require a prescription.');
-    await validatePatientAge(data.patientId, data.prescriptionDate, products);
+    await validatePatientAge(data, products);
     const items=data.items.map((rawItem)=>{const item=normalizeLiquidDose(rawItem);const product=products.find((candidate)=>candidate.id===item.productId);if(!product)throw new AppError(400,'One or more selected products are unavailable.');const{calculated,prescribed,overridden}=calculateQuantity(product.unit,item);return{productId:item.productId,quantityPerDose:item.quantityPerDose,doseInputAmount:item.doseInputAmount,doseInputUnit:item.doseInputUnit,concentrationAmount:item.concentrationAmount,concentrationUnit:item.concentrationUnit,concentrationVolume:item.concentrationVolume,timesPerDay:item.timesPerDay,daysSupply:item.daysSupply,calculatedQuantity:calculated,prescribedQuantity:prescribed,quantityOverridden:overridden,overrideReason:overridden?item.overrideReason:null,dosageInstructions:item.dosageInstructions,frequency:item.frequency,duration:item.duration,notes:item.notes,administrationRoute:item.administrationRoute,mealTiming:item.mealTiming,asNeeded:item.asNeeded,specialInstructions:item.specialInstructions}});
-    return prisma.$transaction(async(tx)=>{await tx.prescriptionItem.deleteMany({where:{prescriptionId:id}});await tx.prescriptionRetailItem.deleteMany({where:{prescriptionId:id}});await tx.prescription.update({where:{id},data:{patientId:data.patientId,prescriberTitle:data.prescriberTitle||null,prescriberName:data.prescriberName,prescriberReference:data.prescriberReference,prescriptionDate:data.prescriptionDate,orderedForSelf:data.orderedForSelf,recipientName:data.orderedForSelf?null:data.recipientName,recipientRelationship:data.orderedForSelf?null:data.recipientRelationship,notes:data.notes,pickupNote:data.pickupNote||null,plannedPickupAt:data.plannedPickupAt||null,items:{create:items},retailItems:{create:data.retailItems.map((item)=>({productId:item.productId,quantity:item.quantity}))}}});return tx.prescription.findUnique({where:{id},include:{items:{include:{product:true}},retailItems:{include:{product:true}},patient:{include:{user:true}}}})});
+    return prisma.$transaction(async(tx)=>{await tx.prescriptionItem.deleteMany({where:{prescriptionId:id}});await tx.prescriptionRetailItem.deleteMany({where:{prescriptionId:id}});await tx.prescription.update({where:{id},data:{patientId:data.patientId,prescriberTitle:data.prescriberTitle||null,prescriberName:data.prescriberName,prescriberReference:data.prescriberReference,prescriptionDate:data.prescriptionDate,orderedForSelf:data.orderedForSelf,recipientName:data.orderedForSelf?null:data.recipientName,recipientRelationship:data.orderedForSelf?null:data.recipientRelationship,recipientDateOfBirth:data.orderedForSelf?null:data.recipientDateOfBirth,notes:data.notes,pickupNote:data.pickupNote||null,plannedPickupAt:data.plannedPickupAt||null,items:{create:items},retailItems:{create:data.retailItems.map((item)=>({productId:item.productId,quantity:item.quantity}))}}});return tx.prescription.findUnique({where:{id},include:{items:{include:{product:true}},retailItems:{include:{product:true}},patient:{include:{user:true}}}})});
   },
   async updatePickupDetails(id, data, user) {
     const current = await prisma.prescription.findUnique({

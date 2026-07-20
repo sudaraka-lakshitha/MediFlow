@@ -68,4 +68,25 @@ describe('combined prescription and retail billing validation', () => {
     });
     expect(result.retailItems).toEqual([{ productId: 41, quantity: 2 }]);
   });
+
+  it('requires recipient age details for a third-party prescription', () => {
+    const result = prescriptionSchema.safeParse({
+      patientId: 2,
+      prescriberName: 'Dr Example',
+      prescriptionDate: new Date(),
+      orderedForSelf: false,
+      recipientName: 'Test Child',
+      recipientRelationship: 'Child',
+      items: [{
+        productId: 10,
+        quantityPerDose: 1,
+        timesPerDay: 2,
+        daysSupply: 5,
+        dosageInstructions: 'Take one tablet twice daily.',
+      }],
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.some((issue) => issue.path[0] === 'recipientDateOfBirth')).toBe(true);
+  });
 });

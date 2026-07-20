@@ -277,6 +277,21 @@ export const auditService = {
     return { moved: result.count, retentionDays: operationSettings.auditTrashRetentionDays };
   },
 
+  async moveSelectedToTrash(ids) {
+    const operationSettings = await operationSettingsService.get();
+    if (!operationSettings.auditTrashEnabled) {
+      throw new AppError(409, 'Audit trash is disabled in operation settings.');
+    }
+    const result = await prisma.auditLog.updateMany({
+      where: {
+        ...buildAuditWhere({ view: 'active' }),
+        id: { in: ids },
+      },
+      data: { deletedAt: new Date(), readAt: new Date() },
+    });
+    return { moved: result.count, retentionDays: operationSettings.auditTrashRetentionDays };
+  },
+
   async restore(id) {
     const result = await prisma.auditLog.updateMany({
       where: { id, deletedAt: { not: null } },

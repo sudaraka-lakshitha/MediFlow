@@ -54,6 +54,7 @@ apiRoutes.get('/audit-logs', authenticate, authorize('ADMIN'), validate({ query:
 apiRoutes.get('/audit-logs/staff-summary', authenticate, authorize('ADMIN'), validate({ query: staffAuditSummaryQuerySchema }), asyncHandler(auditController.staffSummary));
 apiRoutes.get('/audit-logs/export.csv', authenticate, authorize('ADMIN'), validate({ query: auditQuerySchema }), asyncHandler(auditController.export));
 apiRoutes.patch('/audit-logs/mark-warnings-read', authenticate, authorize('ADMIN'), validate({ query: auditQuerySchema }), asyncHandler(auditController.markWarningsRead));
+apiRoutes.patch('/audit-logs/trash-selected', authenticate, authorize('ADMIN'), validate({ body: z.object({ ids: z.array(z.coerce.number().int().positive()).min(1).max(200) }) }), asyncHandler(auditController.moveSelectedToTrash));
 apiRoutes.patch('/audit-logs/trash', authenticate, authorize('ADMIN'), validate({ query: auditQuerySchema }), asyncHandler(auditController.moveToTrash));
 apiRoutes.patch('/audit-logs/trash/restore-all', authenticate, authorize('ADMIN'), asyncHandler(auditController.restoreAll));
 apiRoutes.patch('/audit-logs/:id/restore', authenticate, authorize('ADMIN'), validate({ params: idParams }), asyncHandler(auditController.restore));

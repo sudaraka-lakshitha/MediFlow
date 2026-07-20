@@ -16,6 +16,7 @@ type Upload = {
   orderedForSelf: boolean;
   recipientName?: string;
   recipientRelationship?: string;
+  recipientDateOfBirth?: string;
   status: string;
   availabilityNotes?: string;
   estimatedTotal?: string;
@@ -85,8 +86,9 @@ export function PrescriptionUploadsPage() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [review, setReview] = useState<Upload | null>(null);
   const [reviewUrl, setReviewUrl] = useState("");
+  const [reviewText, setReviewText] = useState("");
   const [documentViewerHeight, setDocumentViewerHeight] = useState(620);
-  const [preview, setPreview] = useState<{ item: Upload; url: string } | null>(
+  const [preview, setPreview] = useState<{ item: Upload; url: string; text?: string } | null>(
     null,
   );
   const [statusFilter, setStatusFilter] = useState("");
@@ -99,7 +101,8 @@ export function PrescriptionUploadsPage() {
     orderedForSelf: boolean;
     recipientName: string;
     recipientRelationship: string;
-  }>({ inputMode: "FILE", file: null, prescriptionText: "", patientNote: "", prepareRequested: true, orderedForSelf: true, recipientName: "", recipientRelationship: "" });
+    recipientDateOfBirth: string;
+  }>({ inputMode: "FILE", file: null, prescriptionText: "", patientNote: "", prepareRequested: true, orderedForSelf: true, recipientName: "", recipientRelationship: "", recipientDateOfBirth: "" });
   const [reviewForm, setReviewForm] = useState({
     status: "AVAILABLE",
     availabilityNotes: "",
@@ -203,9 +206,10 @@ export function PrescriptionUploadsPage() {
         orderedForSelf: uploadForm.orderedForSelf,
         recipientName: uploadForm.orderedForSelf ? null : uploadForm.recipientName,
         recipientRelationship: uploadForm.orderedForSelf ? null : uploadForm.recipientRelationship,
+        recipientDateOfBirth: uploadForm.orderedForSelf ? null : uploadForm.recipientDateOfBirth,
       });
       setUploadOpen(false);
-      setUploadForm({ inputMode: "FILE", file: null, prescriptionText: "", patientNote: "", prepareRequested: true, orderedForSelf: true, recipientName: "", recipientRelationship: "" });
+      setUploadForm({ inputMode: "FILE", file: null, prescriptionText: "", patientNote: "", prepareRequested: true, orderedForSelf: true, recipientName: "", recipientRelationship: "", recipientDateOfBirth: "" });
       await load();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -220,8 +224,9 @@ export function PrescriptionUploadsPage() {
         responseType: "blob",
       });
       const url = URL.createObjectURL(response.data);
+      const text = item.mimeType === "text/plain" ? await response.data.text() : undefined;
       if (preview) URL.revokeObjectURL(preview.url);
-      setPreview({ item, url });
+      setPreview({ item, url, text });
     } catch (caught) {
       setError(errorMessage(caught));
     }
@@ -234,6 +239,7 @@ export function PrescriptionUploadsPage() {
   const closeReview = () => {
     if (reviewUrl) URL.revokeObjectURL(reviewUrl);
     setReviewUrl("");
+    setReviewText("");
     setReview(null);
   };
   const openReview = async (item: Upload) => {
@@ -270,6 +276,7 @@ export function PrescriptionUploadsPage() {
         responseType: "blob",
       });
       setReviewUrl(URL.createObjectURL(response.data));
+      setReviewText(item.mimeType === "text/plain" ? await response.data.text() : "");
     } catch (caught) {
       setError(errorMessage(caught));
     }
@@ -477,6 +484,7 @@ export function PrescriptionUploadsPage() {
                 orderedForSelf: true,
                 recipientName: "",
                 recipientRelationship: "",
+                recipientDateOfBirth: "",
               });
               setUploadOpen(true);
             }}
@@ -699,7 +707,7 @@ export function PrescriptionUploadsPage() {
                 <label className={`preparation-choice ${uploadForm.orderedForSelf ? "selected" : ""}`}><input type="radio" name="recipient" checked={uploadForm.orderedForSelf} onChange={() => setUploadForm({ ...uploadForm, orderedForSelf: true })} /><span><strong>For me</strong><small>I am the patient named on this prescription.</small></span></label>
                 <label className={`preparation-choice ${!uploadForm.orderedForSelf ? "selected" : ""}`}><input type="radio" name="recipient" checked={!uploadForm.orderedForSelf} onChange={() => setUploadForm({ ...uploadForm, orderedForSelf: false })} /><span><strong>For someone else</strong><small>I am uploading this on behalf of another person.</small></span></label>
               </div>
-              {!uploadForm.orderedForSelf && <div className="row g-2 mt-1"><div className="col-sm-7"><input className="form-control" placeholder="Recipient full name" value={uploadForm.recipientName} onChange={(event) => setUploadForm({ ...uploadForm, recipientName: event.target.value })} required /></div><div className="col-sm-5"><input className="form-control" placeholder="Relationship" value={uploadForm.recipientRelationship} onChange={(event) => setUploadForm({ ...uploadForm, recipientRelationship: event.target.value })} required /></div></div>}
+              {!uploadForm.orderedForSelf && <div className="row g-2 mt-1"><div className="col-sm-5"><label className="form-label">Recipient full name</label><input className="form-control" placeholder="Full name" value={uploadForm.recipientName} onChange={(event) => setUploadForm({ ...uploadForm, recipientName: event.target.value })} required /></div><div className="col-sm-3"><label className="form-label">Relationship</label><input className="form-control" placeholder="e.g. Child" value={uploadForm.recipientRelationship} onChange={(event) => setUploadForm({ ...uploadForm, recipientRelationship: event.target.value })} required /></div><div className="col-sm-4"><label className="form-label">Recipient date of birth</label><input className="form-control" type="date" max={new Date().toISOString().slice(0, 10)} value={uploadForm.recipientDateOfBirth} onChange={(event) => setUploadForm({ ...uploadForm, recipientDateOfBirth: event.target.value })} required /><small className="text-secondary">Used for medicine age checks.</small></div></div>}
             </fieldset>
             <fieldset className="mt-3">
               <legend className="form-label">
@@ -768,13 +776,25 @@ export function PrescriptionUploadsPage() {
                   <button type="button" className="btn btn-outline-secondary" onClick={() => openFile(review)} title="Open full size"><i className="bi bi-arrows-fullscreen" /></button>
                 </div>
               </div>
-              {reviewUrl ? (
+              {reviewText ? (
+                <pre className="prescription-text-viewer" style={{ height: documentViewerHeight }}>{reviewText}</pre>
+              ) : reviewUrl ? (
                 <iframe src={reviewUrl} title={review.originalName} style={{ height: documentViewerHeight }} />
               ) : (
                 <div className="loading">Loading prescription…</div>
               )}
             </div>
             <form onSubmit={submitReview} className="prescription-review-form">
+              {!review.orderedForSelf && (
+                <div className="alert alert-info small">
+                  <strong>Medicine recipient:</strong> {review.recipientName} · {review.recipientRelationship}
+                  <br />
+                  <strong>Date of birth:</strong>{" "}
+                  {review.recipientDateOfBirth
+                    ? new Date(review.recipientDateOfBirth).toLocaleDateString()
+                    : "Not provided"}
+                </div>
+              )}
               <div className="upload-review-steps-indicator mb-3 p-2 bg-light border rounded d-flex justify-content-around text-center small">
                 <div className="step-item text-primary fw-bold">
                   <span className="badge rounded-circle bg-primary me-1">1</span>
@@ -1360,7 +1380,7 @@ export function PrescriptionUploadsPage() {
                   className="btn btn-outline-primary w-100 mt-3"
                   onClick={() =>
                     navigate(
-                      `/prescriptions?uploadId=${review.id}&patientUserId=${review.patient.id}&orderedForSelf=${review.orderedForSelf ? "1" : "0"}&recipientName=${encodeURIComponent(review.recipientName || "")}&recipientRelationship=${encodeURIComponent(review.recipientRelationship || "")}`,
+                      `/prescriptions?uploadId=${review.id}&patientUserId=${review.patient.id}&orderedForSelf=${review.orderedForSelf ? "1" : "0"}&recipientName=${encodeURIComponent(review.recipientName || "")}&recipientRelationship=${encodeURIComponent(review.recipientRelationship || "")}&recipientDateOfBirth=${encodeURIComponent(review.recipientDateOfBirth ? review.recipientDateOfBirth.slice(0, 10) : "")}`,
                     )
                   }
                 >
@@ -1405,12 +1425,16 @@ export function PrescriptionUploadsPage() {
               <button type="button" className="btn btn-outline-secondary" onClick={() => window.open(preview.url, "_blank", "noopener,noreferrer")} title="Open full size"><i className="bi bi-arrows-fullscreen" /></button>
             </div>
           </div>
-          <iframe
-            className="prescription-popup-viewer"
-            src={preview.url}
-            title={preview.item.originalName}
-            style={{ height: documentViewerHeight }}
-          />
+          {preview.text ? (
+            <pre className="prescription-text-viewer" style={{ height: documentViewerHeight }}>{preview.text}</pre>
+          ) : (
+            <iframe
+              className="prescription-popup-viewer"
+              src={preview.url}
+              title={preview.item.originalName}
+              style={{ height: documentViewerHeight }}
+            />
+          )}
           <div className="d-flex justify-content-end mt-3">
             <button
               type="button"

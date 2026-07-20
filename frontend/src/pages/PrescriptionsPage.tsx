@@ -92,6 +92,7 @@ type Rx = {
   orderedForSelf: boolean;
   recipientName?: string;
   recipientRelationship?: string;
+  recipientDateOfBirth?: string;
   createdBy?: StaffActor;
   verifiedBy?: StaffActor;
   patient: {
@@ -184,6 +185,7 @@ const emptyForm = () => ({
   orderedForSelf: true,
   recipientName: "",
   recipientRelationship: "",
+  recipientDateOfBirth: "",
   notes: "",
   pickupNote: "",
   plannedPickupAt: "",
@@ -285,6 +287,7 @@ export function PrescriptionsPage() {
     rx?: Rx;
   } | null>(null);
   const [sourceFileUrl, setSourceFileUrl] = useState("");
+  const [sourceFileText, setSourceFileText] = useState("");
   const [sourceViewerHeight, setSourceViewerHeight] = useState(620);
   const [action, setAction] = useState<{
     type: "reject" | "dispense" | "history";
@@ -373,11 +376,17 @@ export function PrescriptionsPage() {
       orderedForSelf,
       recipientName: orderedForSelf ? "" : searchParams.get("recipientName") || "",
       recipientRelationship: orderedForSelf ? "" : searchParams.get("recipientRelationship") || "",
+      recipientDateOfBirth: orderedForSelf ? "" : searchParams.get("recipientDateOfBirth") || "",
     });
     setEditor({ mode: "create" });
     api
       .get(`/prescription-uploads/${uploadId}/file`, { responseType: "blob" })
-      .then((response) => setSourceFileUrl(URL.createObjectURL(response.data)))
+      .then(async (response) => {
+        setSourceFileUrl(URL.createObjectURL(response.data));
+        setSourceFileText(
+          response.data.type === "text/plain" ? await response.data.text() : "",
+        );
+      })
       .catch((caught) => setError(errorMessage(caught)));
     setSearchParams({}, { replace: true });
   }, [patients, searchParams, setSearchParams, staff]);
@@ -506,6 +515,7 @@ export function PrescriptionsPage() {
         orderedForSelf: rx.orderedForSelf,
         recipientName: rx.recipientName || "",
         recipientRelationship: rx.recipientRelationship || "",
+        recipientDateOfBirth: rx.recipientDateOfBirth ? rx.recipientDateOfBirth.slice(0, 10) : "",
         notes: rx.notes || "",
         pickupNote: rx.pickupNote || "",
         plannedPickupAt: rx.plannedPickupAt ? localDateTime(rx.plannedPickupAt) : "",
@@ -548,6 +558,7 @@ export function PrescriptionsPage() {
   const closeEditor = () => {
     if (sourceFileUrl) URL.revokeObjectURL(sourceFileUrl);
     setSourceFileUrl("");
+    setSourceFileText("");
     setEditor(null);
   };
   const updateLine = (index: number, changes: Partial<Line>) => {
@@ -677,6 +688,9 @@ export function PrescriptionsPage() {
     recipientRelationship: form.orderedForSelf
       ? null
       : form.recipientRelationship,
+    recipientDateOfBirth: form.orderedForSelf
+      ? null
+      : form.recipientDateOfBirth,
     pickupNote: form.pickupNote || null,
     plannedPickupAt: form.plannedPickupAt ? new Date(form.plannedPickupAt).toISOString() : null,
     items: form.items.map((item: Line) => {
@@ -781,14 +795,18 @@ export function PrescriptionsPage() {
     setQuoteError("");
     if (sourceFileUrl) URL.revokeObjectURL(sourceFileUrl);
     setSourceFileUrl("");
+    setSourceFileText("");
     if (type === "dispense" && rx.sourceUpload)
       api
         .get(`/prescription-uploads/${rx.sourceUpload.id}/file`, {
           responseType: "blob",
         })
-        .then((response) =>
-          setSourceFileUrl(URL.createObjectURL(response.data)),
-        )
+        .then(async (response) => {
+          setSourceFileUrl(URL.createObjectURL(response.data));
+          setSourceFileText(
+            response.data.type === "text/plain" ? await response.data.text() : "",
+          );
+        })
         .catch((caught) => setError(errorMessage(caught)));
     if (type === "dispense")
       {
@@ -844,6 +862,7 @@ export function PrescriptionsPage() {
   const closeAction = () => {
     if (sourceFileUrl) URL.revokeObjectURL(sourceFileUrl);
     setSourceFileUrl("");
+    setSourceFileText("");
     setAction(null);
   };
   const dispenseHasLiquid = [
@@ -1246,7 +1265,7 @@ export function PrescriptionsPage() {
                   <small>
                     {rx.orderedForSelf
                       ? "Ordered for patient"
-                      : `For ${rx.recipientName} (${rx.recipientRelationship})`}
+                      : `For ${rx.recipientName} (${rx.recipientRelationship})${rx.recipientDateOfBirth ? ` · DOB ${new Date(rx.recipientDateOfBirth).toLocaleDateString()}` : ""}`}
                   </small>
                   {(rx.plannedPickupAt || rx.pickupNote) && (
                     <div className="alert alert-info py-2 mt-2 mb-0 small d-flex flex-column align-items-start gap-1" style={{ borderLeft: '3px solid var(--c-info)' }}>
@@ -1592,11 +1611,15 @@ export function PrescriptionsPage() {
                   Keep the source visible while entering medicines and preparing
                   the cashier request.
                 </small>
-                <iframe
-                  src={sourceFileUrl}
-                  title="Customer submitted prescription"
-                  style={{ height: sourceViewerHeight }}
-                />
+                {sourceFileText ? (
+                  <pre className="prescription-text-viewer" style={{ height: sourceViewerHeight }}>{sourceFileText}</pre>
+                ) : (
+                  <iframe
+                    src={sourceFileUrl}
+                    title="Customer submitted prescription"
+                    style={{ height: sourceViewerHeight }}
+                  />
+                )}
               </aside>
             )}
             <form onSubmit={save} className="prescription-editor-form">
@@ -1653,6 +1676,8 @@ export function PrescriptionsPage() {
                     patient={patients.find(
                       (candidate) => candidate.id === Number(form.patientId),
                     )}
+                    recipientDateOfBirth={form.orderedForSelf ? undefined : form.recipientDateOfBirth}
+                    thirdPartyRecipient={!form.orderedForSelf}
                     referenceDate={form.prescriptionDate}
                     medicines={form.items.map((item: Line) => products.find((product) => product.id === Number(item.productId))).filter(Boolean)}
                   />
@@ -1771,6 +1796,25 @@ export function PrescriptionsPage() {
                         <option>Carer</option>
                         <option>Other</option>
                       </select>
+                    </div>
+                    <div>
+                      <label className="form-label">Recipient date of birth</label>
+                      <input
+                        className="form-control"
+                        type="date"
+                        max={new Date().toISOString().slice(0, 10)}
+                        value={form.recipientDateOfBirth}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            recipientDateOfBirth: event.target.value,
+                          })
+                        }
+                        required
+                      />
+                      <small className="text-secondary">
+                        Used automatically for medicine age-suitability checks.
+                      </small>
                     </div>
                   </>
                 )}
@@ -2447,7 +2491,9 @@ export function PrescriptionsPage() {
                   Visible while calculating the cashier request and confirming
                   dispensing.
                 </small>
-                {sourceFileUrl ? (
+                {sourceFileText ? (
+                  <pre className="prescription-text-viewer" style={{ height: sourceViewerHeight }}>{sourceFileText}</pre>
+                ) : sourceFileUrl ? (
                   <iframe
                     src={sourceFileUrl}
                     title="Customer submitted prescription"
@@ -2468,6 +2514,8 @@ export function PrescriptionsPage() {
               </div>
               <PatientClinicalWarning
                 patient={patients.find((p) => p.id === action.rx.patient.id)}
+                recipientDateOfBirth={action.rx.orderedForSelf ? undefined : action.rx.recipientDateOfBirth}
+                thirdPartyRecipient={!action.rx.orderedForSelf}
                 referenceDate={action.rx.prescriptionDate}
                 medicines={action.rx.items.map((item) => item.product)}
               />
@@ -3337,14 +3385,29 @@ function FriendlyDateTimePicker({ value, onChange, futureOnly = false, optional 
   );
 }
 
-function PatientClinicalWarning({ patient, referenceDate, medicines = [] }: { patient?: any; referenceDate?: string; medicines?: any[] }) {
+function PatientClinicalWarning({
+  patient,
+  recipientDateOfBirth,
+  thirdPartyRecipient = false,
+  referenceDate,
+  medicines = [],
+}: {
+  patient?: any;
+  recipientDateOfBirth?: string;
+  thirdPartyRecipient?: boolean;
+  referenceDate?: string;
+  medicines?: any[];
+}) {
   if (!patient) return null;
   const isRecorded = (value?: string | null) =>
     Boolean(value?.trim() && value.trim().toLowerCase() !== "none");
   const hasAllergies = isRecorded(patient.allergies);
   const hasConditions = isRecorded(patient.chronicConditions);
-  const age = patient.dateOfBirth ? (() => {
-    const birth = new Date(patient.dateOfBirth);
+  const medicineRecipientDateOfBirth = thirdPartyRecipient
+    ? recipientDateOfBirth
+    : patient.dateOfBirth;
+  const age = medicineRecipientDateOfBirth ? (() => {
+    const birth = new Date(medicineRecipientDateOfBirth);
     const today = referenceDate ? new Date(referenceDate) : new Date();
     let years = today.getFullYear() - birth.getFullYear();
     if (today.getMonth() < birth.getMonth() || (today.getMonth() === birth.getMonth() && today.getDate() < birth.getDate())) years -= 1;
@@ -3357,27 +3420,33 @@ function PatientClinicalWarning({ patient, referenceDate, medicines = [] }: { pa
 
   return (
     <div
-      className={`patient-clinical-warning alert ${hasAllergies || hasConditions || unsuitable.length ? "alert-warning" : "alert-light border"} mb-3`}
+      className={`patient-clinical-warning alert ${(!thirdPartyRecipient && (hasAllergies || hasConditions)) || unsuitable.length ? "alert-warning" : "alert-light border"} mb-3`}
       role="status"
       aria-live="polite"
     >
       <h5 className="alert-heading fs-6 mb-1">
         <i className="bi bi-clipboard2-pulse me-2" />
-        Patient clinical information
+        {thirdPartyRecipient ? "Medicine recipient age information" : "Patient clinical information"}
       </h5>
       <div className="patient-clinical-details">
         <div className={`small ${age == null ? "text-danger fw-semibold" : ""}`}>
           <strong>Age:</strong>{" "}
-          {age == null ? "Date of birth required before prescribing" : `${age} years (${new Date(patient.dateOfBirth).toLocaleDateString()})`}
+          {age == null ? "Recipient date of birth required before prescribing" : `${age} years (${new Date(medicineRecipientDateOfBirth!).toLocaleDateString()})`}
         </div>
-        <div className="small">
-          <strong>Allergies:</strong>{" "}
-          {hasAllergies ? patient.allergies : "None recorded"}
-        </div>
-        <div className="small mt-1">
-          <strong>Chronic conditions:</strong>{" "}
-          {hasConditions ? patient.chronicConditions : "None recorded"}
-        </div>
+        {thirdPartyRecipient ? (
+          <div className="small text-secondary mt-1">
+            Allergies and chronic conditions on this account belong to the sender and are not applied to the recipient.
+          </div>
+        ) : <>
+          <div className="small">
+            <strong>Allergies:</strong>{" "}
+            {hasAllergies ? patient.allergies : "None recorded"}
+          </div>
+          <div className="small mt-1">
+            <strong>Chronic conditions:</strong>{" "}
+            {hasConditions ? patient.chronicConditions : "None recorded"}
+          </div>
+        </>}
         {unsuitable.length > 0 && <div className="small text-danger fw-semibold mt-2">
           <i className="bi bi-exclamation-triangle me-1" />
           Age warning: {unsuitable.map((medicine) => `${medicine.genericName} (allowed ${medicine.minimumAgeYears ?? 0}–${medicine.maximumAgeYears ?? "no maximum"} years)`).join(", ")}

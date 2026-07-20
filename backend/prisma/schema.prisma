@@ -367,6 +367,7 @@ model Prescription {
   orderedForSelf          Boolean                   @default(true) @map("ordered_for_self")
   recipientName           String?                   @map("recipient_name") @db.VarChar(150)
   recipientRelationship   String?                   @map("recipient_relationship") @db.VarChar(100)
+  recipientDateOfBirth    DateTime?                 @map("recipient_date_of_birth") @db.Date
   notes                   String?
   pickupNote              String?                   @map("pickup_note") @db.VarChar(500)
   plannedPickupAt         DateTime?                 @map("planned_pickup_at") @db.DateTime(3)
@@ -559,6 +560,7 @@ model PrescriptionUpload {
   orderedForSelf    Boolean            @default(true) @map("ordered_for_self")
   recipientName     String?            @map("recipient_name") @db.VarChar(150)
   recipientRelationship String?        @map("recipient_relationship") @db.VarChar(100)
+  recipientDateOfBirth DateTime?       @map("recipient_date_of_birth") @db.Date
   status            UploadReviewStatus @default(PENDING)
   availabilityNotes String?            @map("availability_notes") @db.VarChar(1000)
   estimatedTotal    Decimal?           @map("estimated_total") @db.Decimal(12, 2)

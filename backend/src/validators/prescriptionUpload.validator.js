@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+const recipientBirthDate = z.coerce.date()
+  .refine((value) => value <= new Date(), 'Recipient date of birth cannot be in the future.')
+  .refine((value) => value.getUTCFullYear() >= 1895, 'Enter a valid recipient date of birth.');
+
 export const uploadPrescriptionSchema = z.object({
   originalName: z.string().trim().min(1).max(180),
   mimeType: z.enum(['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'text/plain']),
@@ -9,9 +13,11 @@ export const uploadPrescriptionSchema = z.object({
   orderedForSelf: z.boolean().default(true),
   recipientName: z.string().trim().max(150).optional().nullable(),
   recipientRelationship: z.string().trim().max(100).optional().nullable(),
+  recipientDateOfBirth: recipientBirthDate.optional().nullable(),
 }).superRefine((data, context) => {
   if (!data.orderedForSelf && !data.recipientName) context.addIssue({ code: 'custom', path: ['recipientName'], message: 'Recipient name is required.' });
   if (!data.orderedForSelf && !data.recipientRelationship) context.addIssue({ code: 'custom', path: ['recipientRelationship'], message: 'Relationship is required.' });
+  if (!data.orderedForSelf && !data.recipientDateOfBirth) context.addIssue({ code: 'custom', path: ['recipientDateOfBirth'], message: 'Recipient date of birth is required for medicine age checks.' });
 });
 
 export const reviewUploadSchema = z.object({

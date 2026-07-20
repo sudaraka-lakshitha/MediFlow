@@ -1035,6 +1035,24 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 .auth-page.simple { grid-template-columns: 1fr; background: var(--c-bg); }
 .auth-page.simple .auth-card { background: var(--c-surface); border: 1px solid var(--c-border); box-shadow: var(--shadow-md); }
 
+.prescription-text-viewer {
+  width: 100%;
+  min-height: 320px;
+  margin: 0;
+  padding: 20px;
+  overflow: auto;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: #fff;
+  color: var(--c-text);
+  font: 500 .9rem/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.audit-select-cell { width: 38px; text-align: center; }
+.audit-select-cell .form-check-input { margin: 0; cursor: pointer; }
+
 /* ─── Dashboard ──────────────────────────────────────────── */
 .dashboard-list-row {
   display: flex;

@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import { calculateDiscounts } from './discount.service.js';
 
 const summarySelect = {
-  id: true, originalName: true, mimeType: true, patientNote: true, prepareRequested: true, orderedForSelf: true, recipientName: true, recipientRelationship: true, status: true, availabilityNotes: true,
+  id: true, originalName: true, mimeType: true, patientNote: true, prepareRequested: true, orderedForSelf: true, recipientName: true, recipientRelationship: true, recipientDateOfBirth: true, status: true, availabilityNotes: true,
   estimatedTotal: true, estimateDetails: true, reviewedAt: true, createdAt: true, updatedAt: true, deleteAt: true,
   patient: { select: { id: true, fullName: true, email: true, patientProfile: { select: { id: true, patientNumber: true } } } },
   reviewedBy: { select: { id: true, fullName: true, role: true } },
@@ -45,7 +45,9 @@ export const prescriptionUploadService = {
       patientId: userId, originalName: data.originalName.replace(/[\\/\r\n"]/g, '_'), mimeType: data.mimeType,
       fileData, patientNote: data.patientNote || null, prepareRequested: data.prepareRequested,
       orderedForSelf: data.orderedForSelf, recipientName: data.orderedForSelf ? null : data.recipientName,
-      recipientRelationship: data.orderedForSelf ? null : data.recipientRelationship, deleteAt,
+      recipientRelationship: data.orderedForSelf ? null : data.recipientRelationship,
+      recipientDateOfBirth: data.orderedForSelf ? null : data.recipientDateOfBirth,
+      deleteAt,
     }, select: summarySelect });
   },
   async file(id, user) {

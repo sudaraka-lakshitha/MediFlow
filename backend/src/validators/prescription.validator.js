@@ -19,6 +19,9 @@ const retailItem = z.object({
   productId: z.coerce.number().int().positive(),
   quantity: z.coerce.number().positive().max(1_000_000),
 });
+const recipientBirthDate = z.coerce.date()
+  .refine((value) => value <= new Date(), 'Recipient date of birth cannot be in the future.')
+  .refine((value) => value.getUTCFullYear() >= 1895, 'Enter a valid recipient date of birth.');
 
 export const prescriptionSchema = z.object({
   patientId: z.coerce.number().int().positive(),
@@ -28,6 +31,7 @@ export const prescriptionSchema = z.object({
   prescriberReference: z.string().trim().max(100).optional().nullable(), prescriptionDate: z.coerce.date(),
   orderedForSelf: z.boolean().default(true), recipientName: z.string().trim().max(150).optional().nullable(),
   recipientRelationship: z.string().trim().max(100).optional().nullable(),
+  recipientDateOfBirth: recipientBirthDate.optional().nullable(),
   notes: z.string().trim().max(1000).optional().nullable(),
   pickupNote: z.string().trim().max(500).optional().nullable(),
   plannedPickupAt: z.coerce.date().optional().nullable(),
@@ -35,7 +39,7 @@ export const prescriptionSchema = z.object({
   retailItems: z.array(retailItem).max(50).default([]),
   refillsAllowed: z.coerce.number().int().min(0).max(12).default(0),
 }).superRefine((data,context)=>{
-  if(!data.orderedForSelf){if(!data.recipientName)context.addIssue({code:'custom',path:['recipientName'],message:'Recipient name is required.'});if(!data.recipientRelationship)context.addIssue({code:'custom',path:['recipientRelationship'],message:'Relationship is required.'})}
+  if(!data.orderedForSelf){if(!data.recipientName)context.addIssue({code:'custom',path:['recipientName'],message:'Recipient name is required.'});if(!data.recipientRelationship)context.addIssue({code:'custom',path:['recipientRelationship'],message:'Relationship is required.'});if(!data.recipientDateOfBirth)context.addIssue({code:'custom',path:['recipientDateOfBirth'],message:'Recipient date of birth is required for medicine age checks.'})}
   if(new Set(data.retailItems.map((retail)=>retail.productId)).size!==data.retailItems.length)context.addIssue({code:'custom',path:['retailItems'],message:'Each retail item can appear only once.'});
 });
 export const refillSchema = z.object({ notes: z.string().trim().max(1000).optional().nullable() });

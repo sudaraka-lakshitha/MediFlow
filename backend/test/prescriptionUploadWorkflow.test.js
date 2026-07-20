@@ -22,4 +22,34 @@ describe('prescription upload workflow validation', () => {
     });
     expect(result.success).toBe(true);
   });
+
+  it('requires a recipient birth date when medicines are for someone else', () => {
+    const result = uploadPrescriptionSchema.safeParse({
+      originalName: 'child-prescription.txt',
+      mimeType: 'text/plain',
+      fileBase64: Buffer.from('Paracetamol prescription').toString('base64'),
+      prepareRequested: true,
+      orderedForSelf: false,
+      recipientName: 'Test Child',
+      recipientRelationship: 'Child',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.some((issue) => issue.path[0] === 'recipientDateOfBirth')).toBe(true);
+  });
+
+  it('accepts third-party uploads with recipient age details', () => {
+    const result = uploadPrescriptionSchema.safeParse({
+      originalName: 'child-prescription.txt',
+      mimeType: 'text/plain',
+      fileBase64: Buffer.from('Paracetamol prescription').toString('base64'),
+      prepareRequested: true,
+      orderedForSelf: false,
+      recipientName: 'Test Child',
+      recipientRelationship: 'Child',
+      recipientDateOfBirth: '2018-06-15',
+    });
+
+    expect(result.success).toBe(true);
+  });
 });
