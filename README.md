@@ -2,7 +2,7 @@
 
 > **Academic prototype.** Not intended for clinical or production use. All interaction indicators, label data, and research results must be verified by a qualified pharmacist using authoritative clinical references before dispensing.
 
-MediFlow is a full-stack pharmacy operations prototype built with **React + TypeScript** (frontend), **Node.js + Express** (backend), **Prisma ORM**, and **PostgreSQL**. It covers prescription dispensing, batch-level stock control, drug research, cashier payments, patient management, and administrative auditing.
+MediFlow is a full-stack pharmacy operations prototype built with **React + TypeScript** (frontend), **Node.js + Express** (backend), **Prisma ORM**, and **MySQL/MariaDB through XAMPP**. It covers prescription dispensing, batch-level stock control, drug research, cashier payments, patient management, and administrative auditing.
 
 ---
 
@@ -10,7 +10,7 @@ MediFlow is a full-stack pharmacy operations prototype built with **React + Type
 
 1. [Prerequisites](#1-prerequisites)
 2. [Clone the repository](#2-clone-the-repository)
-3. [Create the PostgreSQL database](#3-create-the-postgresql-database)
+3. [Create the XAMPP MySQL database](#3-create-the-xampp-mysql-database)
 4. [Configure the backend](#4-configure-the-backend)
 5. [Install dependencies](#5-install-dependencies)
 6. [Run migrations and seed demo data](#6-run-migrations-and-seed-demo-data)
@@ -31,7 +31,7 @@ Install the following before you begin:
 |---|---|---|
 | Node.js | 20 LTS | https://nodejs.org |
 | npm | 10 (bundled with Node 20) | — |
-| PostgreSQL | 15 or newer | https://www.postgresql.org/download/ |
+| XAMPP | 8.2 or newer | https://www.apachefriends.org/ |
 | Git | any | https://git-scm.com |
 
 Verify your versions:
@@ -39,10 +39,10 @@ Verify your versions:
 ```powershell
 node --version   # v20.x.x or newer
 npm --version    # 10.x.x or newer
-psql --version   # psql (PostgreSQL) 15.x or newer
+& "C:\xampp\mysql\bin\mysql.exe" --version
 ```
 
-> **Windows tip:** After installing PostgreSQL, add its `bin` directory to your system PATH (e.g. `C:\Program Files\PostgreSQL\17\bin`) so that `psql` is available in PowerShell.
+> XAMPP does not need to be added to PATH. The commands below use its full executable path.
 
 ---
 
@@ -55,20 +55,15 @@ cd MediFlow
 
 ---
 
-## 3. Create the PostgreSQL database
+## 3. Create the XAMPP MySQL database
 
-Open PowerShell and run the following. Replace `postgres` with your PostgreSQL superuser name if different:
+Open the XAMPP Control Panel and start **MySQL**, then run:
 
 ```powershell
-psql -U postgres -h localhost -c "CREATE DATABASE mediflow;"
+& "C:\xampp\mysql\bin\mysql.exe" -u root -e "CREATE DATABASE mediflow CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE USER IF NOT EXISTS 'mediflow_user'@'localhost' IDENTIFIED BY 'YOUR_PASSWORD'; GRANT ALL PRIVILEGES ON mediflow.* TO 'mediflow_user'@'localhost'; FLUSH PRIVILEGES;"
 ```
 
-You will be prompted for the PostgreSQL password you set during installation.
-
-> **If `psql` is not found**, use the full path:
-> ```powershell
-> & "C:\Program Files\PostgreSQL\17\bin\psql.exe" -U postgres -h localhost -c "CREATE DATABASE mediflow;"
-> ```
+If the XAMPP root account has a password, add `-p` after `-u root` and enter it when prompted. Replace `YOUR_PASSWORD` with a strong local development password.
 
 ---
 
@@ -86,9 +81,9 @@ Open `backend\.env` in any text editor and update the following values:
 
 ```env
 # ─── Database ────────────────────────────────────────────────────────────────
-# Replace YOUR_PASSWORD with the PostgreSQL password you set during installation.
+# Use the password assigned to mediflow_user in step 3.
 # If your password contains @ : / or # — URL-encode those characters.
-DATABASE_URL="postgresql://postgres:YOUR_PASSWORD@localhost:5432/mediflow?schema=public"
+DATABASE_URL="mysql://mediflow_user:YOUR_PASSWORD@localhost:3306/mediflow"
 
 # ─── Security ────────────────────────────────────────────────────────────────
 # Replace with a random string of at least 32 characters. Keep this secret.
@@ -270,31 +265,23 @@ npm run verify
 
 ## 11. Troubleshooting
 
-### `psql` is not recognized
+### XAMPP MySQL is not available
 
-Add the PostgreSQL `bin` folder to your PATH:
+Open `C:\xampp\xampp-control.exe` and click **Start** next to MySQL. The default port is `3306`.
 
-1. Search for **"Edit the system environment variables"** in Windows.
-2. Click **Environment Variables → Path → Edit → New**.
-3. Add: `C:\Program Files\PostgreSQL\17\bin` (adjust version number as needed).
-4. Restart PowerShell.
+If XAMPP is installed outside `C:\xampp`, use the matching installation path in the setup commands.
 
-### `ECONNREFUSED` on port 5432
+### `ECONNREFUSED` on port 3306
 
-PostgreSQL service is not running. Start it:
+XAMPP MySQL is not running. Start it from the XAMPP Control Panel.
 
-```powershell
-# Start PostgreSQL service (replace 'postgresql-x64-17' with your installed version)
-Start-Service -Name "postgresql-x64-17"
-```
-
-Or open **Services** (`services.msc`) and start the PostgreSQL service manually.
+If port 3306 is occupied, stop the conflicting database service or configure the same alternative port in XAMPP and `DATABASE_URL`.
 
 ### `P1001: Can't reach database server`
 
 1. Verify `DATABASE_URL` in `backend\.env` — check the password and port.
 2. Ensure the `mediflow` database was created (step 3).
-3. Confirm PostgreSQL is running on port 5432.
+3. Confirm XAMPP MySQL is running on port 3306.
 
 ### Port 5000 or 5173 already in use
 
@@ -376,7 +363,7 @@ MediFlow/
 - **Services** own all business rules, validations, and database transactions.
 - **Prisma** uses parameterized queries throughout — no raw SQL string concatenation.
 - **JWT sessions** are revocable: the backend checks a `sessionVersion` field on every authenticated request.
-- **Dispensing** is executed in a serializable PostgreSQL transaction with automatic conflict retry.
+- **Dispensing** is executed in a serializable MySQL transaction with automatic conflict retry.
 - **FIFO/FEFO** batch allocation is administrator-configurable from System Settings.
 - **Route-level code splitting** (React lazy) keeps the initial bundle small.
 

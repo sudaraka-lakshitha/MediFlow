@@ -15,6 +15,7 @@ const prepareProductData = async (tx, data) => {
     activeIngredient: null, strength: optionalText(data.strength) || 'N/A', dosageForm: optionalText(data.dosageForm) || 'Retail item', unit: data.unit.trim().toLowerCase(),
     variantGroup: optionalText(data.variantGroup), barcode: optionalText(data.barcode), manufacturerId: data.manufacturerId || null,
     manufacturerName: null, sellingPrice: data.sellingPrice, reorderLevel: data.reorderLevel, prescriptionRequired: false,
+    minimumAgeYears: null, maximumAgeYears: null,
     categoryId: data.categoryId, rxNormCui: null, pubchemCid: null, smiles: null, storageInstructions: optionalText(data.storageInstructions), drugConceptId: null,
     ...(typeof data.active === 'boolean' ? { active: data.active } : {}),
   };
@@ -37,6 +38,7 @@ const prepareProductData = async (tx, data) => {
     manufacturerName: null, sellingPrice: data.sellingPrice, reorderLevel: data.reorderLevel,
     prescriptionRequired: data.prescriptionRequired, categoryId: data.categoryId, rxNormCui: optionalText(data.rxNormCui),
     pubchemCid: data.pubchemCid || null, smiles: optionalText(data.smiles), storageInstructions: optionalText(data.storageInstructions), drugConceptId: concept.id,
+    minimumAgeYears: data.minimumAgeYears ?? null, maximumAgeYears: data.maximumAgeYears ?? null,
     ...(typeof data.active === 'boolean' ? { active: data.active } : {}),
   };
 };

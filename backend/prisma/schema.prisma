@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -235,6 +235,8 @@ model Product {
   pubchemCid              Int?                      @map("pubchem_cid")
   smiles                  String?
   storageInstructions     String?                   @map("storage_instructions") @db.VarChar(300)
+  minimumAgeYears         Int?                      @map("minimum_age_years")
+  maximumAgeYears         Int?                      @map("maximum_age_years")
   drugConceptId           Int?                      @map("drug_concept_id")
   sellingPrice            Decimal                   @map("selling_price") @db.Decimal(12, 2)
   reorderLevel            Int                       @default(0) @map("reorder_level")
@@ -306,7 +308,7 @@ model InventoryBatch {
   receivedAt        DateTime         @default(now()) @map("received_at")
   restricted        Boolean          @default(false)
   restrictionReason String?          @map("restriction_reason") @db.VarChar(500)
-  restrictedAt      DateTime?        @map("restricted_at") @db.Timestamptz(3)
+  restrictedAt      DateTime?        @map("restricted_at") @db.DateTime(3)
   product           Product          @relation(fields: [productId], references: [id])
   supplier          Supplier?        @relation(fields: [supplierId], references: [id])
   dispensingItems   DispensingItem[]
@@ -360,14 +362,14 @@ model Prescription {
   prescriberTitle         String?                   @map("prescriber_title") @db.VarChar(20)
   prescriberName          String                    @map("prescriber_name") @db.VarChar(150)
   prescriberReference     String?                   @map("prescriber_reference") @db.VarChar(100)
-  prescriptionDate        DateTime                  @map("prescription_date") @db.Timestamptz(3)
+  prescriptionDate        DateTime                  @map("prescription_date") @db.DateTime(3)
   status                  PrescriptionStatus        @default(PENDING)
   orderedForSelf          Boolean                   @default(true) @map("ordered_for_self")
   recipientName           String?                   @map("recipient_name") @db.VarChar(150)
   recipientRelationship   String?                   @map("recipient_relationship") @db.VarChar(100)
   notes                   String?
   pickupNote              String?                   @map("pickup_note") @db.VarChar(500)
-  plannedPickupAt         DateTime?                 @map("planned_pickup_at") @db.Timestamptz(3)
+  plannedPickupAt         DateTime?                 @map("planned_pickup_at") @db.DateTime(3)
   rejectionReason         String?                   @map("rejection_reason")
   refillsAllowed          Int                       @default(0) @map("refills_allowed")
   refillsUsed             Int                       @default(0) @map("refills_used")
@@ -551,7 +553,7 @@ model PrescriptionUpload {
   patientId         Int                @map("patient_id")
   originalName      String             @map("original_name") @db.VarChar(180)
   mimeType          String             @map("mime_type") @db.VarChar(80)
-  fileData          Bytes              @map("file_data") @db.ByteA
+  fileData          Bytes              @map("file_data") @db.LongBlob
   patientNote       String?            @map("patient_note") @db.VarChar(500)
   prepareRequested  Boolean            @default(true) @map("prepare_requested")
   orderedForSelf    Boolean            @default(true) @map("ordered_for_self")

@@ -48,6 +48,8 @@ type RxItem = {
     unit: string;
     sellingPrice: string;
     storageInstructions?: string;
+    minimumAgeYears?: number | null;
+    maximumAgeYears?: number | null;
   };
 };
 type StaffActor = { id: number; fullName: string; role?: string };
@@ -1262,17 +1264,6 @@ export function PrescriptionsPage() {
                       )}
                     </div>
                   )}
-                  {staff && rx.status !== "DISPENSED" && rx.status !== "REJECTED" && (
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-outline-secondary py-1 px-2 mt-2 d-flex align-items-center gap-1"
-                      style={{ fontSize: '12px', minHeight: '26px' }}
-                      onClick={() => openCollectionModal(rx)}
-                    >
-                      <i className="bi bi-calendar-event me-1" />
-                      {rx.pickupNote || rx.plannedPickupAt ? "Update collection details" : "Schedule pickup & note"}
-                    </button>
-                  )}
                   {(rx.sourceUpload || rx.paymentRequest) && (
                     <div className="mt-2">
                       {rx.sourceUpload && (
@@ -1662,6 +1653,8 @@ export function PrescriptionsPage() {
                     patient={patients.find(
                       (candidate) => candidate.id === Number(form.patientId),
                     )}
+                    referenceDate={form.prescriptionDate}
+                    medicines={form.items.map((item: Line) => products.find((product) => product.id === Number(item.productId))).filter(Boolean)}
                   />
                 </div>
                 <div>
@@ -1781,32 +1774,6 @@ export function PrescriptionsPage() {
                     </div>
                   </>
                 )}
-                <div className="full border rounded-3 p-3 bg-light mt-2">
-                  <strong className="d-block mb-2 text-primary">
-                    <i className="bi bi-clock-history me-1" />
-                    Collection details (Optional)
-                  </strong>
-                  <div className="row g-2">
-                    <div className="col-md-4">
-                      <label className="form-label small">Estimated pickup date/time</label>
-                      <FriendlyDateTimePicker value={form.plannedPickupAt} onChange={(plannedPickupAt) => setForm({ ...form, plannedPickupAt })} futureOnly optional />
-                    </div>
-                    <div className="col-md-8">
-                      <label className="form-label small">Note for pharmacy (e.g. who will collect, packing requests)</label>
-                      <input
-                        className="form-control"
-                        placeholder="e.g. My spouse will collect this around 6 PM after work."
-                        value={form.pickupNote}
-                        onChange={(event) =>
-                          setForm({
-                            ...form,
-                            pickupNote: event.target.value,
-                          })
-                        }
-                      />
-                    </div>
-                  </div>
-                </div>
               </div>
               <h4 className="fs-6 mt-4">Medicine items</h4>
               {form.items.map((item: Line, index: number) => {
@@ -2501,6 +2468,8 @@ export function PrescriptionsPage() {
               </div>
               <PatientClinicalWarning
                 patient={patients.find((p) => p.id === action.rx.patient.id)}
+                referenceDate={action.rx.prescriptionDate}
+                medicines={action.rx.items.map((item) => item.product)}
               />
               <div className="workflow-section-heading">
                 <span className="workflow-step">1</span>
@@ -3368,16 +3337,27 @@ function FriendlyDateTimePicker({ value, onChange, futureOnly = false, optional 
   );
 }
 
-function PatientClinicalWarning({ patient }: { patient?: any }) {
+function PatientClinicalWarning({ patient, referenceDate, medicines = [] }: { patient?: any; referenceDate?: string; medicines?: any[] }) {
   if (!patient) return null;
   const isRecorded = (value?: string | null) =>
     Boolean(value?.trim() && value.trim().toLowerCase() !== "none");
   const hasAllergies = isRecorded(patient.allergies);
   const hasConditions = isRecorded(patient.chronicConditions);
+  const age = patient.dateOfBirth ? (() => {
+    const birth = new Date(patient.dateOfBirth);
+    const today = referenceDate ? new Date(referenceDate) : new Date();
+    let years = today.getFullYear() - birth.getFullYear();
+    if (today.getMonth() < birth.getMonth() || (today.getMonth() === birth.getMonth() && today.getDate() < birth.getDate())) years -= 1;
+    return years;
+  })() : null;
+  const unsuitable = age == null ? [] : medicines.filter((medicine) =>
+    (medicine.minimumAgeYears != null && age < Number(medicine.minimumAgeYears)) ||
+    (medicine.maximumAgeYears != null && age > Number(medicine.maximumAgeYears)),
+  );
 
   return (
     <div
-      className={`patient-clinical-warning alert ${hasAllergies || hasConditions ? "alert-warning" : "alert-light border"} mb-3`}
+      className={`patient-clinical-warning alert ${hasAllergies || hasConditions || unsuitable.length ? "alert-warning" : "alert-light border"} mb-3`}
       role="status"
       aria-live="polite"
     >
@@ -3386,6 +3366,10 @@ function PatientClinicalWarning({ patient }: { patient?: any }) {
         Patient clinical information
       </h5>
       <div className="patient-clinical-details">
+        <div className={`small ${age == null ? "text-danger fw-semibold" : ""}`}>
+          <strong>Age:</strong>{" "}
+          {age == null ? "Date of birth required before prescribing" : `${age} years (${new Date(patient.dateOfBirth).toLocaleDateString()})`}
+        </div>
         <div className="small">
           <strong>Allergies:</strong>{" "}
           {hasAllergies ? patient.allergies : "None recorded"}
@@ -3394,6 +3378,10 @@ function PatientClinicalWarning({ patient }: { patient?: any }) {
           <strong>Chronic conditions:</strong>{" "}
           {hasConditions ? patient.chronicConditions : "None recorded"}
         </div>
+        {unsuitable.length > 0 && <div className="small text-danger fw-semibold mt-2">
+          <i className="bi bi-exclamation-triangle me-1" />
+          Age warning: {unsuitable.map((medicine) => `${medicine.genericName} (allowed ${medicine.minimumAgeYears ?? 0}–${medicine.maximumAgeYears ?? "no maximum"} years)`).join(", ")}
+        </div>}
       </div>
     </div>
   );

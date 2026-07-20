@@ -12,10 +12,10 @@ import { parseCsv } from '../utils/csv';
 type Category = { id: number; name: string; description?: string; active: boolean };
 type Supplier = { id: number; name: string; contactPerson?: string; phone?: string; email?: string; address?: string; active: boolean };
 type Manufacturer = { id: number; name: string; country?: string; website?: string; phone?: string; email?: string; active: boolean };
-type Product = { id: number; sku: string; productType: 'MEDICINE' | 'NON_MEDICINAL'; genericName: string; brandName?: string; activeIngredient?: string; strength: string; dosageForm: string; unit: string; variantGroup?: string; barcode?: string; manufacturerId?: number; manufacturer?: Manufacturer; manufacturerName?: string; storageInstructions?: string; sellingPrice: string; reorderLevel: number; prescriptionRequired: boolean; active: boolean; categoryId: number; category: Category; rxNormCui?: string; pubchemCid?: number; smiles?: string; batches: { quantityAvailable: number }[] };
+type Product = { id: number; sku: string; productType: 'MEDICINE' | 'NON_MEDICINAL'; genericName: string; brandName?: string; activeIngredient?: string; strength: string; dosageForm: string; unit: string; variantGroup?: string; barcode?: string; manufacturerId?: number; manufacturer?: Manufacturer; manufacturerName?: string; storageInstructions?: string; minimumAgeYears?: number | null; maximumAgeYears?: number | null; sellingPrice: string; reorderLevel: number; prescriptionRequired: boolean; active: boolean; categoryId: number; category: Category; rxNormCui?: string; pubchemCid?: number; smiles?: string; batches: { quantityAvailable: number }[] };
 type Tab = 'products' | 'categories' | 'suppliers' | 'manufacturers';
 
-const productEmpty = { sku: '', productType: 'MEDICINE', genericName: '', brandName: '', activeIngredient: '', strength: '', dosageForm: 'Tablet', unit: 'tablet', manufacturerId: 0, storageInstructions: 'Store below 25°C in a dry place.', sellingPrice: 0, reorderLevel: 10, prescriptionRequired: true, categoryId: 0 };
+const productEmpty = { sku: '', productType: 'MEDICINE', genericName: '', brandName: '', activeIngredient: '', strength: '', dosageForm: 'Tablet', unit: 'tablet', manufacturerId: 0, storageInstructions: 'Store below 25°C in a dry place.', minimumAgeYears: '', maximumAgeYears: '', sellingPrice: 0, reorderLevel: 10, prescriptionRequired: true, categoryId: 0 };
 const categoryEmpty = { name: '', description: '' };
 const supplierEmpty = { name: '', contactPerson: '', phone: '', email: '', address: '' };
 const manufacturerEmpty = { name: '', country: '', website: '', phone: '', email: '' };
@@ -64,6 +64,7 @@ export function CatalogPage() {
     if (kind === 'product') {
       setSkuModified(record ? true : false);
       setProductForm(record ? { sku: record.sku, productType: record.productType || 'MEDICINE', genericName: record.genericName, brandName: record.brandName || '', activeIngredient: record.activeIngredient || record.genericName, strength: record.strength, dosageForm: record.dosageForm, unit: record.unit, manufacturerId: record.manufacturerId || 0, storageInstructions: record.storageInstructions || '', sellingPrice: Number(record.sellingPrice), reorderLevel: record.reorderLevel, prescriptionRequired: record.prescriptionRequired, categoryId: record.categoryId } : { ...productEmpty });
+      if (record) setProductForm((current: any) => ({ ...current, minimumAgeYears: record.minimumAgeYears ?? '', maximumAgeYears: record.maximumAgeYears ?? '' }));
     }
     if (kind === 'category') setCategoryForm(record ? { name: record.name, description: record.description || '' } : { ...categoryEmpty });
     if (kind === 'supplier') setSupplierForm(record ? { name: record.name, contactPerson: record.contactPerson || '', phone: record.phone || '', email: record.email || '', address: record.address || '' } : { ...supplierEmpty });
@@ -136,6 +137,10 @@ export function CatalogPage() {
           <SearchableSelect options={categories.filter((item) => item.active).map((item) => ({ value: item.id, label: item.name }))} value={productForm.categoryId} onChange={(categoryId) => setProductForm({ ...productForm, categoryId })} placeholder="Search category" required />
         </div>
         <TextField label="Storage instructions" tooltip="How to store this product (e.g. Store below 25°C in a dry place, Store refrigerated at 2–8°C). Printed on dispensing labels." value={productForm.storageInstructions} onChange={(storageInstructions) => setProductForm({ ...productForm, storageInstructions })} list="storage-options" />
+        {productForm.productType === 'MEDICINE' && <>
+          <NumberField label="Minimum patient age (years)" tooltip="Optional verified lower age limit for this exact medicine, strength, and dosage form." value={productForm.minimumAgeYears} onChange={(minimumAgeYears) => setProductForm({ ...productForm, minimumAgeYears })} />
+          <NumberField label="Maximum patient age (years)" tooltip="Optional verified upper age limit for this exact medicine, strength, and dosage form." value={productForm.maximumAgeYears} onChange={(maximumAgeYears) => setProductForm({ ...productForm, maximumAgeYears })} />
+        </>}
         <NumberField label="Selling price (Rs.)" tooltip="Retail selling price per stock unit in Sri Lankan Rupees. Used for invoice generation and sales reports." value={productForm.sellingPrice} onChange={(sellingPrice) => setProductForm({ ...productForm, sellingPrice })} step="0.01" />
         <NumberField label="Reorder level" tooltip="Minimum stock quantity that triggers a low-stock alert on the dashboard. Set based on typical weekly dispensing volume." value={productForm.reorderLevel} onChange={(reorderLevel) => setProductForm({ ...productForm, reorderLevel })} />
       </div>

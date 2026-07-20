@@ -44,7 +44,7 @@ graph TD
 ### Slide 2: Core Full-Stack Architecture
 
 #### Slide Content
-*   **Relational Database (RDBMS)**: **PostgreSQL** (via **Prisma ORM**)
+*   **Relational Database (RDBMS)**: **MySQL/MariaDB via XAMPP** (managed through **Prisma ORM**)
     *   *Rationale*: Ensures ACID compliance for strict ledger accounting. Uses serializable transactions for inventory adjustments to prevent double-allocation/race conditions under concurrent load. Native support for indexed JSON metadata in logs.
 *   **REST API Backend**: **Node.js + Express**
     *   *Rationale*: Async event loop processes high volumes of concurrent I/O requests. Thin controller layers coupled with service-based transactional logic maintain clean modular separation.
@@ -52,12 +52,12 @@ graph TD
     *   *Rationale*: Strongly-typed states eliminate client-side crash vectors. Decoupled architecture separates content delivery (CDN-level static assets) from processing units.
 *   **Deployment Mapping**:
     *   *Production Node.js Backend*: Render / AWS EC2
-    *   *Production PostgreSQL*: Supabase / AWS RDS
+    *   *Production MySQL*: AWS RDS / DigitalOcean Managed MySQL
     *   *Production SPA Client*: Vercel / Cloudflare CDN
 
 #### Speaker Notes (Member 1)
 > "Let's dive into the core architecture. We chose a decoupled, full-stack structure. 
-> For our database, we selected PostgreSQL, managed via Prisma ORM. PostgreSQL is critical because pharmacy operations require strict transactional integrity—you cannot have two checkouts consuming the same inventory batch simultaneously. Prisma enforces type-safe queries and manages automated SQL parameters, preventing SQL injection out-of-the-box.
+> For our database, we selected MySQL/MariaDB through XAMPP for a simple, repeatable local setup, managed via Prisma ORM. Pharmacy operations use ACID transactions and serializable isolation so two checkouts cannot consume the same inventory batch simultaneously. Prisma provides type-safe parameterized queries that prevent SQL injection.
 > On the server side, Node.js and Express handle the asynchronous rest layer, keeping routers thin and pushing all business rules into robust services. 
 > Our frontend is a Single Page Application built on React, TypeScript, and Vite, which allows us to compile optimized static assets that can be distributed globally via CDNs, while communicating with our API server through JWT-secured endpoints."
 
@@ -127,7 +127,7 @@ graph TD
     *   API protection: Strict CORS whitelisting, HTTP-only cookie potential, and parameterized query execution via Prisma ORM (eliminating SQL injections).
 *   **Revocable JWT Authentication (revJWT)**:
     ```
-    User Client            Express Middleware           PostgreSQL DB
+    User Client            Express Middleware             MySQL DB
         │                           │                          │
         ├──── JWT (version: 1) ────>┤                          │
         │                           ├──── Check tokenVersion ─>┤ (returns: 1)
@@ -176,14 +176,14 @@ graph TD
     *   *Self-Documenting API*: Express routing is fully documented via Swagger and conforms to the OpenAPI specification.
     *   *Standard Vocabularies*: The database tracks clinical reference standards (RxNorm CUIs, PubChem CIDs, and SMILES chemical formulas), allowing quick integration with external Electronic Health Records (EHR) and drug concept registries.
 *   **System Portability**:
-    *   *Database Portability*: By abstraction through Prisma, the RDBMS backend can switch from PostgreSQL to Microsoft SQL Server, MySQL, or Oracle by swapping the environment connection string and running schema sync.
+    *   *Database Portability*: Prisma keeps database access centralized and provides versioned MySQL schema migrations.
     *   *Decoupled SPA Hosting*: The React bundle is fully compiled. The static assets can run on any web server (Apache, Nginx, IIS) or cloud storage bucket (AWS S3) without backend modifications.
 
 #### Speaker Notes (Member 2)
 > "We structured MediFlow with extensibility and portability in mind from day one. 
 > To support future integrations, our entire REST API is mapped using the OpenAPI specification. External systems like hospital EHRs or insurance portals can consume our endpoints securely. 
 > Furthermore, we store standard RxNorm Concept Unique Identifiers (CUIs) and PubChem compound IDs in our medicine table, allowing automatic sync with federal drug reference databases.
-> For portability, because we use Prisma ORM, we are not locked into PostgreSQL. Swapping to MySQL, Oracle, or SQL Server is as simple as updating a single environment variable and running the migration tool. 
+> Prisma keeps database access type-safe and centralized. The project includes a reproducible MySQL baseline migration for XAMPP and can later deploy to managed MySQL without changing application workflows.
 > The frontend can be built and deployed to any server or CDN, ensuring we can migrate the hosting infrastructure without code refactoring."
 
 ---
@@ -193,7 +193,7 @@ graph TD
 #### Slide Content
 *   **Identified Risks & Technical Mitigations**:
     1.  *Race Conditions in Inventory*: Simultaneous checkout/dispensing events could double-sell a single batch.
-        *   *Mitigation*: Isolation level is set to `SERIALIZABLE` in PostgreSQL for dispensing transactions, paired with automatic transaction retries on serialization failure.
+        *   *Mitigation*: Isolation level is set to `SERIALIZABLE` in MySQL for dispensing transactions, paired with automatic transaction retries on serialization failure.
     2.  *DDI Alert Fatigue/Accuracy*: Frequent minor alerts cause pharmacists to ignore warning windows.
         *   *Mitigation*: Multi-tier classification (MAJOR, MODERATE, MINOR). MAJOR locks checkout; minor alerts are non-intrusive. Clear visual disclaimer is displayed.
 *   **Timeline Roadmap**:
@@ -207,7 +207,7 @@ graph TD
 
 #### Speaker Notes (Member 2)
 > "Finally, let's address our risk matrix and project timeline. 
-> Our main technical risk is database race conditions. If two cashiers sell the same medicine box at the same time, it could lead to stock discrepancies. We mitigated this by wrapping our billing actions in PostgreSQL serializable transactions, which reject concurrent edits and execute automated retries.
+> Our main technical risk is database race conditions. If two cashiers sell the same medicine box at the same time, it could lead to stock discrepancies. We mitigated this with MySQL serializable transactions, atomic workflow claims, and automatic conflict retries.
 > We also planned for DDI alert fatigue by classifying warnings into Major, Moderate, and Minor severities, ensuring pharmacists only face interruption blocks for critical events.
 > Our timeline shows we completed Phase 1 database design and Phase 2 backend REST engines on schedule. Following today's presentation, we will proceed into Phase 3, connecting our reporting generators and polishing the dashboard interfaces ahead of our final deployment in September.
 > Thank you, and we welcome any questions you may have."
@@ -219,14 +219,14 @@ graph TD
 This guide compiles potential questions from examiners and highly technical, project-specific answers you can deliver during the Q&A segment.
 
 ### 1. Database & Transactions
-*   **Question**: *Why did you choose PostgreSQL over MySQL? How does your system handle inventory race conditions if two pharmacists dispense the same batch at the same instant?*
+*   **Question**: *Why did you choose MySQL through XAMPP, and how does the system handle inventory race conditions?*
 *   **Answer**: 
-    > "We chose PostgreSQL because of its robust transaction isolation model and rich JSON index support. To prevent double-allocation or stock race conditions, our dispensing logic runs inside a `SERIALIZABLE` transaction isolation level. If two requests attempt to allocate stock from the same inventory batch simultaneously, PostgreSQL detects the serialization conflict and rolls back one of the transactions. Our service layer includes an automatic retry handler that catches serialization errors, fetches the refreshed stock level, and runs the allocation check again, avoiding crashes while preserving data integrity."
+    > "We chose MySQL/MariaDB through XAMPP because it gives the team a simple, repeatable local database environment while still providing ACID transactions. Dispensing runs at SERIALIZABLE isolation and uses atomic state claims plus retry handling, preventing two staff members from processing the same stock or payment request."
 
 ### 2. JWT Revocation (revJWT)
 *   **Question**: *You mentioned your JWT tokens are stateless, yet you claim they are revocable. Doesn't validating a version number on every request require database access, defeating the purpose of a stateless JWT?*
 *   **Answer**:
-    > "Stateless JWTs suffer from the inability to be invalidated before expiry. To solve this without maintaining a memory-heavy blacklist database (like Redis), we introduced a `tokenVersion` check. Although it performs a database query on authenticated requests, this read is an indexed primary key lookup on the `User` table, which is highly optimized by PostgreSQL. This trade-off is highly acceptable in a security-first clinical application, guaranteeing that password resets, account locking, or logouts globally terminate active sessions immediately rather than waiting for token expiration."
+    > "Stateless JWTs suffer from the inability to be invalidated before expiry. To solve this without maintaining a memory-heavy blacklist database (like Redis), we introduced a `tokenVersion` check. Although it performs a database query on authenticated requests, this read is an indexed primary key lookup on the `User` table, which is highly optimized by MySQL. This trade-off is highly acceptable in a security-first clinical application, guaranteeing that password resets, account locking, or logouts globally terminate active sessions immediately rather than waiting for token expiration."
 
 ### 3. Drug-Drug Interactions (DDI)
 *   **Question**: *How is the DDI predictive system trained, and what is your backup when the model fails to predict an interaction?*

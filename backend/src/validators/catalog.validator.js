@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+const optionalAge = z.preprocess((value) => value === '' || value == null ? null : value, z.coerce.number().int().min(0).max(130).nullable());
+
 export const categorySchema = z.object({ name: z.string().trim().min(2).max(100), description: z.string().trim().max(300).optional().nullable() });
 export const supplierSchema = z.object({
   name: z.string().trim().min(2).max(150), contactPerson: z.string().trim().max(150).optional().nullable(),
@@ -15,11 +17,14 @@ export const productSchema = z.object({
   rxNormCui: z.string().trim().max(30).optional().nullable(), pubchemCid: z.coerce.number().int().positive().optional().nullable(),
   smiles: z.string().trim().max(2000).optional().nullable(), storageInstructions: z.string().trim().max(300).optional().nullable(), sellingPrice: z.coerce.number().nonnegative(),
   reorderLevel: z.coerce.number().int().nonnegative(), prescriptionRequired: z.boolean().default(true),
+  minimumAgeYears: optionalAge.optional(),
+  maximumAgeYears: optionalAge.optional(),
   categoryId: z.coerce.number().int().positive(),
 }).superRefine((data, context) => {
   if (data.productType === 'MEDICINE' && !data.strength) context.addIssue({ code: 'custom', path: ['strength'], message: 'Strength is required for medicines.' });
   if (data.productType === 'MEDICINE' && !data.dosageForm) context.addIssue({ code: 'custom', path: ['dosageForm'], message: 'Dosage form is required for medicines.' });
   if (data.productType === 'NON_MEDICINAL' && data.prescriptionRequired) context.addIssue({ code: 'custom', path: ['prescriptionRequired'], message: 'Non-medicinal items cannot require a prescription.' });
+  if (data.minimumAgeYears != null && data.maximumAgeYears != null && data.minimumAgeYears > data.maximumAgeYears) context.addIssue({ code: 'custom', path: ['maximumAgeYears'], message: 'Maximum age must be greater than or equal to minimum age.' });
 });
 
 export const manufacturerSchema = z.object({

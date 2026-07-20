@@ -22,6 +22,23 @@ const isLiquidProduct = (product) =>
   ['ml', 'millilitre', 'milliliter', 'l', 'litre', 'liter'].includes(String(product?.unit || '').toLowerCase())
   || /syrup|suspension|solution|elixir|liquid/i.test(String(product?.dosageForm || ''));
 
+const ageOnDate = (dateOfBirth, onDate) => {
+  const birth = new Date(dateOfBirth);
+  const date = new Date(onDate);
+  let age = date.getUTCFullYear() - birth.getUTCFullYear();
+  if (date.getUTCMonth() < birth.getUTCMonth() || (date.getUTCMonth() === birth.getUTCMonth() && date.getUTCDate() < birth.getUTCDate())) age -= 1;
+  return age;
+};
+
+const validatePatientAge = async (patientId, prescriptionDate, products) => {
+  const patient = await prisma.patientProfile.findUnique({ where: { id: patientId }, select: { dateOfBirth: true } });
+  if (!patient?.dateOfBirth) throw new AppError(400, 'Record the patient date of birth before prescribing medicine so age suitability can be checked.');
+  const age = ageOnDate(patient.dateOfBirth, prescriptionDate);
+  if (age < 0 || age > 130) throw new AppError(400, 'The patient date of birth is invalid for the prescription date.');
+  const unsuitable = products.filter((product) => (product.minimumAgeYears != null && age < product.minimumAgeYears) || (product.maximumAgeYears != null && age > product.maximumAgeYears));
+  if (unsuitable.length) throw new AppError(400, `${unsuitable.map((product) => product.genericName).join(', ')} ${unsuitable.length === 1 ? 'is' : 'are'} outside the configured age range for this patient (${age} years). Review the medicine or update its verified age guidance.`);
+};
+
 const patientView = (prescription) => ({
   ...prescription, createdBy: undefined, verifiedBy: undefined, verifiedById: undefined,
   paymentRequest: prescription.paymentRequest ? { ...prescription.paymentRequest, pickupPinHash: undefined, pickupPinEncrypted: undefined, pinAttempts: undefined } : null,
@@ -49,11 +66,12 @@ export const prescriptionService = {
       if (!upload || upload.prescription || !profile || upload.patientId !== profile.userId) throw new AppError(400, 'The uploaded prescription does not belong to the selected patient or is already linked.');
     }
     const [products, retailProducts] = await Promise.all([
-      prisma.product.findMany({ where: { id: { in: data.items.map((item) => item.productId) }, active: true, productType: 'MEDICINE' }, select: { id: true, unit: true } }),
+      prisma.product.findMany({ where: { id: { in: data.items.map((item) => item.productId) }, active: true, productType: 'MEDICINE' }, select: { id: true, unit: true, genericName: true, minimumAgeYears: true, maximumAgeYears: true } }),
       prisma.product.findMany({ where: { id: { in: data.retailItems.map((item) => item.productId) }, active: true, prescriptionRequired: false }, select: { id: true } }),
     ]);
     if (products.length !== new Set(data.items.map((item) => item.productId)).size) throw new AppError(400, 'One or more selected products are unavailable.');
     if (retailProducts.length !== new Set(data.retailItems.map((item) => item.productId)).size) throw new AppError(400, 'One or more selected retail items are unavailable or require a prescription.');
+    await validatePatientAge(data.patientId, data.prescriptionDate, products);
     const items = data.items.map((rawItem) => {
       const item = normalizeLiquidDose(rawItem);
       const product = products.find((candidate) => candidate.id === item.productId);
@@ -85,10 +103,11 @@ export const prescriptionService = {
     if (!current) throw new AppError(404, 'Prescription not found.');
     if (current.status !== 'PENDING') throw new AppError(409, 'Only pending prescriptions can be edited.');
     const [products, retailProducts] = await Promise.all([
-      prisma.product.findMany({ where: { id: { in:data.items.map((item)=>item.productId) }, active:true, productType:'MEDICINE' }, select:{ id:true,unit:true } }),
+      prisma.product.findMany({ where: { id: { in:data.items.map((item)=>item.productId) }, active:true, productType:'MEDICINE' }, select:{ id:true,unit:true,genericName:true,minimumAgeYears:true,maximumAgeYears:true } }),
       prisma.product.findMany({ where: { id: { in:data.retailItems.map((item)=>item.productId) }, active:true, prescriptionRequired:false }, select:{ id:true } }),
     ]);
     if(retailProducts.length!==new Set(data.retailItems.map((item)=>item.productId)).size)throw new AppError(400,'One or more selected retail items are unavailable or require a prescription.');
+    await validatePatientAge(data.patientId, data.prescriptionDate, products);
     const items=data.items.map((rawItem)=>{const item=normalizeLiquidDose(rawItem);const product=products.find((candidate)=>candidate.id===item.productId);if(!product)throw new AppError(400,'One or more selected products are unavailable.');const{calculated,prescribed,overridden}=calculateQuantity(product.unit,item);return{productId:item.productId,quantityPerDose:item.quantityPerDose,doseInputAmount:item.doseInputAmount,doseInputUnit:item.doseInputUnit,concentrationAmount:item.concentrationAmount,concentrationUnit:item.concentrationUnit,concentrationVolume:item.concentrationVolume,timesPerDay:item.timesPerDay,daysSupply:item.daysSupply,calculatedQuantity:calculated,prescribedQuantity:prescribed,quantityOverridden:overridden,overrideReason:overridden?item.overrideReason:null,dosageInstructions:item.dosageInstructions,frequency:item.frequency,duration:item.duration,notes:item.notes,administrationRoute:item.administrationRoute,mealTiming:item.mealTiming,asNeeded:item.asNeeded,specialInstructions:item.specialInstructions}});
     return prisma.$transaction(async(tx)=>{await tx.prescriptionItem.deleteMany({where:{prescriptionId:id}});await tx.prescriptionRetailItem.deleteMany({where:{prescriptionId:id}});await tx.prescription.update({where:{id},data:{patientId:data.patientId,prescriberTitle:data.prescriberTitle||null,prescriberName:data.prescriberName,prescriberReference:data.prescriberReference,prescriptionDate:data.prescriptionDate,orderedForSelf:data.orderedForSelf,recipientName:data.orderedForSelf?null:data.recipientName,recipientRelationship:data.orderedForSelf?null:data.recipientRelationship,notes:data.notes,pickupNote:data.pickupNote||null,plannedPickupAt:data.plannedPickupAt||null,items:{create:items},retailItems:{create:data.retailItems.map((item)=>({productId:item.productId,quantity:item.quantity}))}}});return tx.prescription.findUnique({where:{id},include:{items:{include:{product:true}},retailItems:{include:{product:true}},patient:{include:{user:true}}}})});
   },

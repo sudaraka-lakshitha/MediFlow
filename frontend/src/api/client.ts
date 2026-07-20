@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000/api', timeout: 15000 });
+const defaultApiUrl = import.meta.env.DEV ? 'http://localhost:5000/api' : '/api';
+export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || defaultApiUrl, timeout: 15000 });
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('mediflow_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;

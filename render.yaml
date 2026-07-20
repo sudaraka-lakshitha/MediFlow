@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: mediflow-pharmacy
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm install && npm --prefix backend install && npm --prefix frontend install && npm --prefix backend run prisma:generate && npm --prefix frontend run build
+    startCommand: npm --prefix backend run prisma:deploy && npm --prefix backend start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 12h
+      - key: REPORT_TIMEZONE_OFFSET_MINUTES
+        value: 330
+      - key: LOG_LEVEL
+        value: info
