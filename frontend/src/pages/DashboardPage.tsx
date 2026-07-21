@@ -19,6 +19,125 @@ const statusColours = [
   "#78908c",
 ];
 
+const buildSmoothPath = (
+  points: { x: number; y: number }[],
+  yBounds?: [number, number],
+) => {
+  if (points.length < 2) return "";
+  const clampY = (value: number) =>
+    yBounds ? Math.min(yBounds[1], Math.max(yBounds[0], value)) : value;
+  let d = `M ${points[0].x},${points[0].y}`;
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const p0 = points[index - 1] || points[index];
+    const p1 = points[index];
+    const p2 = points[index + 1];
+    const p3 = points[index + 2] || p2;
+    const c1x = p1.x + (p2.x - p0.x) / 6;
+    const c1y = clampY(p1.y + (p2.y - p0.y) / 6);
+    const c2x = p2.x - (p3.x - p1.x) / 6;
+    const c2y = clampY(p2.y - (p3.y - p1.y) / 6);
+    d += ` C ${c1x},${c1y} ${c2x},${c2y} ${p2.x},${p2.y}`;
+  }
+  return d;
+};
+
+function SalesActivityChart({ series }: { series: any[] }) {
+  const width = 700;
+  const height = 240;
+  const plotLeft = 30;
+  const plotRight = width - 30;
+  const plotTop = 34;
+  const plotBottom = height - 50;
+  const plotWidth = plotRight - plotLeft;
+  const plotHeight = plotBottom - plotTop;
+  const maxSales = Math.max(
+    ...series.map((item) => Number(item.sales) || 0),
+    1,
+  );
+  const points = series.map((item, index) => ({
+    ...item,
+    x:
+      series.length > 1
+        ? plotLeft + (index / (series.length - 1)) * plotWidth
+        : plotLeft + plotWidth / 2,
+    y: plotBottom - (Number(item.sales) / maxSales) * plotHeight,
+  }));
+  const linePath = buildSmoothPath(points, [plotTop, plotBottom]);
+  const areaPath = points.length
+    ? `${linePath} L ${points[points.length - 1].x},${plotBottom} L ${points[0].x},${plotBottom} Z`
+    : "";
+  const dayLabel = (date: string) =>
+    new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
+      weekday: "short",
+    });
+
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="sales-scatter-chart"
+      role="img"
+      aria-label="Sales revenue over the last seven days, plotted with dispensing counts"
+    >
+      <defs>
+        <linearGradient id="salesAreaFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#176b63" stopOpacity="0.22" />
+          <stop offset="100%" stopColor="#176b63" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {[0, 0.5, 1].map((fraction) => (
+        <line
+          key={fraction}
+          x1={plotLeft}
+          x2={plotRight}
+          y1={plotBottom - fraction * plotHeight}
+          y2={plotBottom - fraction * plotHeight}
+          className="sales-scatter-grid"
+        />
+      ))}
+      {points.length > 1 && (
+        <path d={areaPath} fill="url(#salesAreaFill)" stroke="none" />
+      )}
+      {points.length > 1 && (
+        <path d={linePath} fill="none" className="sales-scatter-line" />
+      )}
+      {points.map((point) => (
+        <g key={point.date}>
+          <circle cx={point.x} cy={point.y} r={5} className="sales-scatter-dot">
+            <title>
+              {dayLabel(point.date)} · {money(point.sales)} ·{" "}
+              {point.dispensings} dispensed
+            </title>
+          </circle>
+          <text
+            x={point.x}
+            y={point.y - 14}
+            textAnchor="middle"
+            className="sales-scatter-value"
+          >
+            {money(point.sales).replace("Rs. ", "")}
+          </text>
+          <text
+            x={point.x}
+            y={plotBottom + 20}
+            textAnchor="middle"
+            className="sales-scatter-day"
+          >
+            {dayLabel(point.date)}
+          </text>
+          <text
+            x={point.x}
+            y={plotBottom + 34}
+            textAnchor="middle"
+            className="sales-scatter-count"
+          >
+            {point.dispensings}
+          </text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
 export function DashboardPage() {
   const { user } = useAuth();
   const [data, setData] = useState<any>(null);
@@ -218,10 +337,6 @@ export function DashboardPage() {
       </>
     );
 
-  const maxSales = Math.max(
-    ...(data?.salesSeries?.map((item: any) => item.sales) || [0]),
-    1,
-  );
   return (
     <>
       <div className="page-intro">
@@ -272,32 +387,14 @@ export function DashboardPage() {
               </div>
             </div>
             <div className="dashboard-sales-chart">
-              {data?.salesSeries?.map((item: any) => (
-                <div className="dashboard-day" key={item.date}>
-                  <span>{money(item.sales).replace("Rs. ", "")}</span>
-                  <div className="dashboard-bar-track">
-                    <div
-                      style={{
-                        height: `${Math.max((item.sales / maxSales) * 100, item.sales ? 5 : 0)}%`,
-                      }}
-                    />
-                  </div>
-                  <strong>{item.dispensings}</strong>
-                  <small>
-                    {new Date(`${item.date}T00:00:00`).toLocaleDateString(
-                      undefined,
-                      { weekday: "short" },
-                    )}
-                  </small>
-                </div>
-              ))}
+              <SalesActivityChart series={data?.salesSeries || []} />
             </div>
             <div className="chart-key">
               <span>
-                <i className="sales-key" /> Sales height
+                <i className="sales-key" /> Sales trend
               </span>
               <span>
-                <strong>0</strong> Dispensing count below bar
+                <strong>0</strong> Dispensing count below each point
               </span>
             </div>
           </div>
