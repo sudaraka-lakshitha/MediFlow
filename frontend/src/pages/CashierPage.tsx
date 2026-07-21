@@ -31,6 +31,7 @@ export function CashierPage() {
   const [payment, setPayment] = useState<any>(null);
   const [paid, setPaid] = useState<any>(null);
   const [retail, setRetail] = useState<any>(null);
+  const [revoke, setRevoke] = useState<any>(null);
   const [toast, setToast] = useState<{ message: string; title: string; type: 'success' | 'danger' } | null>(null);
   const [retailOptions, setRetailOptions] = useState<{
     products: any[];
@@ -55,7 +56,7 @@ export function CashierPage() {
       if (active === "INPUT" || active === "TEXTAREA" || active === "SELECT") {
         return;
       }
-      if (payment || paid || retail) {
+      if (payment || paid || retail || revoke) {
         return;
       }
       if (event.key.toLowerCase() === "n") {
@@ -67,7 +68,7 @@ export function CashierPage() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [payment, paid, retail]);
+  }, [payment, paid, retail, revoke]);
   const filtered = useMemo(
     () =>
       rows.filter(
@@ -118,6 +119,29 @@ export function CashierPage() {
         title: "Payment Recorded",
         message: `Successfully received Rs. ${Number(collectedAmount).toFixed(2)} for request ${reqNum}.`,
         type: "success"
+      });
+      setTimeout(() => setToast(null), 5000);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const submitRevoke = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/payment-requests/${revoke.id}/cancel`, {
+        reason: revoke.reason,
+      });
+      const reqNum = revoke.requestNumber;
+      setRevoke(null);
+      await load();
+      setToast({
+        title: "Bill Revoked",
+        message: `${reqNum} has been cancelled.`,
+        type: "success",
       });
       setTimeout(() => setToast(null), 5000);
     } catch (caught) {
@@ -342,6 +366,18 @@ export function CashierPage() {
                           Print receipt
                         </button>
                       )}
+                      {row.status === "PAID" &&
+                        row.paidAt &&
+                        new Date(row.paidAt).toDateString() ===
+                          new Date().toDateString() && (
+                          <button
+                            className="btn btn-sm btn-outline-danger"
+                            onClick={() => setRevoke({ ...row, reason: "" })}
+                          >
+                            <i className="bi bi-x-circle me-1" />
+                            Revoke
+                          </button>
+                        )}
                     </div>
                   </td>
                 </tr>
@@ -360,6 +396,19 @@ export function CashierPage() {
           size="sm"
         >
           <form onSubmit={submitPayment}>
+            <div className="alert alert-warning">
+              <i className="bi bi-person-check me-2" />
+              <strong>
+                {payment.patient?.fullName || "Walk-in customer"}
+              </strong>
+              <br />
+              <small>{payment.patient?.phone || "No account on file"}</small>
+              <br />
+              <small>
+                Confirm this matches the customer in front of you before
+                accepting payment.
+              </small>
+            </div>
             <div className="alert alert-info">
               <strong>Amount due: {money(payment.total)}</strong>
               <br />
@@ -405,6 +454,40 @@ export function CashierPage() {
             <ModalActions
               onClose={() => setPayment(null)}
               submitLabel={`Confirm ${money(payment.total)}`}
+              busy={busy}
+            />
+          </form>
+        </Modal>
+      )}
+      {revoke && (
+        <Modal
+          title={`Revoke ${revoke.requestNumber}`}
+          onClose={() => setRevoke(null)}
+          size="sm"
+        >
+          <form onSubmit={submitRevoke}>
+            <div className="alert alert-danger small">
+              <i className="bi bi-exclamation-triangle me-2" />
+              This bill has already been paid ({money(revoke.total)}). Revoking
+              it cancels the bill and its receipt PIN — it can only be done on
+              the same day it was paid, and only before the medicine has been
+              dispensed.
+            </div>
+            <label className="form-label">Reason for revoking (required)</label>
+            <textarea
+              className="form-control"
+              minLength={3}
+              maxLength={500}
+              value={revoke.reason}
+              onChange={(event) =>
+                setRevoke({ ...revoke, reason: event.target.value })
+              }
+              placeholder="e.g. Wrong items billed, customer changed their mind, entered by mistake…"
+              required
+            />
+            <ModalActions
+              onClose={() => setRevoke(null)}
+              submitLabel="Revoke bill"
               busy={busy}
             />
           </form>

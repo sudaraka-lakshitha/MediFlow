@@ -48,6 +48,23 @@ type Upload = {
 
 const money = (value: unknown) =>
   `Rs. ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const dobFromAge = (age: number) => {
+  const date = new Date();
+  date.setFullYear(date.getFullYear() - age);
+  return date.toISOString().slice(0, 10);
+};
+const ageFromDob = (dob?: string) => {
+  if (!dob) return "";
+  const birth = new Date(dob);
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  if (
+    today.getMonth() < birth.getMonth() ||
+    (today.getMonth() === birth.getMonth() && today.getDate() < birth.getDate())
+  )
+    age -= 1;
+  return String(age);
+};
 const liquidUnits = ["ml", "millilitre", "milliliter", "l", "litre", "liter"];
 const isLiquidProduct = (product: any) =>
   liquidUnits.includes(String(product?.unit || "").toLowerCase()) ||
@@ -93,7 +110,6 @@ export function PrescriptionUploadsPage() {
   );
   const [statusFilter, setStatusFilter] = useState("");
   const [uploadForm, setUploadForm] = useState<{
-    inputMode: "FILE" | "TEXT";
     file: File | null;
     prescriptionText: string;
     patientNote: string;
@@ -102,7 +118,7 @@ export function PrescriptionUploadsPage() {
     recipientName: string;
     recipientRelationship: string;
     recipientDateOfBirth: string;
-  }>({ inputMode: "FILE", file: null, prescriptionText: "", patientNote: "", prepareRequested: true, orderedForSelf: true, recipientName: "", recipientRelationship: "", recipientDateOfBirth: "" });
+  }>({ file: null, prescriptionText: "", patientNote: "", prepareRequested: true, orderedForSelf: true, recipientName: "", recipientRelationship: "", recipientDateOfBirth: "" });
   const [reviewForm, setReviewForm] = useState({
     status: "AVAILABLE",
     availabilityNotes: "",
@@ -162,6 +178,14 @@ export function PrescriptionUploadsPage() {
       setBusy(false);
     }
   };
+  const acceptEstimate = async (item: Upload) => {
+    try {
+      await api.put(`/prescription-uploads/${item.id}/accept`);
+      await load();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
+  };
   const saveDeadline = async (item: Upload, value: string) => {
     try {
       await api.put(`/prescription-uploads/${item.id}/deletion-deadline`, {
@@ -175,12 +199,14 @@ export function PrescriptionUploadsPage() {
 
   const submitUpload = async (event: FormEvent) => {
     event.preventDefault();
-    const file = uploadForm.inputMode === "TEXT"
-      ? new File([uploadForm.prescriptionText.trim()], `typed-prescription-${Date.now()}.txt`, { type: "text/plain" })
-      : uploadForm.file;
-    if (!file) return;
-    if (uploadForm.inputMode === "TEXT" && uploadForm.prescriptionText.trim().length < 10)
+    const typedText = uploadForm.prescriptionText.trim();
+    if (!uploadForm.file && !typedText)
+      return setError("Upload a prescription file, type the prescription and retail items, or both.");
+    if (!uploadForm.file && typedText.length < 10)
       return setError("Type at least 10 characters describing the prescription or requested retail items.");
+    const file =
+      uploadForm.file ||
+      new File([typedText], `typed-prescription-${Date.now()}.txt`, { type: "text/plain" });
     if (file.size > 2_500_000)
       return setError("Prescription files must be 2.5 MB or smaller.");
     if (
@@ -189,6 +215,12 @@ export function PrescriptionUploadsPage() {
       )
     )
       return setError("Upload a PDF, JPEG, PNG, or WebP prescription, or enter it as text.");
+    const patientNote = [
+      uploadForm.file && typedText ? `Typed request:\n${typedText}` : null,
+      uploadForm.patientNote || null,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     setBusy(true);
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -201,7 +233,7 @@ export function PrescriptionUploadsPage() {
         originalName: file.name,
         mimeType: file.type,
         fileBase64: dataUrl.split(",")[1],
-        patientNote: uploadForm.patientNote || null,
+        patientNote: patientNote || null,
         prepareRequested: uploadForm.prepareRequested,
         orderedForSelf: uploadForm.orderedForSelf,
         recipientName: uploadForm.orderedForSelf ? null : uploadForm.recipientName,
@@ -209,7 +241,7 @@ export function PrescriptionUploadsPage() {
         recipientDateOfBirth: uploadForm.orderedForSelf ? null : uploadForm.recipientDateOfBirth,
       });
       setUploadOpen(false);
-      setUploadForm({ inputMode: "FILE", file: null, prescriptionText: "", patientNote: "", prepareRequested: true, orderedForSelf: true, recipientName: "", recipientRelationship: "", recipientDateOfBirth: "" });
+      setUploadForm({ file: null, prescriptionText: "", patientNote: "", prepareRequested: true, orderedForSelf: true, recipientName: "", recipientRelationship: "", recipientDateOfBirth: "" });
       await load();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -476,7 +508,6 @@ export function PrescriptionUploadsPage() {
             className="btn btn-primary"
             onClick={() => {
               setUploadForm({
-                inputMode: "FILE",
                 file: null,
                 prescriptionText: "",
                 patientNote: "",
@@ -610,6 +641,18 @@ export function PrescriptionUploadsPage() {
                 review and is not guaranteed until the final invoice is issued.
               </div>
             )}
+            {patient &&
+              item.estimatedTotal != null &&
+              !item.prepareRequested &&
+              ["AVAILABLE", "PARTIALLY_AVAILABLE"].includes(item.status) && (
+                <button
+                  className="btn btn-sm btn-success mt-2"
+                  onClick={() => acceptEstimate(item)}
+                >
+                  <i className="bi bi-check-circle me-1" />
+                  Accept — prepare my medicines
+                </button>
+              )}
             {item.availabilityNotes && (
               <p className="review-note">{item.availabilityNotes}</p>
             )}
@@ -679,13 +722,13 @@ export function PrescriptionUploadsPage() {
         >
           <form onSubmit={submitUpload}>
             <div className="alert alert-info small">
-              Upload a clear PDF/image or type the prescription and retail-item request. The pharmacy will review it; the estimate is not a final invoice.
+              Upload a clear PDF/image, type the prescription and retail-item request, or both. The pharmacy will review it; the estimate is not a final invoice.
             </div>
-            <div className="btn-group w-100 mb-3" role="group" aria-label="Prescription entry method">
-              <button type="button" className={`btn ${uploadForm.inputMode === "FILE" ? "btn-primary" : "btn-outline-primary"}`} onClick={() => setUploadForm({ ...uploadForm, inputMode: "FILE" })}><i className="bi bi-file-earmark-arrow-up me-1" />Upload file</button>
-              <button type="button" className={`btn ${uploadForm.inputMode === "TEXT" ? "btn-primary" : "btn-outline-primary"}`} onClick={() => setUploadForm({ ...uploadForm, inputMode: "TEXT" })}><i className="bi bi-keyboard me-1" />Type prescription / retail items</button>
-            </div>
-            {uploadForm.inputMode === "FILE" ? <><label className="form-label">Prescription file</label><input className="form-control" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => setUploadForm({ ...uploadForm, file: event.target.files?.[0] || null })} required /></> : <><label className="form-label">Prescription and retail items</label><textarea className="form-control" rows={8} minLength={10} maxLength={5000} value={uploadForm.prescriptionText} onChange={(event) => setUploadForm({ ...uploadForm, prescriptionText: event.target.value })} placeholder={'Type each prescribed medicine and direction on a new line.\n\nRetail items (optional): include product name and quantity.'} required/><small className="text-secondary">Include medicine names, strengths, directions, and any non-prescription retail products with quantities.</small></>}
+            <label className="form-label">Prescription file (optional)</label>
+            <input className="form-control" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => setUploadForm({ ...uploadForm, file: event.target.files?.[0] || null })} />
+            <label className="form-label mt-3">Type prescription / retail items (optional)</label>
+            <textarea className="form-control" rows={6} maxLength={5000} value={uploadForm.prescriptionText} onChange={(event) => setUploadForm({ ...uploadForm, prescriptionText: event.target.value })} placeholder={'Type each prescribed medicine and direction on a new line.\n\nRetail items (optional): include product name and quantity.'} />
+            <small className="text-secondary">Provide a file, type the details, or both — include medicine names, strengths, directions, and any non-prescription retail products with quantities.</small>
             <label className="form-label mt-3">
               Message to pharmacist (optional)
             </label>
@@ -707,7 +750,7 @@ export function PrescriptionUploadsPage() {
                 <label className={`preparation-choice ${uploadForm.orderedForSelf ? "selected" : ""}`}><input type="radio" name="recipient" checked={uploadForm.orderedForSelf} onChange={() => setUploadForm({ ...uploadForm, orderedForSelf: true })} /><span><strong>For me</strong><small>I am the patient named on this prescription.</small></span></label>
                 <label className={`preparation-choice ${!uploadForm.orderedForSelf ? "selected" : ""}`}><input type="radio" name="recipient" checked={!uploadForm.orderedForSelf} onChange={() => setUploadForm({ ...uploadForm, orderedForSelf: false })} /><span><strong>For someone else</strong><small>I am uploading this on behalf of another person.</small></span></label>
               </div>
-              {!uploadForm.orderedForSelf && <div className="row g-2 mt-1"><div className="col-sm-5"><label className="form-label">Recipient full name</label><input className="form-control" placeholder="Full name" value={uploadForm.recipientName} onChange={(event) => setUploadForm({ ...uploadForm, recipientName: event.target.value })} required /></div><div className="col-sm-3"><label className="form-label">Relationship</label><input className="form-control" placeholder="e.g. Child" value={uploadForm.recipientRelationship} onChange={(event) => setUploadForm({ ...uploadForm, recipientRelationship: event.target.value })} required /></div><div className="col-sm-4"><label className="form-label">Recipient date of birth</label><input className="form-control" type="date" max={new Date().toISOString().slice(0, 10)} value={uploadForm.recipientDateOfBirth} onChange={(event) => setUploadForm({ ...uploadForm, recipientDateOfBirth: event.target.value })} required /><small className="text-secondary">Used for medicine age checks.</small></div></div>}
+              {!uploadForm.orderedForSelf && <div className="row g-2 mt-1"><div className="col-sm-5"><label className="form-label">Recipient full name</label><input className="form-control" placeholder="Full name" value={uploadForm.recipientName} onChange={(event) => setUploadForm({ ...uploadForm, recipientName: event.target.value })} required /></div><div className="col-sm-3"><label className="form-label">Relationship</label><input className="form-control" placeholder="e.g. Child" value={uploadForm.recipientRelationship} onChange={(event) => setUploadForm({ ...uploadForm, recipientRelationship: event.target.value })} required /></div><div className="col-sm-4"><label className="form-label">Recipient age (years)</label><input className="form-control" type="number" min={0} max={130} step={1} value={ageFromDob(uploadForm.recipientDateOfBirth)} onChange={(event) => setUploadForm({ ...uploadForm, recipientDateOfBirth: event.target.value === "" ? "" : dobFromAge(Number(event.target.value)) })} required /><small className="text-secondary">Used for medicine age checks.</small></div></div>}
             </fieldset>
             <fieldset className="mt-3">
               <legend className="form-label">
@@ -789,28 +832,30 @@ export function PrescriptionUploadsPage() {
                 <div className="alert alert-info small">
                   <strong>Medicine recipient:</strong> {review.recipientName} · {review.recipientRelationship}
                   <br />
-                  <strong>Date of birth:</strong>{" "}
+                  <strong>Age:</strong>{" "}
                   {review.recipientDateOfBirth
-                    ? new Date(review.recipientDateOfBirth).toLocaleDateString()
+                    ? `${ageFromDob(review.recipientDateOfBirth)} years`
                     : "Not provided"}
                 </div>
               )}
-              <div className="upload-review-steps-indicator mb-3 p-2 bg-light border rounded d-flex justify-content-around text-center small">
-                <div className="step-item text-primary fw-bold">
-                  <span className="badge rounded-circle bg-primary me-1">1</span>
-                  Review scan
+              {review.prepareRequested && (
+                <div className="upload-review-steps-indicator mb-3 p-2 bg-light border rounded d-flex justify-content-around text-center small">
+                  <div className="step-item text-primary fw-bold">
+                    <span className="badge rounded-circle bg-primary me-1">1</span>
+                    Review scan
+                  </div>
+                  <div className="step-divider text-secondary align-self-center">&rarr;</div>
+                  <div className="step-item text-primary fw-bold">
+                    <span className="badge rounded-circle bg-primary me-1">2</span>
+                    Build estimate
+                  </div>
+                  <div className="step-divider text-secondary align-self-center">&rarr;</div>
+                  <div className="step-item text-primary fw-bold">
+                    <span className="badge rounded-circle bg-primary me-1">3</span>
+                    Create prescription
+                  </div>
                 </div>
-                <div className="step-divider text-secondary align-self-center">&rarr;</div>
-                <div className="step-item text-primary fw-bold">
-                  <span className="badge rounded-circle bg-primary me-1">2</span>
-                  Build estimate
-                </div>
-                <div className="step-divider text-secondary align-self-center">&rarr;</div>
-                <div className="step-item text-primary fw-bold">
-                  <span className="badge rounded-circle bg-primary me-1">3</span>
-                  Create prescription
-                </div>
-              </div>
+              )}
               <div className="alert alert-light border small">
                 <strong>Sender:</strong> {review.patient.fullName}
                 <br />

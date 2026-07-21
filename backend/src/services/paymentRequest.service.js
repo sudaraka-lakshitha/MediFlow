@@ -12,6 +12,7 @@ const include = {
   patient: { select: { id: true, fullName: true, email: true, phone: true } },
   pharmacist: { select: { id: true, fullName: true } },
   cashier: { select: { id: true, fullName: true } },
+  cancelledBy: { select: { id: true, fullName: true } },
   prescription: { select: { id: true, prescriptionNumber: true, status: true, sourceUploadId: true } },
   items: { include: { product: { select: { id: true, genericName: true, strength: true, unit: true, productType: true, prescriptionRequired: true } } } },
   sale: { select: { id: true, invoiceNumber: true } },
@@ -55,6 +56,48 @@ export const paymentRequestService = {
         items: { create: quote.lines.map((line) => ({ prescriptionItemId: line.prescriptionItemId, productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice, lineTotal: line.lineTotal })) },
       },
       include,
+    });
+  },
+  async update(prescriptionId, input) {
+    const prescription = await prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      include: { patient: true, items: true, paymentRequest: true },
+    });
+    if (!prescription) throw new AppError(404, 'Prescription not found.');
+    const existing = prescription.paymentRequest;
+    if (!existing || existing.status !== 'AWAITING_PAYMENT') throw new AppError(409, 'This bill can only be edited while it is still awaiting cashier payment.');
+    const quantities = new Map(input.items.map((item) => [Number(item.prescriptionItemId), Number(item.quantity)]));
+    const incomplete = prescription.items.some((item) => Number(item.prescribedQuantity.sub(item.dispensedQuantity)) !== Number(quantities.get(item.id) || 0));
+    if (incomplete) throw new AppError(409, 'Every remaining prescribed item must be included in the cashier request.');
+    const quote = await prescriptionService.quoteDispensing(prescriptionId, { ...input, amountPaid: 0, paymentMethod: 'CASH' });
+    return prisma.$transaction(async (tx) => {
+      await tx.paymentRequestItem.deleteMany({ where: { paymentRequestId: existing.id } });
+      return tx.paymentRequest.update({
+        where: { id: existing.id },
+        data: {
+          subtotal: quote.subtotal, discount: quote.discount, containerFee: quote.containerFee, tax: quote.tax, total: quote.total,
+          couponCode: input.couponCode || null,
+          items: { create: quote.lines.map((line) => ({ prescriptionItemId: line.prescriptionItemId, productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice, lineTotal: line.lineTotal })) },
+        },
+        include,
+      });
+    });
+  },
+  async cancel(id, reason, userId) {
+    return prisma.$transaction(async (tx) => {
+      const current = await tx.paymentRequest.findUnique({ where: { id } });
+      if (!current) throw new AppError(404, 'Payment request not found.');
+      if (current.status !== 'PAID') throw new AppError(409, 'Only a paid bill that has not yet been dispensed or handed over can be revoked.');
+      if (!current.paidAt || new Date(current.paidAt).toDateString() !== new Date().toDateString()) {
+        throw new AppError(409, 'This bill can only be revoked on the same day it was paid.');
+      }
+      const claimed = await tx.paymentRequest.updateMany({
+        where: { id, status: 'PAID' },
+        data: { status: 'CANCELLED', cancellationReason: reason, cancelledById: userId, cancelledAt: new Date() },
+      });
+      if (claimed.count !== 1) throw new AppError(409, 'This bill was just processed by someone else. Refresh to see its latest status.');
+      const data = await tx.paymentRequest.findUnique({ where: { id }, include });
+      return safeRecord(data);
     });
   },
   async retailOptions() {

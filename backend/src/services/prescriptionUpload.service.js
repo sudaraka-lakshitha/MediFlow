@@ -225,6 +225,14 @@ export const prescriptionUploadService = {
     });
     return quote;
   },
+  async acceptEstimate(id, userId) {
+    const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true, patientId: true, status: true, prepareRequested: true, estimatedTotal: true } });
+    if (!record) throw new AppError(404, 'Uploaded prescription not found.');
+    if (record.patientId !== userId) throw new AppError(403, 'This uploaded prescription does not belong to you.');
+    if (record.prepareRequested) throw new AppError(409, 'This request is already set to be prepared.');
+    if (!['AVAILABLE', 'PARTIALLY_AVAILABLE'].includes(record.status) || record.estimatedTotal == null) throw new AppError(409, 'An estimate is not ready yet.');
+    return prisma.prescriptionUpload.update({ where: { id }, data: { prepareRequested: true }, select: summarySelect });
+  },
   async setDeadline(id, deleteAt) {
     const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true } });
     if (!record) throw new AppError(404, 'Uploaded prescription not found.');

@@ -44,6 +44,11 @@ export const prescriptionUploadController = {
     });
     res.json({ data });
   },
+  acceptEstimate: async (req, res) => {
+    const data = await prescriptionUploadService.acceptEstimate(Number(req.params.id), req.user.id);
+    await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOAD_ESTIMATE_ACCEPTED', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id, ipAddress: req.ip });
+    res.json({ data });
+  },
   retention: async (_req, res) => res.json({ data: await prescriptionUploadService.retention() }),
   setRetention: async (req, res) => {
     const data = await prescriptionUploadService.setRetention(req.body.days);

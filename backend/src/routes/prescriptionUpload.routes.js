@@ -14,6 +14,7 @@ prescriptionUploadRoutes.get('/', authorize('ADMIN', 'PHARMACIST', 'PATIENT'), a
 prescriptionUploadRoutes.get('/retention', authorize('ADMIN'), asyncHandler(prescriptionUploadController.retention));
 prescriptionUploadRoutes.put('/retention', authorize('ADMIN'), validate({ body: z.object({ days: z.coerce.number().int().min(1).max(365) }) }), asyncHandler(prescriptionUploadController.setRetention));
 prescriptionUploadRoutes.post('/', authorize('PATIENT'), validate({ body: uploadPrescriptionSchema }), asyncHandler(prescriptionUploadController.create));
+prescriptionUploadRoutes.put('/:id/accept', authorize('PATIENT'), validate({ params: idParams }), asyncHandler(prescriptionUploadController.acceptEstimate));
 prescriptionUploadRoutes.get('/:id/file', authorize('ADMIN', 'PHARMACIST', 'PATIENT'), validate({ params: idParams }), asyncHandler(prescriptionUploadController.file));
 prescriptionUploadRoutes.post('/:id/estimate-quote', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: uploadEstimateQuoteSchema }), asyncHandler(prescriptionUploadController.estimateQuote));
 prescriptionUploadRoutes.put('/:id/review', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: reviewUploadSchema }), asyncHandler(prescriptionUploadController.review));

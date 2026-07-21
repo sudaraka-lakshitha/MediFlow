@@ -46,6 +46,7 @@ apiRoutes.get('/payment-requests', authenticate, authorize('ADMIN', 'PHARMACIST'
 apiRoutes.get('/cashier/retail-options', authenticate, authorizeCashier, asyncHandler(paymentRequestController.retailOptions));
 apiRoutes.post('/payment-requests/retail', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ body: retailPaymentRequestSchema }), asyncHandler(paymentRequestController.createRetail));
 apiRoutes.post('/payment-requests/:id/pay', authenticate, authorizeCashier, validate({ params: idParams, body: cashierPaymentSchema }), asyncHandler(paymentRequestController.pay));
+apiRoutes.post('/payment-requests/:id/cancel', authenticate, authorizeCashier, validate({ params: idParams, body: z.object({ reason: z.string().trim().min(3).max(500) }) }), asyncHandler(paymentRequestController.cancel));
 apiRoutes.post('/payment-requests/:id/fulfill-retail', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: retailFulfillSchema }), asyncHandler(paymentRequestController.fulfillRetail));
 apiRoutes.get('/payment-requests/:id/handoff.pdf', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER'), validate({ params: idParams }), asyncHandler(paymentRequestController.handoff));
 apiRoutes.get('/payment-requests/:id/receipt.pdf', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams }), asyncHandler(paymentRequestController.receipt));
