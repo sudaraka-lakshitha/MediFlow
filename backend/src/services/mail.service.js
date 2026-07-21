@@ -2,7 +2,8 @@ import nodemailer from 'nodemailer';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
 
-const configured = Boolean(env.SMTP_USER && env.SMTP_PASS && env.MAIL_FROM);
+const senderAddress = env.MAIL_FROM || env.SMTP_USER;
+const configured = Boolean(env.SMTP_USER && env.SMTP_PASS && senderAddress);
 const transporter = configured ? nodemailer.createTransport({
   host: env.SMTP_HOST,
   port: env.SMTP_PORT,
@@ -21,7 +22,7 @@ export const mailService = {
     const safeName = escapeHtml(fullName);
     const safeOtp = escapeHtml(otp);
     await transporter.sendMail({
-      from: `MediFlow Pharmacy <${env.MAIL_FROM}>`,
+      from: `MediFlow Pharmacy <${senderAddress}>`,
       to: email,
       subject: 'Your MediFlow password reset code',
       text: `Hello ${fullName},\n\nYour MediFlow password reset code is ${otp}. It expires in ${expiresInMinutes} minutes.\n\nIf you did not request this, you can ignore this email. Never share this code with anyone.`,
