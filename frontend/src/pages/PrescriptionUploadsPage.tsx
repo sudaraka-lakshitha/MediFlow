@@ -110,7 +110,6 @@ export function PrescriptionUploadsPage() {
   );
   const [statusFilter, setStatusFilter] = useState("");
   const [uploadForm, setUploadForm] = useState<{
-    inputMode: "FILE" | "TEXT";
     file: File | null;
     prescriptionText: string;
     patientNote: string;
@@ -119,7 +118,7 @@ export function PrescriptionUploadsPage() {
     recipientName: string;
     recipientRelationship: string;
     recipientDateOfBirth: string;
-  }>({ inputMode: "FILE", file: null, prescriptionText: "", patientNote: "", prepareRequested: true, orderedForSelf: true, recipientName: "", recipientRelationship: "", recipientDateOfBirth: "" });
+  }>({ file: null, prescriptionText: "", patientNote: "", prepareRequested: true, orderedForSelf: true, recipientName: "", recipientRelationship: "", recipientDateOfBirth: "" });
   const [reviewForm, setReviewForm] = useState({
     status: "AVAILABLE",
     availabilityNotes: "",
@@ -200,12 +199,14 @@ export function PrescriptionUploadsPage() {
 
   const submitUpload = async (event: FormEvent) => {
     event.preventDefault();
-    const file = uploadForm.inputMode === "TEXT"
-      ? new File([uploadForm.prescriptionText.trim()], `typed-prescription-${Date.now()}.txt`, { type: "text/plain" })
-      : uploadForm.file;
-    if (!file) return;
-    if (uploadForm.inputMode === "TEXT" && uploadForm.prescriptionText.trim().length < 10)
+    const typedText = uploadForm.prescriptionText.trim();
+    if (!uploadForm.file && !typedText)
+      return setError("Upload a prescription file, type the prescription and retail items, or both.");
+    if (!uploadForm.file && typedText.length < 10)
       return setError("Type at least 10 characters describing the prescription or requested retail items.");
+    const file =
+      uploadForm.file ||
+      new File([typedText], `typed-prescription-${Date.now()}.txt`, { type: "text/plain" });
     if (file.size > 2_500_000)
       return setError("Prescription files must be 2.5 MB or smaller.");
     if (
@@ -214,6 +215,12 @@ export function PrescriptionUploadsPage() {
       )
     )
       return setError("Upload a PDF, JPEG, PNG, or WebP prescription, or enter it as text.");
+    const patientNote = [
+      uploadForm.file && typedText ? `Typed request:\n${typedText}` : null,
+      uploadForm.patientNote || null,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     setBusy(true);
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -226,7 +233,7 @@ export function PrescriptionUploadsPage() {
         originalName: file.name,
         mimeType: file.type,
         fileBase64: dataUrl.split(",")[1],
-        patientNote: uploadForm.patientNote || null,
+        patientNote: patientNote || null,
         prepareRequested: uploadForm.prepareRequested,
         orderedForSelf: uploadForm.orderedForSelf,
         recipientName: uploadForm.orderedForSelf ? null : uploadForm.recipientName,
@@ -234,7 +241,7 @@ export function PrescriptionUploadsPage() {
         recipientDateOfBirth: uploadForm.orderedForSelf ? null : uploadForm.recipientDateOfBirth,
       });
       setUploadOpen(false);
-      setUploadForm({ inputMode: "FILE", file: null, prescriptionText: "", patientNote: "", prepareRequested: true, orderedForSelf: true, recipientName: "", recipientRelationship: "", recipientDateOfBirth: "" });
+      setUploadForm({ file: null, prescriptionText: "", patientNote: "", prepareRequested: true, orderedForSelf: true, recipientName: "", recipientRelationship: "", recipientDateOfBirth: "" });
       await load();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -501,7 +508,6 @@ export function PrescriptionUploadsPage() {
             className="btn btn-primary"
             onClick={() => {
               setUploadForm({
-                inputMode: "FILE",
                 file: null,
                 prescriptionText: "",
                 patientNote: "",
@@ -716,13 +722,13 @@ export function PrescriptionUploadsPage() {
         >
           <form onSubmit={submitUpload}>
             <div className="alert alert-info small">
-              Upload a clear PDF/image or type the prescription and retail-item request. The pharmacy will review it; the estimate is not a final invoice.
+              Upload a clear PDF/image, type the prescription and retail-item request, or both. The pharmacy will review it; the estimate is not a final invoice.
             </div>
-            <div className="btn-group w-100 mb-3" role="group" aria-label="Prescription entry method">
-              <button type="button" className={`btn ${uploadForm.inputMode === "FILE" ? "btn-primary" : "btn-outline-primary"}`} onClick={() => setUploadForm({ ...uploadForm, inputMode: "FILE" })}><i className="bi bi-file-earmark-arrow-up me-1" />Upload file</button>
-              <button type="button" className={`btn ${uploadForm.inputMode === "TEXT" ? "btn-primary" : "btn-outline-primary"}`} onClick={() => setUploadForm({ ...uploadForm, inputMode: "TEXT" })}><i className="bi bi-keyboard me-1" />Type prescription / retail items</button>
-            </div>
-            {uploadForm.inputMode === "FILE" ? <><label className="form-label">Prescription file</label><input className="form-control" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => setUploadForm({ ...uploadForm, file: event.target.files?.[0] || null })} required /></> : <><label className="form-label">Prescription and retail items</label><textarea className="form-control" rows={8} minLength={10} maxLength={5000} value={uploadForm.prescriptionText} onChange={(event) => setUploadForm({ ...uploadForm, prescriptionText: event.target.value })} placeholder={'Type each prescribed medicine and direction on a new line.\n\nRetail items (optional): include product name and quantity.'} required/><small className="text-secondary">Include medicine names, strengths, directions, and any non-prescription retail products with quantities.</small></>}
+            <label className="form-label">Prescription file (optional)</label>
+            <input className="form-control" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => setUploadForm({ ...uploadForm, file: event.target.files?.[0] || null })} />
+            <label className="form-label mt-3">Type prescription / retail items (optional)</label>
+            <textarea className="form-control" rows={6} maxLength={5000} value={uploadForm.prescriptionText} onChange={(event) => setUploadForm({ ...uploadForm, prescriptionText: event.target.value })} placeholder={'Type each prescribed medicine and direction on a new line.\n\nRetail items (optional): include product name and quantity.'} />
+            <small className="text-secondary">Provide a file, type the details, or both — include medicine names, strengths, directions, and any non-prescription retail products with quantities.</small>
             <label className="form-label mt-3">
               Message to pharmacist (optional)
             </label>
