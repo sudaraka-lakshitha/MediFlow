@@ -9,7 +9,7 @@ const money = (value: number) =>
 const prescriberLabel = (prescription: any) =>
   [prescription.prescriberTitle, prescription.prescriberName]
     .filter(Boolean)
-    .join(" ");
+    .join(" ") || "Not mentioned";
 const statusColours = [
   "#176b63",
   "#4f79c8",

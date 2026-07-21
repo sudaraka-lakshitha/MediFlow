@@ -20,4 +20,5 @@ prescriptionRoutes.post('/:id/verify', authorize('ADMIN', 'PHARMACIST'), validat
 prescriptionRoutes.post('/:id/reject', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: rejectSchema }), asyncHandler(prescriptionController.reject));
 prescriptionRoutes.post('/:id/dispense-quote', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: dispenseQuoteSchema }), asyncHandler(prescriptionController.dispenseQuote));
 prescriptionRoutes.post('/:id/payment-request', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: paymentRequestSchema }), asyncHandler(paymentRequestController.create));
+prescriptionRoutes.put('/:id/payment-request', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: paymentRequestSchema }), asyncHandler(paymentRequestController.update));
 prescriptionRoutes.post('/:id/dispense', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: dispenseSchema }), asyncHandler(prescriptionController.dispense));

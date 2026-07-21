@@ -25,6 +25,20 @@ export const paymentRequestController = {
     });
     res.status(201).json({ data });
   },
+  update: async (req, res) => {
+    const data = await paymentRequestService.update(Number(req.params.id), req.body);
+    await recordAudit({
+      userId: req.user.id, action: 'PAYMENT_REQUEST_UPDATED', entityType: 'PAYMENT_REQUEST', entityId: data.id,
+      details: { requestNumber: data.requestNumber, prescriptionId: data.prescriptionId, total: data.total },
+      ipAddress: req.ip,
+    });
+    res.json({ data });
+  },
+  cancel: async (req, res) => {
+    const data = await paymentRequestService.cancel(Number(req.params.id), req.body.reason, req.user.id);
+    await recordAudit({ userId: req.user.id, action: 'PAYMENT_REQUEST_CANCELLED', entityType: 'PAYMENT_REQUEST', entityId: data.id, details: { requestNumber: data.requestNumber, reason: req.body.reason }, ipAddress: req.ip });
+    res.json({ data });
+  },
   pay: async (req, res) => {
     const result = await paymentRequestService.pay(Number(req.params.id), req.body.paymentMethod, req.user.id, req.body.paymentReference);
     await recordAudit({ userId: req.user.id, action: 'CASHIER_PAYMENT_RECEIVED', entityType: 'PAYMENT_REQUEST', entityId: result.data.id, details: { requestNumber: result.data.requestNumber, total: result.data.total, paymentMethod: req.body.paymentMethod }, ipAddress: req.ip });

@@ -32,6 +32,8 @@ const empty = {
   address: "",
   allergies: "",
 };
+const prescriberLabel = (rx: { prescriberTitle?: string; prescriberName?: string }) =>
+  [rx.prescriberTitle, rx.prescriberName].filter(Boolean).join(" ") || "Not mentioned";
 export function PatientsPage() {
   const { user } = useAuth();
   const admin = user!.role === "ADMIN";
@@ -467,7 +469,7 @@ export function PatientsPage() {
                       <strong>{rx.prescriptionNumber}</strong>
                       <br />
                       <small className="text-secondary">
-                        {new Date(rx.prescriptionDate).toLocaleDateString()} by {rx.prescriberTitle} {rx.prescriberName}
+                        {new Date(rx.prescriptionDate).toLocaleDateString()} by {prescriberLabel(rx)}
                       </small>
                     </td>
                     <td>

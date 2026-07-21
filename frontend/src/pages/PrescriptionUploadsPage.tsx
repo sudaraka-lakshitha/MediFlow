@@ -48,6 +48,23 @@ type Upload = {
 
 const money = (value: unknown) =>
   `Rs. ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const dobFromAge = (age: number) => {
+  const date = new Date();
+  date.setFullYear(date.getFullYear() - age);
+  return date.toISOString().slice(0, 10);
+};
+const ageFromDob = (dob?: string) => {
+  if (!dob) return "";
+  const birth = new Date(dob);
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  if (
+    today.getMonth() < birth.getMonth() ||
+    (today.getMonth() === birth.getMonth() && today.getDate() < birth.getDate())
+  )
+    age -= 1;
+  return String(age);
+};
 const liquidUnits = ["ml", "millilitre", "milliliter", "l", "litre", "liter"];
 const isLiquidProduct = (product: any) =>
   liquidUnits.includes(String(product?.unit || "").toLowerCase()) ||
@@ -160,6 +177,14 @@ export function PrescriptionUploadsPage() {
       setError(errorMessage(caught));
     } finally {
       setBusy(false);
+    }
+  };
+  const acceptEstimate = async (item: Upload) => {
+    try {
+      await api.put(`/prescription-uploads/${item.id}/accept`);
+      await load();
+    } catch (caught) {
+      setError(errorMessage(caught));
     }
   };
   const saveDeadline = async (item: Upload, value: string) => {
@@ -610,6 +635,18 @@ export function PrescriptionUploadsPage() {
                 review and is not guaranteed until the final invoice is issued.
               </div>
             )}
+            {patient &&
+              item.estimatedTotal != null &&
+              !item.prepareRequested &&
+              ["AVAILABLE", "PARTIALLY_AVAILABLE"].includes(item.status) && (
+                <button
+                  className="btn btn-sm btn-success mt-2"
+                  onClick={() => acceptEstimate(item)}
+                >
+                  <i className="bi bi-check-circle me-1" />
+                  Accept — prepare my medicines
+                </button>
+              )}
             {item.availabilityNotes && (
               <p className="review-note">{item.availabilityNotes}</p>
             )}
@@ -707,7 +744,7 @@ export function PrescriptionUploadsPage() {
                 <label className={`preparation-choice ${uploadForm.orderedForSelf ? "selected" : ""}`}><input type="radio" name="recipient" checked={uploadForm.orderedForSelf} onChange={() => setUploadForm({ ...uploadForm, orderedForSelf: true })} /><span><strong>For me</strong><small>I am the patient named on this prescription.</small></span></label>
                 <label className={`preparation-choice ${!uploadForm.orderedForSelf ? "selected" : ""}`}><input type="radio" name="recipient" checked={!uploadForm.orderedForSelf} onChange={() => setUploadForm({ ...uploadForm, orderedForSelf: false })} /><span><strong>For someone else</strong><small>I am uploading this on behalf of another person.</small></span></label>
               </div>
-              {!uploadForm.orderedForSelf && <div className="row g-2 mt-1"><div className="col-sm-5"><label className="form-label">Recipient full name</label><input className="form-control" placeholder="Full name" value={uploadForm.recipientName} onChange={(event) => setUploadForm({ ...uploadForm, recipientName: event.target.value })} required /></div><div className="col-sm-3"><label className="form-label">Relationship</label><input className="form-control" placeholder="e.g. Child" value={uploadForm.recipientRelationship} onChange={(event) => setUploadForm({ ...uploadForm, recipientRelationship: event.target.value })} required /></div><div className="col-sm-4"><label className="form-label">Recipient date of birth</label><input className="form-control" type="date" max={new Date().toISOString().slice(0, 10)} value={uploadForm.recipientDateOfBirth} onChange={(event) => setUploadForm({ ...uploadForm, recipientDateOfBirth: event.target.value })} required /><small className="text-secondary">Used for medicine age checks.</small></div></div>}
+              {!uploadForm.orderedForSelf && <div className="row g-2 mt-1"><div className="col-sm-5"><label className="form-label">Recipient full name</label><input className="form-control" placeholder="Full name" value={uploadForm.recipientName} onChange={(event) => setUploadForm({ ...uploadForm, recipientName: event.target.value })} required /></div><div className="col-sm-3"><label className="form-label">Relationship</label><input className="form-control" placeholder="e.g. Child" value={uploadForm.recipientRelationship} onChange={(event) => setUploadForm({ ...uploadForm, recipientRelationship: event.target.value })} required /></div><div className="col-sm-4"><label className="form-label">Recipient age (years)</label><input className="form-control" type="number" min={0} max={130} step={1} value={ageFromDob(uploadForm.recipientDateOfBirth)} onChange={(event) => setUploadForm({ ...uploadForm, recipientDateOfBirth: event.target.value === "" ? "" : dobFromAge(Number(event.target.value)) })} required /><small className="text-secondary">Used for medicine age checks.</small></div></div>}
             </fieldset>
             <fieldset className="mt-3">
               <legend className="form-label">
@@ -789,28 +826,30 @@ export function PrescriptionUploadsPage() {
                 <div className="alert alert-info small">
                   <strong>Medicine recipient:</strong> {review.recipientName} · {review.recipientRelationship}
                   <br />
-                  <strong>Date of birth:</strong>{" "}
+                  <strong>Age:</strong>{" "}
                   {review.recipientDateOfBirth
-                    ? new Date(review.recipientDateOfBirth).toLocaleDateString()
+                    ? `${ageFromDob(review.recipientDateOfBirth)} years`
                     : "Not provided"}
                 </div>
               )}
-              <div className="upload-review-steps-indicator mb-3 p-2 bg-light border rounded d-flex justify-content-around text-center small">
-                <div className="step-item text-primary fw-bold">
-                  <span className="badge rounded-circle bg-primary me-1">1</span>
-                  Review scan
+              {review.prepareRequested && (
+                <div className="upload-review-steps-indicator mb-3 p-2 bg-light border rounded d-flex justify-content-around text-center small">
+                  <div className="step-item text-primary fw-bold">
+                    <span className="badge rounded-circle bg-primary me-1">1</span>
+                    Review scan
+                  </div>
+                  <div className="step-divider text-secondary align-self-center">&rarr;</div>
+                  <div className="step-item text-primary fw-bold">
+                    <span className="badge rounded-circle bg-primary me-1">2</span>
+                    Build estimate
+                  </div>
+                  <div className="step-divider text-secondary align-self-center">&rarr;</div>
+                  <div className="step-item text-primary fw-bold">
+                    <span className="badge rounded-circle bg-primary me-1">3</span>
+                    Create prescription
+                  </div>
                 </div>
-                <div className="step-divider text-secondary align-self-center">&rarr;</div>
-                <div className="step-item text-primary fw-bold">
-                  <span className="badge rounded-circle bg-primary me-1">2</span>
-                  Build estimate
-                </div>
-                <div className="step-divider text-secondary align-self-center">&rarr;</div>
-                <div className="step-item text-primary fw-bold">
-                  <span className="badge rounded-circle bg-primary me-1">3</span>
-                  Create prescription
-                </div>
-              </div>
+              )}
               <div className="alert alert-light border small">
                 <strong>Sender:</strong> {review.patient.fullName}
                 <br />

@@ -140,6 +140,7 @@ model User {
   paymentRequestsAsPatient    PaymentRequest[]          @relation("PaymentRequestPatient")
   paymentRequestsAsPharmacist PaymentRequest[]          @relation("PaymentRequestPharmacist")
   paymentRequestsAsCashier    PaymentRequest[]          @relation("PaymentRequestCashier")
+  paymentRequestsCancelled    PaymentRequest[]          @relation("PaymentRequestCancelledBy")
   stockMovements              StockMovement[]
   lowStockAcknowledgements    LowStockAcknowledgement[] @relation("LowStockAcknowledgedBy")
   auditLogs                   AuditLog[]
@@ -603,9 +604,13 @@ model PaymentRequest {
   pinAttempts        Int                  @default(0) @map("pin_attempts")
   paidAt             DateTime?            @map("paid_at")
   pinVerifiedAt      DateTime?            @map("pin_verified_at")
+  cancellationReason String?              @map("cancellation_reason") @db.VarChar(500)
+  cancelledById      Int?                 @map("cancelled_by_id")
+  cancelledAt        DateTime?            @map("cancelled_at")
   patient            User?                @relation("PaymentRequestPatient", fields: [patientId], references: [id])
   pharmacist         User                 @relation("PaymentRequestPharmacist", fields: [pharmacistId], references: [id])
   cashier            User?                @relation("PaymentRequestCashier", fields: [cashierId], references: [id])
+  cancelledBy        User?                @relation("PaymentRequestCancelledBy", fields: [cancelledById], references: [id])
   prescription       Prescription?        @relation(fields: [prescriptionId], references: [id])
   items              PaymentRequestItem[]
   sale               Sale?
