@@ -2,6 +2,7 @@ import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
 import { Prisma } from '@prisma/client';
 import { calculateDiscounts } from './discount.service.js';
+import { ageOnDate } from '../utils/age.js';
 
 const summarySelect = {
   id: true, originalName: true, mimeType: true, patientNote: true, prepareRequested: true, orderedForSelf: true, recipientName: true, recipientRelationship: true, recipientDateOfBirth: true, status: true, availabilityNotes: true,
@@ -27,6 +28,23 @@ const ensureAccess = (record, user) => {
 const isLiquidProduct = (product) =>
   ['ml', 'millilitre', 'milliliter', 'l', 'litre', 'liter'].includes(String(product?.unit || '').toLowerCase())
   || /syrup|suspension|solution|elixir|liquid/i.test(String(product?.dosageForm || ''));
+
+const validateRecipientAge = async (upload, products) => {
+  let dateOfBirth = upload.recipientDateOfBirth;
+  if (upload.orderedForSelf) {
+    const patient = await prisma.patientProfile.findUnique({ where: { userId: upload.patientId }, select: { dateOfBirth: true } });
+    dateOfBirth = patient?.dateOfBirth;
+  }
+  if (!dateOfBirth) {
+    throw new AppError(400, upload.orderedForSelf
+      ? 'Record the patient date of birth before quoting medicine so age suitability can be checked.'
+      : 'Record the recipient date of birth so medicine age suitability can be checked.');
+  }
+  const age = ageOnDate(dateOfBirth, new Date());
+  if (age < 0 || age > 130) throw new AppError(400, 'The medicine recipient date of birth is invalid.');
+  const unsuitable = products.filter((product) => (product.minimumAgeYears != null && age < product.minimumAgeYears) || (product.maximumAgeYears != null && age > product.maximumAgeYears));
+  if (unsuitable.length) throw new AppError(400, `${unsuitable.map((product) => product.genericName).join(', ')} ${unsuitable.length === 1 ? 'is' : 'are'} outside the configured age range for this medicine recipient (${age} years). Review the medicine or update its verified age guidance.`);
+};
 
 export const prescriptionUploadService = {
   async cleanupExpired() { const result = await prisma.prescriptionUpload.deleteMany({ where: { deleteAt: { lte: new Date() } } }); return result.count; },
@@ -68,7 +86,7 @@ export const prescriptionUploadService = {
   async estimateQuote(id, data) {
     const upload = await prisma.prescriptionUpload.findUnique({
       where: { id },
-      select: { id: true, patientId: true },
+      select: { id: true, patientId: true, orderedForSelf: true, recipientDateOfBirth: true },
     });
     if (!upload) throw new AppError(404, 'Uploaded prescription not found.');
 
@@ -109,6 +127,9 @@ export const prescriptionUploadService = {
     }
     if (retailProducts.length !== requestedRetailIds.length) {
       throw new AppError(400, 'One or more selected retail items are inactive, unavailable, or require a prescription.');
+    }
+    if (products.length) {
+      await validateRecipientAge(upload, products);
     }
 
     const productById = new Map(products.map((product) => [product.id, product]));

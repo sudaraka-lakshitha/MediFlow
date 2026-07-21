@@ -8,6 +8,7 @@ import { calculateDiscounts } from './discount.service.js';
 import { normalizeLiquidDose } from '../utils/liquidDose.js';
 import { verifyPickupPin } from '../utils/pickupPin.js';
 import { batchAllocationOrder, operationSettingsService } from './operationSettings.service.js';
+import { ageOnDate } from '../utils/age.js';
 
 const serializable = async (operation) => {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -21,14 +22,6 @@ const serializable = async (operation) => {
 const isLiquidProduct = (product) =>
   ['ml', 'millilitre', 'milliliter', 'l', 'litre', 'liter'].includes(String(product?.unit || '').toLowerCase())
   || /syrup|suspension|solution|elixir|liquid/i.test(String(product?.dosageForm || ''));
-
-const ageOnDate = (dateOfBirth, onDate) => {
-  const birth = new Date(dateOfBirth);
-  const date = new Date(onDate);
-  let age = date.getUTCFullYear() - birth.getUTCFullYear();
-  if (date.getUTCMonth() < birth.getUTCMonth() || (date.getUTCMonth() === birth.getUTCMonth() && date.getUTCDate() < birth.getUTCDate())) age -= 1;
-  return age;
-};
 
 const validatePatientAge = async (data, products) => {
   let dateOfBirth = data.recipientDateOfBirth;
