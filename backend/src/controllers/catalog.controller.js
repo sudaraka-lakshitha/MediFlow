@@ -21,7 +21,7 @@ export const catalogController = {
   updateCategory: save('CATEGORY', 'CATEGORY_UPDATED', (req) => catalogService.updateCategory(Number(req.params.id), req.body)),
   setCategoryActive: save('CATEGORY', 'CATEGORY_STATUS_CHANGED', (req) => catalogService.setCategoryActive(Number(req.params.id), req.body.active)),
   deleteCategory: remove('CATEGORY', catalogService.deleteCategory),
-  products: async (req, res) => res.json({ data: await catalogService.listProducts(req.query.search || '') }),
+  products: async (req, res) => { const { rows, total } = await catalogService.listProducts(req.query.search || ''); res.json({ data: rows, total }); },
   createProduct: save('PRODUCT', 'PRODUCT_CREATED', (req) => catalogService.createProduct(req.body)),
   updateProduct: save('PRODUCT', 'PRODUCT_UPDATED', (req) => catalogService.updateProduct(Number(req.params.id), req.body)),
   setProductActive: save('PRODUCT', 'PRODUCT_STATUS_CHANGED', (req) => catalogService.setProductActive(Number(req.params.id), req.body.active)),

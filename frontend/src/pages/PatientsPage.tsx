@@ -5,6 +5,7 @@ import { ActionsDropdown } from "../components/ActionsDropdown";
 import { Modal, ModalActions } from "../components/Modal";
 import { PasswordField } from "../components/PasswordField";
 import { Alert, Empty, Loading, Status } from "../components/Ui";
+import { useDebouncedValue } from "../utils/useDebouncedValue";
 
 type Patient = {
   id: number;
@@ -51,6 +52,9 @@ export function PatientsPage() {
   const [healthRecord, setHealthRecord] = useState<any>(null);
   const [showHealthRecord, setShowHealthRecord] = useState(false);
   const [noticeForm, setNoticeForm] = useState({ title: "", message: "" });
+  const [search, setSearch] = useState("");
+  const [total, setTotal] = useState(0);
+  const debouncedSearch = useDebouncedValue(search);
 
   const viewHealthRecord = async (p: Patient) => {
     setBusy(true);
@@ -68,11 +72,14 @@ export function PatientsPage() {
   const load = useCallback(
     () =>
       api
-        .get("/patients")
-        .then((r) => setRows(r.data.data))
+        .get("/patients", { params: debouncedSearch ? { search: debouncedSearch } : {} })
+        .then((r) => {
+          setRows(r.data.data);
+          setTotal(r.data.total ?? r.data.data.length);
+        })
         .catch((e) => setError(errorMessage(e)))
         .finally(() => setLoading(false)),
-    [],
+    [debouncedSearch],
   );
   useEffect(() => {
     load();
@@ -181,6 +188,20 @@ export function PatientsPage() {
       </div>
       <Alert message={error} />
       <div className="panel">
+        <div className="d-flex justify-content-between align-items-center gap-2 mb-3 flex-wrap">
+          <div className="search-select" style={{ maxWidth: 340 }}>
+            <input
+              className="form-control search-select-input"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search by name, phone, email, or patient number"
+            />
+            <i className="bi bi-search search-select-icon" />
+          </div>
+          <span className="text-secondary small">
+            Showing {rows.length} of {total} patient{total === 1 ? "" : "s"}
+          </span>
+        </div>
         <div className="table-responsive">
           <table className="table">
             <thead>

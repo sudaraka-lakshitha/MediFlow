@@ -367,6 +367,32 @@ export function PrescriptionsPage() {
       setLoading(false);
     }
   }, [staff]);
+  const searchPatients = useCallback(async (query: string) => {
+    if (query.length < 2) return;
+    try {
+      const response = await api.get("/patients", { params: { search: query } });
+      setPatients((prev) => {
+        const byId = new Map(prev.map((patient: any) => [patient.id, patient]));
+        for (const patient of response.data.data) byId.set(patient.id, patient);
+        return [...byId.values()];
+      });
+    } catch {
+      // best-effort live search; keep whatever options are already loaded
+    }
+  }, []);
+  const searchMedicines = useCallback(async (query: string) => {
+    if (query.length < 2) return;
+    try {
+      const response = await api.get("/catalog/products", { params: { search: query } });
+      setProducts((prev) => {
+        const byId = new Map(prev.map((product: any) => [product.id, product]));
+        for (const product of response.data.data) byId.set(product.id, product);
+        return [...byId.values()];
+      });
+    } catch {
+      // best-effort live search; keep whatever options are already loaded
+    }
+  }, []);
   useEffect(() => {
     load();
   }, [load]);
@@ -1701,6 +1727,7 @@ export function PrescriptionsPage() {
                         onChange={(patientId) => {
                           setForm({ ...form, patientId: Number(patientId) });
                         }}
+                        onQueryChange={searchPatients}
                         placeholder="Search patient name or number"
                         required
                         disabled={Boolean(form.sourceUploadId)}
@@ -1919,6 +1946,7 @@ export function PrescriptionsPage() {
                         onChange={(productId) =>
                           selectMedicine(index, Number(productId))
                         }
+                        onQueryChange={searchMedicines}
                         placeholder="Search name, brand, strength or SKU"
                         required
                       />

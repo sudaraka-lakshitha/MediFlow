@@ -17,7 +17,21 @@ export const patientService = {
     if (!patient) throw new AppError(404, 'Patient not found.');
     return prisma.patientNotice.create({ data: { patientId: patient.userId, createdById, title: data.title, message: data.message }, include: { createdBy: { select: { fullName: true, role: true } } } });
   },
-  list: () => prisma.patientProfile.findMany({ include, orderBy: { createdAt:'desc' }, take:300 }),
+  async list(query = {}) {
+    const search = query.search?.trim();
+    const take = Math.min(Number(query.limit) || 100, 200);
+    const where = search ? { OR: [
+      { user: { fullName: { contains: search } } },
+      { user: { email: { contains: search } } },
+      { user: { phone: { contains: search } } },
+      { patientNumber: { contains: search } },
+    ] } : {};
+    const [rows, total] = await Promise.all([
+      prisma.patientProfile.findMany({ where, include, orderBy: { createdAt: 'desc' }, take }),
+      prisma.patientProfile.count({ where }),
+    ]);
+    return { rows, total, hasMore: total > rows.length };
+  },
   async create(data, staff) {
     if (data.phone) {
       const existing = await prisma.user.findFirst({ where: { phone: data.phone, role: 'PATIENT' }, select: { fullName: true, patientProfile: { select: { id: true, patientNumber: true } } } });

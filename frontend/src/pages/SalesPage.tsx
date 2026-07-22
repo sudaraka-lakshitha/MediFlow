@@ -65,6 +65,32 @@ export function SalesPage() {
       setLoading(false);
     }
   }, [staff]);
+  const searchPatients = useCallback(async (query: string) => {
+    if (query.length < 2) return;
+    try {
+      const response = await api.get("/patients", { params: { search: query } });
+      setPatients((prev) => {
+        const byId = new Map(prev.map((patient: any) => [patient.id, patient]));
+        for (const patient of response.data.data) byId.set(patient.id, patient);
+        return [...byId.values()];
+      });
+    } catch {
+      // best-effort live search; keep whatever options are already loaded
+    }
+  }, []);
+  const searchProducts = useCallback(async (query: string) => {
+    if (query.length < 2) return;
+    try {
+      const response = await api.get("/catalog/products", { params: { search: query } });
+      setProducts((prev) => {
+        const byId = new Map(prev.map((product: any) => [product.id, product]));
+        for (const product of response.data.data) byId.set(product.id, product);
+        return [...byId.values()];
+      });
+    } catch {
+      // best-effort live search; keep whatever options are already loaded
+    }
+  }, []);
   useEffect(() => {
     load();
   }, [load]);
@@ -494,6 +520,7 @@ export function SalesPage() {
                   }))}
                   value={retail.patientId}
                   onChange={(patientId) => setRetail({ ...retail, patientId })}
+                  onQueryChange={searchPatients}
                   placeholder="Walk-in customer"
                 />
               </div>
@@ -533,6 +560,7 @@ export function SalesPage() {
                       onChange={(productId) =>
                         updateRetailItem(index, { productId })
                       }
+                      onQueryChange={searchProducts}
                       placeholder="Search product, barcode or SKU"
                       required
                     />
