@@ -1,13 +1,17 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { fuzzyMatchScore } from '../utils/fuzzy';
+import { useDebouncedValue } from '../utils/useDebouncedValue';
 
 export type SelectOption = { value: string | number; label: string; description?: string };
 
-export function SearchableSelect({ options, value, onChange, placeholder = 'Search and select', required = false, disabled = false }: {
+export function SearchableSelect({ options, value, onChange, onQueryChange, placeholder = 'Search and select', required = false, disabled = false }: {
   options: SelectOption[]; value: string | number | null | undefined; onChange(value: string | number): void;
+  onQueryChange?(query: string): void;
   placeholder?: string; required?: boolean; disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false); const [query, setQuery] = useState('');
+  const debouncedQuery = useDebouncedValue(query, 250);
+  useEffect(() => { if (onQueryChange) onQueryChange(debouncedQuery.trim()); }, [debouncedQuery]);
   const selected = options.find((option) => String(option.value) === String(value));
   const filtered = useMemo(() => { const term = query.trim(); return (term ? options.map((option) => ({ option, score: fuzzyMatchScore(option, term) })).filter((entry) => Number.isFinite(entry.score)).sort((first, second) => first.score - second.score || first.option.label.localeCompare(second.option.label)).map((entry) => entry.option) : options).slice(0, term ? 30 : 80); }, [options, query]);
   return <div className="search-select">

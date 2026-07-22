@@ -3,6 +3,7 @@ import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
 import { operationSettingsService } from './operationSettings.service.js';
 import { lowStockState } from '../utils/lowStock.js';
+import { usableStockTotal } from '../utils/stock.js';
 
 export const inventoryService = {
   listBatches: () => prisma.inventoryBatch.findMany({
@@ -31,7 +32,7 @@ export const inventoryService = {
         where: { active: true },
         include: {
           lowStockAcknowledgement: { select: { stockLevel: true } },
-          batches: { where: { expiryDate: { gte: today }, restricted: false }, select: { quantityAvailable: true } },
+          batches: { where: { expiryDate: { gte: today }, restricted: false }, select: { quantityAvailable: true, quantityReserved: true } },
         },
       }),
     ]);
@@ -53,15 +54,12 @@ export const inventoryService = {
         include: {
           batches: {
             where: { expiryDate: { gte: now }, quantityAvailable: { gt: 0 }, restricted: false },
-            select: { quantityAvailable: true },
+            select: { quantityAvailable: true, quantityReserved: true },
           },
         },
       });
       if (!product || !product.active) throw new AppError(404, 'Active product not found.');
-      const stockLevel = product.batches.reduce(
-        (total, batch) => total.add(batch.quantityAvailable),
-        new Prisma.Decimal(0),
-      );
+      const stockLevel = usableStockTotal(product.batches);
       if (stockLevel.greaterThan(product.reorderLevel)) throw new AppError(409, 'This product is no longer at or below its reorder level.');
       return tx.lowStockAcknowledgement.upsert({
         where: { productId },
@@ -85,6 +83,13 @@ export const inventoryService = {
     });
   },
   updateBatch: (id, data) => prisma.$transaction(async (tx) => {
+    const current = await tx.inventoryBatch.findUnique({ where: { id } });
+    if (!current) throw new AppError(404, 'Inventory batch not found.');
+    const currentlyExpired = current.expiryDate < new Date();
+    const expiryChanged = current.expiryDate.getTime() !== new Date(data.expiryDate).getTime();
+    if (currentlyExpired && expiryChanged) {
+      throw new AppError(409, 'Expired batches cannot have their expiry date changed here — use "Process expired stock" instead.');
+    }
     const batch = await tx.inventoryBatch.update({ where: { id }, data: { supplierId: data.supplierId, batchNumber: data.batchNumber, purchasePrice: data.purchasePrice, expiryDate: data.expiryDate }, include: { product: true, supplier: true } });
     await tx.lowStockAcknowledgement.deleteMany({ where: { productId: batch.productId } });
     return batch;
@@ -109,6 +114,7 @@ export const inventoryService = {
       if (!batch) throw new AppError(404, 'Inventory batch not found.');
       const quantityAfter = batch.quantityAvailable.add(data.quantityChange);
       if (quantityAfter.isNegative()) throw new AppError(409, 'The adjustment would make stock negative.');
+      if (quantityAfter.lessThan(batch.quantityReserved)) throw new AppError(409, `This batch has ${batch.quantityReserved} unit(s) already reserved against paid bills — the adjustment cannot bring available stock below that.`);
       const updated = await tx.inventoryBatch.update({ where: { id: batchId }, data: { quantityAvailable: quantityAfter } });
       await tx.lowStockAcknowledgement.deleteMany({ where: { productId: batch.productId } });
       await tx.stockMovement.create({ data: { productId: batch.productId, batchId, type: 'ADJUSTMENT', quantityChange: new Prisma.Decimal(data.quantityChange), quantityBefore: batch.quantityAvailable, quantityAfter, reason: data.reason, performedById: userId } });
@@ -125,6 +131,7 @@ export const inventoryService = {
       if (batch.expiryDate >= new Date()) throw new AppError(409, 'Only expired stock can use the expiry disposition workflow.');
       const quantity = new Prisma.Decimal(data.quantity);
       if (quantity.greaterThan(batch.quantityAvailable)) throw new AppError(409, 'Disposition quantity exceeds the remaining batch stock.');
+      if (batch.quantityAvailable.sub(quantity).lessThan(batch.quantityReserved)) throw new AppError(409, `This batch has ${batch.quantityReserved} unit(s) already reserved against paid bills — release or fulfill those first.`);
 
       const quantityAfter = batch.quantityAvailable.sub(quantity);
       const returned = data.action.startsWith('RETURNED_');
@@ -168,11 +175,15 @@ export const inventoryService = {
       if (Number(batch.quantityAvailable) !== 0) {
         throw new AppError(409, 'Only empty batches (available quantity = 0) can be deleted.');
       }
-      // Delete any associated stock movements, dispensing items, and sale items to prevent FK constraints
+      const [movementCount, dispensingCount, saleCount] = await Promise.all([
+        tx.stockMovement.count({ where: { batchId, type: { not: 'RECEIPT' } } }),
+        tx.dispensingItem.count({ where: { batchId } }),
+        tx.saleItem.count({ where: { batchId } }),
+      ]);
+      if (movementCount > 0 || dispensingCount > 0 || saleCount > 0) {
+        throw new AppError(409, 'This batch has transaction history and cannot be deleted. Only a batch that was received but never issued against can be removed.');
+      }
       await tx.stockMovement.deleteMany({ where: { batchId } });
-      await tx.dispensingItem.deleteMany({ where: { batchId } });
-      await tx.saleItem.deleteMany({ where: { batchId } });
-      
       return tx.inventoryBatch.delete({ where: { id: batchId } });
     });
   },

@@ -35,6 +35,16 @@ const InventoryPage = lazy(() =>
     default: module.InventoryPage,
   })),
 );
+const StockMovementsPage = lazy(() =>
+  import("./pages/StockMovementsPage").then((module) => ({
+    default: module.StockMovementsPage,
+  })),
+);
+const PatientHealthRecordPage = lazy(() =>
+  import("./pages/PatientHealthRecordPage").then((module) => ({
+    default: module.PatientHealthRecordPage,
+  })),
+);
 const PrescriptionsPage = lazy(() =>
   import("./pages/PrescriptionsPage").then((module) => ({
     default: module.PrescriptionsPage,
@@ -136,6 +146,10 @@ export default function App() {
             >
               <Route element={<Layout />}>
                 <Route path="profile" element={<PatientProfilePage />} />
+                <Route
+                  path="health-record"
+                  element={<PatientHealthRecordPage />}
+                />
               </Route>
             </Route>
             <Route
@@ -157,6 +171,10 @@ export default function App() {
                 <Route path="patients" element={<PatientsPage />} />
                 <Route path="catalog" element={<CatalogPage />} />
                 <Route path="inventory" element={<InventoryPage />} />
+                <Route
+                  path="inventory/movements"
+                  element={<StockMovementsPage />}
+                />
                 <Route path="drug-research" element={<DrugResearchPage />} />
                 <Route path="reports" element={<ReportsPage />} />
               </Route>

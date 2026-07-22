@@ -1,8 +1,10 @@
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
 import { Prisma } from '@prisma/client';
-import { calculateDiscounts } from './discount.service.js';
+import { assertCouponMatched, calculateDiscounts } from './discount.service.js';
 import { ageOnDate } from '../utils/age.js';
+import { findAgeUnsuitable } from '../utils/ageSuitability.js';
+import { usableStockTotal } from '../utils/stock.js';
 
 const summarySelect = {
   id: true, originalName: true, mimeType: true, patientNote: true, prepareRequested: true, orderedForSelf: true, recipientName: true, recipientRelationship: true, recipientDateOfBirth: true, status: true, availabilityNotes: true,
@@ -42,7 +44,7 @@ const validateRecipientAge = async (upload, products) => {
   }
   const age = ageOnDate(dateOfBirth, new Date());
   if (age < 0 || age > 130) throw new AppError(400, 'The medicine recipient date of birth is invalid.');
-  const unsuitable = products.filter((product) => (product.minimumAgeYears != null && age < product.minimumAgeYears) || (product.maximumAgeYears != null && age > product.maximumAgeYears));
+  const unsuitable = findAgeUnsuitable(products, age);
   if (unsuitable.length) throw new AppError(400, `${unsuitable.map((product) => product.genericName).join(', ')} ${unsuitable.length === 1 ? 'is' : 'are'} outside the configured age range for this medicine recipient (${age} years). Review the medicine or update its verified age guidance.`);
 };
 
@@ -101,7 +103,7 @@ export const prescriptionUploadService = {
           restricted: false,
           expiryDate: { gte: now },
         },
-        select: { quantityAvailable: true },
+        select: { quantityAvailable: true, quantityReserved: true },
       },
     };
     const [products, retailProducts] = await Promise.all([
@@ -138,10 +140,7 @@ export const prescriptionUploadService = {
     const allocations = [];
     const createLine = (requested, product, source) => {
       const quantity = new Prisma.Decimal(requested.quantity);
-      const availableQuantity = product.batches.reduce(
-        (sum, batch) => sum.add(batch.quantityAvailable),
-        new Prisma.Decimal(0),
-      );
+      const availableQuantity = usableStockTotal(product.batches);
       const lineTotal = product.sellingPrice.mul(quantity).toDecimalPlaces(2);
       subtotal = subtotal.add(lineTotal);
       allocations.push({
@@ -169,12 +168,12 @@ export const prescriptionUploadService = {
     const lines = [...medicineLines, ...retailLines];
 
     subtotal = subtotal.toDecimalPlaces(2);
-    const discountResult = await calculateDiscounts(
+    const discountResult = assertCouponMatched(await calculateDiscounts(
       prisma,
       allocations,
       subtotal,
       data.couponCode,
-    );
+    ));
     const hasLiquidMedicine = products.some(isLiquidProduct);
     const containerFee = new Prisma.Decimal(data.containerFee || 0).toDecimalPlaces(2);
     if (containerFee.greaterThan(0) && !hasLiquidMedicine) {

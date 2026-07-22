@@ -4,9 +4,14 @@ import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
 import { decryptPickupPin, encryptPickupPin, generatePickupPin, hashPickupPin } from '../utils/pickupPin.js';
 import { prescriptionService } from './prescription.service.js';
-import { calculateDiscounts } from './discount.service.js';
+import { assertCouponMatched, calculateDiscounts } from './discount.service.js';
 import { verifyPickupPin } from '../utils/pickupPin.js';
 import { batchAllocationOrder, operationSettingsService } from './operationSettings.service.js';
+import { isSameLocalDay } from '../utils/localDate.js';
+import { withUniqueRetry } from '../utils/withUniqueRetry.js';
+import { serializable } from '../utils/serializable.js';
+import { assertRetailAgeSuitability } from '../utils/ageSuitability.js';
+import { consumePaymentRequestStock, releaseReservations, reserveStock, usableStockTotal } from '../utils/stock.js';
 
 const include = {
   patient: { select: { id: true, fullName: true, email: true, phone: true } },
@@ -47,7 +52,7 @@ export const paymentRequestService = {
     const incomplete = prescription.items.some((item) => Number(item.prescribedQuantity.sub(item.dispensedQuantity)) !== Number(quantities.get(item.id) || 0));
     if (incomplete) throw new AppError(409, 'Every remaining prescribed item must be included in the cashier request.');
     const quote = await prescriptionService.quoteDispensing(prescriptionId, { ...input, amountPaid: 0, paymentMethod: 'CASH' });
-    return prisma.paymentRequest.create({
+    return withUniqueRetry(() => prisma.paymentRequest.create({
       data: {
         requestNumber: `PAY-${Date.now()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`,
         prescriptionId, patientId: prescription.patient.userId, pharmacistId,
@@ -56,7 +61,7 @@ export const paymentRequestService = {
         items: { create: quote.lines.map((line) => ({ prescriptionItemId: line.prescriptionItemId, productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice, lineTotal: line.lineTotal })) },
       },
       include,
-    });
+    }));
   },
   async update(prescriptionId, input) {
     const prescription = await prisma.prescription.findUnique({
@@ -71,24 +76,27 @@ export const paymentRequestService = {
     if (incomplete) throw new AppError(409, 'Every remaining prescribed item must be included in the cashier request.');
     const quote = await prescriptionService.quoteDispensing(prescriptionId, { ...input, amountPaid: 0, paymentMethod: 'CASH' });
     return prisma.$transaction(async (tx) => {
-      await tx.paymentRequestItem.deleteMany({ where: { paymentRequestId: existing.id } });
-      return tx.paymentRequest.update({
-        where: { id: existing.id },
+      const claimed = await tx.paymentRequest.updateMany({
+        where: { id: existing.id, status: 'AWAITING_PAYMENT' },
         data: {
           subtotal: quote.subtotal, discount: quote.discount, containerFee: quote.containerFee, tax: quote.tax, total: quote.total,
           couponCode: input.couponCode || null,
-          items: { create: quote.lines.map((line) => ({ prescriptionItemId: line.prescriptionItemId, productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice, lineTotal: line.lineTotal })) },
         },
-        include,
       });
+      if (claimed.count !== 1) throw new AppError(409, 'This bill was just processed by the cashier. Refresh to see its latest status.');
+      await tx.paymentRequestItem.deleteMany({ where: { paymentRequestId: existing.id } });
+      await tx.paymentRequestItem.createMany({
+        data: quote.lines.map((line) => ({ paymentRequestId: existing.id, prescriptionItemId: line.prescriptionItemId, productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice, lineTotal: line.lineTotal })),
+      });
+      return tx.paymentRequest.findUnique({ where: { id: existing.id }, include });
     });
   },
-  async cancel(id, reason, userId) {
+  async cancel(id, reason, userId, userRole) {
     return prisma.$transaction(async (tx) => {
       const current = await tx.paymentRequest.findUnique({ where: { id } });
       if (!current) throw new AppError(404, 'Payment request not found.');
       if (current.status !== 'PAID') throw new AppError(409, 'Only a paid bill that has not yet been dispensed or handed over can be revoked.');
-      if (!current.paidAt || new Date(current.paidAt).toDateString() !== new Date().toDateString()) {
+      if (userRole !== 'ADMIN' && (!current.paidAt || !isSameLocalDay(current.paidAt, new Date()))) {
         throw new AppError(409, 'This bill can only be revoked on the same day it was paid.');
       }
       const claimed = await tx.paymentRequest.updateMany({
@@ -96,6 +104,7 @@ export const paymentRequestService = {
         data: { status: 'CANCELLED', cancellationReason: reason, cancelledById: userId, cancelledAt: new Date() },
       });
       if (claimed.count !== 1) throw new AppError(409, 'This bill was just processed by someone else. Refresh to see its latest status.');
+      await releaseReservations(tx, id);
       const data = await tx.paymentRequest.findUnique({ where: { id }, include });
       return safeRecord(data);
     });
@@ -106,7 +115,7 @@ export const paymentRequestService = {
         where: { active: true, prescriptionRequired: false },
         select: {
           id: true, sku: true, barcode: true, genericName: true, strength: true, unit: true, productType: true, sellingPrice: true,
-          batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: new Date() }, restricted: false }, select: { quantityAvailable: true } },
+          batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: new Date() }, restricted: false }, select: { quantityAvailable: true, quantityReserved: true } },
         },
         orderBy: { genericName: 'asc' },
       }),
@@ -121,13 +130,14 @@ export const paymentRequestService = {
     }
     const requestedIds = [...new Set(input.items.map((item) => item.productId))];
     const products = await prisma.product.findMany({ where: { id: { in: requestedIds }, active: true, prescriptionRequired: false }, include: { category: true, batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: new Date() }, restricted: false } } } });
+    await assertRetailAgeSuitability(input.patientId, products);
     const byId = new Map(products.map((product) => [product.id, product]));
     const lines = []; const allocations = []; let subtotal = new Prisma.Decimal(0);
     for (const requested of input.items) {
       const product = byId.get(requested.productId);
       if (!product) throw new AppError(404, `Retail product ${requested.productId} was not found or requires a prescription.`);
       const quantity = new Prisma.Decimal(requested.quantity);
-      const available = product.batches.reduce((sum, batch) => sum.add(batch.quantityAvailable), new Prisma.Decimal(0));
+      const available = usableStockTotal(product.batches);
       if (available.lessThan(quantity)) throw new AppError(409, `Insufficient usable stock for ${product.genericName}.`);
       const lineTotal = product.sellingPrice.mul(quantity).toDecimalPlaces(2);
       subtotal = subtotal.add(lineTotal);
@@ -135,21 +145,21 @@ export const paymentRequestService = {
       allocations.push({ productId: product.id, categoryId: product.categoryId, quantity, unitPrice: product.sellingPrice, lineTotal });
     }
     subtotal = subtotal.toDecimalPlaces(2);
-    const discountResult = await calculateDiscounts(prisma, allocations, subtotal, input.couponCode);
+    const discountResult = assertCouponMatched(await calculateDiscounts(prisma, allocations, subtotal, input.couponCode));
     const tax = new Prisma.Decimal(input.tax).toDecimalPlaces(2);
     const total = Prisma.Decimal.max(0, subtotal.sub(discountResult.amount).add(tax)).toDecimalPlaces(2);
-    return prisma.paymentRequest.create({
+    return withUniqueRetry(() => prisma.paymentRequest.create({
       data: {
         type: 'RETAIL', requestNumber: `RET-${Date.now()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`,
         patientId: input.patientId || null, pharmacistId, subtotal, discount: discountResult.amount, tax, total, couponCode: input.couponCode || null,
         items: { create: lines },
       },
       include,
-    });
+    }));
   },
   async pay(id, paymentMethod, cashierId, paymentReference) {
-    return prisma.$transaction(async (tx) => {
-      const current = await tx.paymentRequest.findUnique({ where: { id } });
+    return serializable(async (tx) => {
+      const current = await tx.paymentRequest.findUnique({ where: { id }, include: { items: true } });
       if (!current) throw new AppError(404, 'Payment request not found.');
       if (current.status !== 'AWAITING_PAYMENT') throw new AppError(409, 'This payment request is not awaiting payment.');
       const pin = generatePickupPin();
@@ -161,6 +171,9 @@ export const paymentRequestService = {
         },
       });
       if (claimed.count !== 1) throw new AppError(409, 'This bill was just processed by another cashier. Refresh to see its latest status.');
+      const operationSettings = await operationSettingsService.get(tx);
+      const allocationOrder = batchAllocationOrder(operationSettings.allocationMethod);
+      await reserveStock(tx, id, current.items, allocationOrder);
       const data = await tx.paymentRequest.findUnique({ where: { id }, include });
       return { data: safeRecord(data), pickupPin: pin };
     });
@@ -174,40 +187,34 @@ export const paymentRequestService = {
     const request = await prisma.paymentRequest.findUnique({ where: { id }, include: { items: { include: { product: true } } } });
     if (!request || request.type !== 'RETAIL') throw new AppError(404, 'Retail payment request not found.');
     if (request.status !== 'PAID') throw new AppError(402, 'Cashier payment has not been completed for this retail request.');
+    await assertRetailAgeSuitability(request.patientId, request.items.map((item) => item.product));
     if (request.pinAttempts >= 5) throw new AppError(423, 'The receipt PIN is locked after too many failed attempts.');
     if (!verifyPickupPin(request.id, pickupPin, request.pickupPinHash)) {
       await prisma.paymentRequest.update({ where: { id }, data: { pinAttempts: { increment: 1 } } });
       throw new AppError(400, 'The receipt PIN is incorrect.');
     }
-    return prisma.$transaction(async (tx) => {
+    return serializable(async (tx) => {
       const claimed = await tx.paymentRequest.updateMany({ where: { id, type: 'RETAIL', status: 'PAID' }, data: { status: 'FULFILLED', pinVerifiedAt: new Date() } });
       if (claimed.count !== 1) throw new AppError(409, 'This retail order is already being processed or has been fulfilled by another staff member.');
-      const now = new Date(); const saleItems = [];
       const operationSettings = await operationSettingsService.get(tx);
       const allocationOrder = batchAllocationOrder(operationSettings.allocationMethod);
-      for (const requested of request.items) {
-        await tx.lowStockAcknowledgement.deleteMany({ where: { productId: requested.productId } });
-        const batches = await tx.inventoryBatch.findMany({ where: { productId: requested.productId, quantityAvailable: { gt: 0 }, expiryDate: { gte: now }, restricted: false }, orderBy: allocationOrder });
-        const available = batches.reduce((sum, batch) => sum.add(batch.quantityAvailable), new Prisma.Decimal(0));
-        if (available.lessThan(requested.quantity)) throw new AppError(409, `Insufficient usable stock for ${requested.product.genericName}.`);
-        let left = requested.quantity;
-        for (const batch of batches) {
-          if (left.isZero()) break;
-          const quantity = Prisma.Decimal.min(left, batch.quantityAvailable); const after = batch.quantityAvailable.sub(quantity);
-          await tx.inventoryBatch.update({ where: { id: batch.id }, data: { quantityAvailable: after } });
-          const lineTotal = requested.unitPrice.mul(quantity);
-          saleItems.push({ productId: requested.productId, batchId: batch.id, quantity, unitPrice: requested.unitPrice, lineTotal });
-          await tx.stockMovement.create({ data: { productId: requested.productId, batchId: batch.id, type: 'RETAIL_SALE', quantityChange: quantity.negated(), quantityBefore: batch.quantityAvailable, quantityAfter: after, referenceType: 'PAYMENT_REQUEST', referenceId: id, reason: 'Paid pharmacist retail handoff', performedById: pharmacistId } });
-          left = left.sub(quantity);
-        }
+      const itemById = new Map(request.items.map((item) => [item.id, item]));
+      const consumed = await consumePaymentRequestStock(tx, request, allocationOrder);
+      const saleItems = [];
+      for (const entry of consumed) {
+        const requested = itemById.get(entry.paymentRequestItemId);
+        await tx.lowStockAcknowledgement.deleteMany({ where: { productId: entry.productId } });
+        const lineTotal = requested.unitPrice.mul(entry.quantity);
+        saleItems.push({ productId: entry.productId, batchId: entry.batchId, quantity: entry.quantity, unitPrice: requested.unitPrice, unitCost: entry.unitCost, lineTotal });
+        await tx.stockMovement.create({ data: { productId: entry.productId, batchId: entry.batchId, type: 'RETAIL_SALE', quantityChange: entry.quantity.negated(), quantityBefore: entry.quantityBefore, quantityAfter: entry.quantityAfter, referenceType: 'PAYMENT_REQUEST', referenceId: id, reason: 'Paid pharmacist retail handoff', performedById: pharmacistId } });
       }
-      const sale = await tx.sale.create({ data: {
+      const sale = await withUniqueRetry(() => tx.sale.create({ data: {
         invoiceNumber: `INV-${Date.now()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`, patientId: request.patientId,
         pharmacistId, cashierId: request.cashierId, paymentRequestId: request.id, subtotal: request.subtotal, discount: request.discount, containerFee: request.containerFee,
         tax: request.tax, total: request.total, amountPaid: request.amountPaid, paymentMethod: request.paymentMethod, status: 'PAID',
         items: { create: saleItems },
-      } });
+      } }));
       return sale;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    });
   },
 };

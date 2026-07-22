@@ -74,8 +74,8 @@ export const catalogService = {
   setCategoryActive: (id, active) => prisma.category.update({ where: { id }, data: { active } }),
   deleteCategory: (id) => prisma.category.delete({ where: { id } }),
   async listProducts(search) {
-    const products = await catalogRepository.products(search);
-    return products.map((product) => ({ ...product, batches: product.batches.map((batch) => ({ ...batch, quantityAvailable: Number(batch.quantityAvailable) })) }));
+    const [products, total] = await catalogRepository.products(search);
+    return { rows: products.map((product) => ({ ...product, batches: product.batches.map((batch) => ({ ...batch, quantityAvailable: Number(batch.quantityAvailable) })) })), total };
   },
   createProduct: (data) => prisma.$transaction(async (tx) => tx.product.create({ data: await prepareProductData(tx, data), include: { category: true, manufacturer: true, drugConcept: true } })),
   updateProduct: (id, data) => prisma.$transaction(async (tx) => {

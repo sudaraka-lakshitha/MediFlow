@@ -4,6 +4,7 @@ import { authenticate } from '../middleware/authenticate.js';
 import { validate } from '../middleware/validate.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { changePasswordSchema, forgotPasswordSchema, loginSchema, registerSchema, selfResetPasswordSchema, verifyResetOtpSchema } from '../validators/auth.validator.js';
+import { updateOwnProfileSchema } from '../validators/patient.validator.js';
 import { createRateLimiter } from '../middleware/rateLimit.js';
 
 export const authRoutes = Router();
@@ -45,4 +46,4 @@ authRoutes.post('/verify-reset-otp', resetVerificationLimiter, validate({ body: 
 authRoutes.post('/reset-password', validate({ body: selfResetPasswordSchema }), asyncHandler(authController.selfResetPassword));
 authRoutes.get('/me', authenticate, asyncHandler(authController.me));
 authRoutes.post('/change-password', authenticate, validate({ body: changePasswordSchema }), asyncHandler(authController.changePassword));
-authRoutes.patch('/profile', authenticate, asyncHandler(authController.updateProfile));
+authRoutes.patch('/profile', authenticate, validate({ body: updateOwnProfileSchema }), asyncHandler(authController.updateProfile));

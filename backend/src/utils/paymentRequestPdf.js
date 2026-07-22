@@ -7,6 +7,13 @@ const left = 44;
 const right = pageWidth - 44;
 const contentWidth = right - left;
 
+const statusBanners = {
+  AWAITING_PAYMENT: { label: 'AWAITING PAYMENT', bg: '#fff6e5', border: '#e2b34a', fg: '#8a5a0e' },
+  PAID: { label: 'PAID - AWAITING COLLECTION', bg: '#e9f7f1', border: '#79bdb1', fg: '#176b63' },
+  FULFILLED: { label: 'COMPLETED - ALREADY COLLECTED', bg: '#eef2f7', border: '#9fb3c8', fg: '#33475b' },
+  CANCELLED: { label: 'CANCELLED - NOT VALID', bg: '#fdecea', border: '#e6786d', fg: '#9a2f24' },
+};
+
 const drawHeader = (doc, request, receipt) => {
   doc.font('Helvetica-Bold').fontSize(22).fillColor('#174a45').text('MediFlow Pharmacy', left, 42);
   const retail = request.type === 'RETAIL';
@@ -16,19 +23,23 @@ const drawHeader = (doc, request, receipt) => {
   doc.font('Helvetica').fontSize(8).fillColor('#64748b').text(`Created: ${created} UTC`, 330, 68, { width: right - 330, align: 'right' });
   doc.moveTo(left, 100).lineTo(right, 100).lineWidth(1).strokeColor('#cfe0dc').stroke();
 
+  const banner = statusBanners[request.status] || statusBanners.AWAITING_PAYMENT;
+  doc.roundedRect(left, 108, contentWidth, 24, 5).fillAndStroke(banner.bg, banner.border);
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(banner.fg).text(banner.label, left, 114, { width: contentWidth, align: 'center' });
+
   const details = [
     ['Customer', request.patient?.fullName || 'Walk-in customer'],
     [retail ? 'Sale type' : 'Prescription', retail ? 'Retail goods' : request.prescription?.prescriptionNumber],
     ['Prepared by', request.pharmacist.fullName],
     ...(request.cashier ? [['Payment received by', request.cashier.fullName]] : []),
   ];
-  let y = 116;
+  let y = 144;
   details.forEach(([label, value]) => {
     doc.font('Helvetica-Bold').fontSize(8).fillColor('#64748b').text(label.toUpperCase(), left, y, { width: 108 });
     doc.font('Helvetica').fontSize(9.5).fillColor('#111827').text(String(value), left + 112, y - 1, { width: 280 });
     y += 18;
   });
-  return Math.max(y + 8, 194);
+  return Math.max(y + 8, 222);
 };
 
 const drawTableHeader = (doc, y) => {
@@ -110,10 +121,28 @@ export const createPaymentRequestPdf = (request, receipt = false) => new Promise
 
   if (receipt && request.pickupPin) {
     y = drawPin(doc, request.pickupPin, y, retail);
-    doc.font('Helvetica').fontSize(8).fillColor('#64748b').text(retail ? 'Payment alone does not release the goods. The pharmacist must verify this PIN before completing the handover.' : 'Payment alone does not dispense medicine. The pharmacist must verify this PIN before completing the clinical handoff.', left + 20, y + 18, { width: contentWidth - 40, align: 'center' });
+    const fulfilled = request.status === 'FULFILLED';
+    const note = fulfilled
+      ? 'This order has already been collected. This PIN is shown for record purposes only.'
+      : (retail ? 'Payment alone does not release the goods. The pharmacist must verify this PIN before completing the handover.' : 'Payment alone does not dispense medicine. The pharmacist must verify this PIN before completing the clinical handoff.');
+    doc.font('Helvetica').fontSize(8).fillColor('#64748b').text(note, left + 20, y + 18, { width: contentWidth - 40, align: 'center' });
   } else {
-    doc.roundedRect(left, y + 18, contentWidth, 60, 8).fillAndStroke('#f7faf9', '#cfe0dc');
-    doc.font('Helvetica').fontSize(9).fillColor('#526b67').text(retail ? 'Present this request at the cashier. Goods can be handed over only after full payment and PIN verification.' : 'Present this request at the cashier. Medicines and any added retail items can be handed over only after full payment and pharmacist verification of the receipt PIN.', left + 24, y + 37, { width: contentWidth - 48, align: 'center' });
+    const bottomMessages = {
+      AWAITING_PAYMENT: retail
+        ? 'Present this request at the cashier. Goods can be handed over only after full payment and PIN verification.'
+        : 'Present this request at the cashier. Medicines and any added retail items can be handed over only after full payment and pharmacist verification of the receipt PIN.',
+      PAID: 'Payment has been received. Collection is only permitted after the pharmacist verifies the receipt PIN with the customer.',
+      FULFILLED: 'This order has already been paid for and collected. No further payment or collection action is required.',
+      CANCELLED: 'This payment request has been cancelled. It is not valid for payment, collection, or any other transaction.',
+    };
+    const message = bottomMessages[request.status] || bottomMessages.AWAITING_PAYMENT;
+    const boxStyle = request.status === 'CANCELLED'
+      ? { bg: '#fdecea', border: '#e6786d', fg: '#9a2f24', bold: true }
+      : request.status === 'FULFILLED'
+        ? { bg: '#eef2f7', border: '#9fb3c8', fg: '#33475b', bold: true }
+        : { bg: '#f7faf9', border: '#cfe0dc', fg: '#526b67', bold: false };
+    doc.roundedRect(left, y + 18, contentWidth, 60, 8).fillAndStroke(boxStyle.bg, boxStyle.border);
+    doc.font(boxStyle.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(9).fillColor(boxStyle.fg).text(message, left + 24, y + 37, { width: contentWidth - 48, align: 'center' });
   }
 
   const range = doc.bufferedPageRange();

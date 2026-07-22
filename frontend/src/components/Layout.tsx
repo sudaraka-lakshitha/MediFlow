@@ -22,6 +22,7 @@ const items: { to: string; label: string; icon: string; roles?: Role[]; attentio
   { to: '/drug-research', label: 'Drug research', icon: 'globe2', roles: ['ADMIN', 'PHARMACIST'] },
   { to: '/sales', label: 'Sales & billing', icon: 'receipt', roles: ['ADMIN', 'PHARMACIST', 'PATIENT'], attentionKey: 'sales' },
   { to: '/profile', label: 'My profile', icon: 'person-circle', roles: ['PATIENT'] },
+  { to: '/health-record', label: 'My health record', icon: 'clipboard2-pulse', roles: ['PATIENT'] },
   { to: '/reports', label: 'Reports', icon: 'bar-chart-fill', roles: ['ADMIN', 'PHARMACIST'] },
   { to: '/users', label: 'Users', icon: 'people-fill', roles: ['ADMIN'] },
   { to: '/discounts', label: 'Discounts', icon: 'percent', roles: ['ADMIN'] },

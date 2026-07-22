@@ -5,6 +5,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import { Link } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 import { ActionsDropdown } from "../components/ActionsDropdown";
@@ -24,6 +25,7 @@ type Batch = {
   batchNumber: string;
   quantityReceived: number;
   quantityAvailable: number;
+  quantityReserved?: number;
   purchasePrice: string;
   expiryDate: string;
   receivedAt: string;
@@ -284,7 +286,7 @@ export function InventoryPage() {
             (total: number, batch: any) =>
               new Date(batch.expiryDate) >= new Date() &&
               Number(batch.quantityAvailable) > 0
-                ? total + Number(batch.quantityAvailable)
+                ? total + Number(batch.quantityAvailable) - Number(batch.quantityReserved || 0)
                 : total,
             0,
           );
@@ -404,10 +406,16 @@ export function InventoryPage() {
             Allocation: {alerts.allocationMethod || "FIFO"}.
           </p>
         </div>
-        <button className="btn btn-primary" onClick={() => open("receive")}>
-          <i className="bi bi-box-arrow-in-down me-2" />
-          Receive stock
-        </button>
+        <div className="d-flex gap-2">
+          <Link to="/inventory/movements" className="btn btn-outline-secondary">
+            <i className="bi bi-clock-history me-2" />
+            Movement history
+          </Link>
+          <button className="btn btn-primary" onClick={() => open("receive")}>
+            <i className="bi bi-box-arrow-in-down me-2" />
+            Receive stock
+          </button>
+        </div>
       </div>
       <Alert message={error} />
 
@@ -634,6 +642,11 @@ export function InventoryPage() {
                     <td>
                       <strong>{batch.quantityAvailable}</strong> /{" "}
                       {batch.quantityReceived} {batch.product.unit}
+                      {Number(batch.quantityReserved) > 0 && (
+                        <small className="d-block text-secondary">
+                          {batch.quantityReserved} reserved for paid bills
+                        </small>
+                      )}
                     </td>
                     <td>{new Date(batch.receivedAt).toLocaleString()}</td>
                     <td>{new Date(batch.expiryDate).toLocaleDateString()}</td>

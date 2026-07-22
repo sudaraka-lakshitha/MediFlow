@@ -1,7 +1,7 @@
 const stockKey = (value) => Number(value || 0).toFixed(3);
 
 export const usableStockTotal = (product) => product.batches.reduce(
-  (total, batch) => total + Number(batch.quantityAvailable),
+  (total, batch) => total + Number(batch.quantityAvailable) - Number(batch.quantityReserved || 0),
   0,
 );
 

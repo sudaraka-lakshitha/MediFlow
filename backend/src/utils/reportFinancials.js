@@ -6,7 +6,7 @@ export const itemFinancials = (item, sale) => {
   const discount = subtotal > 0 ? Number(sale.discount) * (grossSales / subtotal) : 0;
   const containerFee = subtotal > 0 ? Number(sale.containerFee || 0) * (grossSales / subtotal) : 0;
   const netRevenue = grossSales - discount + containerFee;
-  const cost = Number(item.quantity) * Number(item.batch.purchasePrice);
+  const cost = Number(item.quantity) * Number(item.unitCost ?? item.batch.purchasePrice);
   const profit = netRevenue - cost;
   return {
     grossSales: money(grossSales), discount: money(discount), containerFee: money(containerFee), netRevenue: money(netRevenue),
@@ -19,7 +19,7 @@ export const saleFinancials = (sale) => {
   const discount = Number(sale.discount);
   const containerFee = Number(sale.containerFee || 0);
   const netRevenue = grossSales - discount + containerFee;
-  const cost = sale.items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.batch.purchasePrice), 0);
+  const cost = sale.items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unitCost ?? item.batch.purchasePrice), 0);
   const profit = netRevenue - cost;
   return {
     grossSales: money(grossSales), discount: money(discount), containerFee: money(containerFee), netRevenue: money(netRevenue),

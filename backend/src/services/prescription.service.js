@@ -4,21 +4,15 @@ import { prisma } from '../config/prisma.js';
 import { prescriptionRepository } from '../repositories/prescription.repository.js';
 import { AppError } from '../utils/AppError.js';
 import { calculateQuantity } from '../utils/dosage.js';
-import { calculateDiscounts } from './discount.service.js';
+import { assertCouponMatched, calculateDiscounts } from './discount.service.js';
 import { normalizeLiquidDose } from '../utils/liquidDose.js';
 import { verifyPickupPin } from '../utils/pickupPin.js';
 import { batchAllocationOrder, operationSettingsService } from './operationSettings.service.js';
 import { ageOnDate } from '../utils/age.js';
-
-const serializable = async (operation) => {
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      return await prisma.$transaction(operation, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-    } catch (error) {
-      if (error.code !== 'P2034' || attempt === 3) throw error;
-    }
-  }
-};
+import { findAgeUnsuitable } from '../utils/ageSuitability.js';
+import { withUniqueRetry } from '../utils/withUniqueRetry.js';
+import { serializable } from '../utils/serializable.js';
+import { consumePaymentRequestStock, usableStockTotal } from '../utils/stock.js';
 const isLiquidProduct = (product) =>
   ['ml', 'millilitre', 'milliliter', 'l', 'litre', 'liter'].includes(String(product?.unit || '').toLowerCase())
   || /syrup|suspension|solution|elixir|liquid/i.test(String(product?.dosageForm || ''));
@@ -36,7 +30,7 @@ const validatePatientAge = async (data, products) => {
   }
   const age = ageOnDate(dateOfBirth, data.prescriptionDate);
   if (age < 0 || age > 130) throw new AppError(400, 'The medicine recipient date of birth is invalid for the prescription date.');
-  const unsuitable = products.filter((product) => (product.minimumAgeYears != null && age < product.minimumAgeYears) || (product.maximumAgeYears != null && age > product.maximumAgeYears));
+  const unsuitable = findAgeUnsuitable(products, age);
   if (unsuitable.length) throw new AppError(400, `${unsuitable.map((product) => product.genericName).join(', ')} ${unsuitable.length === 1 ? 'is' : 'are'} outside the configured age range for this medicine recipient (${age} years). Review the medicine or update its verified age guidance.`);
 };
 
@@ -85,7 +79,7 @@ export const prescriptionService = {
         administrationRoute: item.administrationRoute, mealTiming: item.mealTiming, asNeeded: item.asNeeded, specialInstructions: item.specialInstructions };
     });
     return prisma.$transaction(async (tx) => {
-      const prescription = await tx.prescription.create({ data: {
+      const prescription = await withUniqueRetry(() => tx.prescription.create({ data: {
         prescriptionNumber: `RX-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
         patientId: data.patientId, sourceUploadId: data.sourceUploadId || null, prescriberTitle: data.prescriberTitle || null,
         prescriberName: data.prescriberName, prescriberReference: data.prescriberReference,
@@ -96,7 +90,7 @@ export const prescriptionService = {
         createdById: userId,
         items: { create: items },
         retailItems: { create: data.retailItems.map((item) => ({ productId: item.productId, quantity: item.quantity })) },
-      } });
+      } }));
       return tx.prescription.findUnique({ where: { id: prescription.id }, include: { items: { include: { product: true } }, retailItems: { include: { product: true } }, patient: { include: { user: true } } } });
     });
   },
@@ -173,8 +167,8 @@ export const prescriptionService = {
       if (!item) throw new AppError(404, `Prescription item ${requested.prescriptionItemId} was not found.`);
       const quantity = new Prisma.Decimal(requested.quantity); const remaining = item.prescribedQuantity.sub(item.dispensedQuantity);
       if (quantity.greaterThan(remaining)) throw new AppError(409, `${item.product.genericName}: quantity exceeds the prescribed remainder.`);
-      const stock = await prisma.inventoryBatch.aggregate({ where: { productId: item.productId, quantityAvailable: { gt: 0 }, expiryDate: { gte: now }, restricted: false }, _sum: { quantityAvailable: true } });
-      const available = stock._sum.quantityAvailable || new Prisma.Decimal(0);
+      const stock = await prisma.inventoryBatch.aggregate({ where: { productId: item.productId, quantityAvailable: { gt: 0 }, expiryDate: { gte: now }, restricted: false }, _sum: { quantityAvailable: true, quantityReserved: true } });
+      const available = (stock._sum.quantityAvailable || new Prisma.Decimal(0)).sub(stock._sum.quantityReserved || 0);
       if (available.lessThan(quantity)) throw new AppError(409, `Insufficient usable stock for ${item.product.genericName}.`);
       const lineTotal = item.product.sellingPrice.mul(quantity).toDecimalPlaces(2); subtotal = subtotal.add(lineTotal);
       allocations.push({ productId: item.productId, categoryId: item.product.categoryId, quantity, unitPrice: item.product.sellingPrice, lineTotal });
@@ -187,7 +181,7 @@ export const prescriptionService = {
       where: { id: { in: retailProductIds }, active: true, prescriptionRequired: false },
       include: {
         category: true,
-        batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: now }, restricted: false }, select: { quantityAvailable: true } },
+        batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: now }, restricted: false }, select: { quantityAvailable: true, quantityReserved: true } },
       },
     }) : [];
     if (retailProducts.length !== retailProductIds.length) throw new AppError(400, 'One or more retail items are unavailable or require a prescription.');
@@ -195,7 +189,7 @@ export const prescriptionService = {
     for (const requested of retailRequests) {
       const product = retailById.get(requested.productId);
       const quantity = new Prisma.Decimal(requested.quantity);
-      const available = product.batches.reduce((sum, batch) => sum.add(batch.quantityAvailable), new Prisma.Decimal(0));
+      const available = usableStockTotal(product.batches);
       if (available.lessThan(quantity)) throw new AppError(409, `Insufficient usable stock for ${product.genericName}.`);
       const lineTotal = product.sellingPrice.mul(quantity).toDecimalPlaces(2);
       subtotal = subtotal.add(lineTotal);
@@ -207,7 +201,7 @@ export const prescriptionService = {
       });
     }
     subtotal = subtotal.toDecimalPlaces(2);
-    const discountResult = await calculateDiscounts(prisma, allocations, subtotal, input.couponCode);
+    const discountResult = assertCouponMatched(await calculateDiscounts(prisma, allocations, subtotal, input.couponCode));
     const selectedProducts = [
       ...input.items.map((requested) => prescription.items.find((item) => item.id === requested.prescriptionItemId)?.product).filter(Boolean),
       ...retailProducts,
@@ -245,17 +239,8 @@ export const prescriptionService = {
       if (!['VERIFIED', 'PARTIALLY_DISPENSED'].includes(prescription.status)) {
         throw new AppError(409, 'Only verified prescriptions can be dispensed.');
       }
-      if (paidRequest) {
-        const claimed = await tx.paymentRequest.updateMany({ where: { id: paidRequest.id, status: 'PAID' }, data: { status: 'FULFILLED', pinVerifiedAt: new Date() } });
-        if (claimed.count !== 1) throw new AppError(409, 'This prescription bill is already being processed or has been completed by another staff member.');
-      }
-
-      const dispensing = await tx.dispensing.create({ data: { prescriptionId, pharmacistId, notes: input.notes } });
-      const allocations = [];
-      let subtotal = new Prisma.Decimal(0);
-      const now = new Date();
-      const operationSettings = await operationSettingsService.get(tx);
-      const allocationOrder = batchAllocationOrder(operationSettings.allocationMethod);
+      const claimed = await tx.paymentRequest.updateMany({ where: { id: paidRequest.id, status: 'PAID' }, data: { status: 'FULFILLED', pinVerifiedAt: new Date() } });
+      if (claimed.count !== 1) throw new AppError(409, 'This prescription bill is already being processed or has been completed by another staff member.');
 
       for (const requested of input.items) {
         const item = prescription.items.find((candidate) => candidate.id === requested.prescriptionItemId);
@@ -263,86 +248,59 @@ export const prescriptionService = {
         const requestedQuantity = new Prisma.Decimal(requested.quantity);
         const remaining = item.prescribedQuantity.sub(item.dispensedQuantity);
         if (requestedQuantity.greaterThan(remaining)) throw new AppError(409, `${item.product.genericName}: quantity exceeds the prescribed remainder.`);
+      }
 
-        await tx.lowStockAcknowledgement.deleteMany({ where: { productId: item.productId } });
-        const batches = await tx.inventoryBatch.findMany({
-          where: { productId: item.productId, quantityAvailable: { gt: 0 }, expiryDate: { gte: now }, restricted: false },
-          orderBy: allocationOrder,
-        });
-        const available = batches.reduce((sum, batch) => sum.add(batch.quantityAvailable), new Prisma.Decimal(0));
-        if (available.lessThan(requestedQuantity)) throw new AppError(409, `Insufficient usable stock for ${item.product.genericName}.`);
+      const dispensing = await tx.dispensing.create({ data: { prescriptionId, pharmacistId, notes: input.notes } });
+      const operationSettings = await operationSettingsService.get(tx);
+      const allocationOrder = batchAllocationOrder(operationSettings.allocationMethod);
+      const itemById = new Map(paidRequest.items.map((item) => [item.id, item]));
+      const consumed = await consumePaymentRequestStock(tx, paidRequest, allocationOrder);
+      const allocations = [];
+      const dispensedQuantities = new Map();
 
-        let left = requestedQuantity;
-        for (const batch of batches) {
-          if (left.isZero()) break;
-          const quantity = Prisma.Decimal.min(left, batch.quantityAvailable);
-          const after = batch.quantityAvailable.sub(quantity);
-          await tx.inventoryBatch.update({ where: { id: batch.id }, data: { quantityAvailable: after } });
-          await tx.stockMovement.create({ data: {
-            productId: item.productId, batchId: batch.id, type: 'DISPENSING', quantityChange: -quantity,
-            quantityBefore: batch.quantityAvailable, quantityAfter: after, referenceType: 'DISPENSING',
-            referenceId: dispensing.id, reason: 'Prescription dispensing', performedById: pharmacistId,
-          } });
+      for (const entry of consumed) {
+        const paidItem = itemById.get(entry.paymentRequestItemId);
+        const isPrescriptionItem = paidItem.prescriptionItemId != null;
+        await tx.lowStockAcknowledgement.deleteMany({ where: { productId: entry.productId } });
+        const lineTotal = paidItem.unitPrice.mul(entry.quantity);
+        await tx.stockMovement.create({ data: {
+          productId: entry.productId, batchId: entry.batchId,
+          type: isPrescriptionItem ? 'DISPENSING' : 'RETAIL_SALE',
+          quantityChange: entry.quantity.negated(), quantityBefore: entry.quantityBefore, quantityAfter: entry.quantityAfter,
+          referenceType: isPrescriptionItem ? 'DISPENSING' : 'PAYMENT_REQUEST',
+          referenceId: isPrescriptionItem ? dispensing.id : paidRequest.id,
+          reason: isPrescriptionItem ? 'Prescription dispensing' : 'Retail item on prescription invoice',
+          performedById: pharmacistId,
+        } });
+        if (isPrescriptionItem) {
           await tx.dispensingItem.create({ data: {
-            dispensingId: dispensing.id, prescriptionItemId: item.id, batchId: batch.id,
-            quantity, unitPrice: paidRequest?.items.find((paidItem) => paidItem.prescriptionItemId === item.id)?.unitPrice || item.product.sellingPrice,
+            dispensingId: dispensing.id, prescriptionItemId: paidItem.prescriptionItemId, batchId: entry.batchId,
+            quantity: entry.quantity, unitPrice: paidItem.unitPrice, unitCost: entry.unitCost,
           } });
-          const unitPrice = paidRequest?.items.find((paidItem) => paidItem.prescriptionItemId === item.id)?.unitPrice || item.product.sellingPrice;
-          const lineTotal = unitPrice.mul(quantity);
-          subtotal = subtotal.add(lineTotal);
-          allocations.push({ productId: item.productId, categoryId: item.product.categoryId, batchId: batch.id, quantity, unitPrice, lineTotal });
-          left = left.sub(quantity);
+          dispensedQuantities.set(paidItem.prescriptionItemId, (dispensedQuantities.get(paidItem.prescriptionItemId) || new Prisma.Decimal(0)).add(entry.quantity));
         }
-        await tx.prescriptionItem.update({ where: { id: item.id }, data: { dispensedQuantity: { increment: requestedQuantity } } });
+        allocations.push({ productId: entry.productId, batchId: entry.batchId, quantity: entry.quantity, unitPrice: paidItem.unitPrice, unitCost: entry.unitCost, lineTotal });
+      }
+      for (const [prescriptionItemId, quantity] of dispensedQuantities) {
+        await tx.prescriptionItem.update({ where: { id: prescriptionItemId }, data: { dispensedQuantity: { increment: quantity } } });
       }
 
       const paidRetailItems = paidRequest.items.filter((item) => item.prescriptionItemId == null);
-      for (const requested of paidRetailItems) {
-        const requestedQuantity = new Prisma.Decimal(requested.quantity);
-        await tx.lowStockAcknowledgement.deleteMany({ where: { productId: requested.productId } });
-        const batches = await tx.inventoryBatch.findMany({
-          where: { productId: requested.productId, quantityAvailable: { gt: 0 }, expiryDate: { gte: now }, restricted: false },
-          orderBy: allocationOrder,
-        });
-        const available = batches.reduce((sum, batch) => sum.add(batch.quantityAvailable), new Prisma.Decimal(0));
-        if (available.lessThan(requestedQuantity)) throw new AppError(409, `Insufficient usable stock for ${requested.product.genericName}.`);
-
-        let left = requestedQuantity;
-        for (const batch of batches) {
-          if (left.isZero()) break;
-          const quantity = Prisma.Decimal.min(left, batch.quantityAvailable);
-          const after = batch.quantityAvailable.sub(quantity);
-          const lineTotal = requested.unitPrice.mul(quantity);
-          await tx.inventoryBatch.update({ where: { id: batch.id }, data: { quantityAvailable: after } });
-          await tx.stockMovement.create({ data: {
-            productId: requested.productId, batchId: batch.id, type: 'RETAIL_SALE', quantityChange: quantity.negated(),
-            quantityBefore: batch.quantityAvailable, quantityAfter: after, referenceType: 'PAYMENT_REQUEST',
-            referenceId: paidRequest.id, reason: 'Retail item on prescription invoice', performedById: pharmacistId,
-          } });
-          subtotal = subtotal.add(lineTotal);
-          allocations.push({
-            productId: requested.productId, categoryId: requested.product.categoryId, batchId: batch.id,
-            quantity, unitPrice: requested.unitPrice, lineTotal,
-          });
-          left = left.sub(quantity);
-        }
-      }
-
-      const discountResult = paidRequest ? { amount: paidRequest.discount, applications: [] } : await calculateDiscounts(tx, allocations, subtotal, input.couponCode);
+      const discountResult = { amount: paidRequest.discount, applications: [] };
       const discount = discountResult.amount;
-      const containerFee = paidRequest ? paidRequest.containerFee : new Prisma.Decimal(input.containerFee || 0);
-      const tax = paidRequest ? paidRequest.tax : new Prisma.Decimal(input.tax);
-      const total = paidRequest ? paidRequest.total : Prisma.Decimal.max(0, subtotal.sub(discount).add(containerFee).add(tax));
-      const amountPaid = paidRequest ? paidRequest.amountPaid : new Prisma.Decimal(input.amountPaid);
-      const saleSubtotal = paidRequest ? paidRequest.subtotal : subtotal;
-      const sale = await tx.sale.create({ data: {
+      const containerFee = paidRequest.containerFee;
+      const tax = paidRequest.tax;
+      const total = paidRequest.total;
+      const amountPaid = paidRequest.amountPaid;
+      const saleSubtotal = paidRequest.subtotal;
+      const sale = await withUniqueRetry(() => tx.sale.create({ data: {
         invoiceNumber: `INV-${Date.now()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`,
         dispensingId: dispensing.id, patientId: prescription.patient.userId, pharmacistId,
-        cashierId: paidRequest?.cashierId || null, paymentRequestId: paidRequest?.id || null,
-        subtotal: saleSubtotal, discount, containerFee, tax, total, amountPaid, paymentMethod: paidRequest?.paymentMethod || input.paymentMethod,
-        status: amountPaid.greaterThanOrEqualTo(total) ? 'PAID' : 'PENDING', items: { create: allocations.map(({ categoryId, ...item }) => item) },
+        cashierId: paidRequest.cashierId, paymentRequestId: paidRequest.id,
+        subtotal: saleSubtotal, discount, containerFee, tax, total, amountPaid, paymentMethod: paidRequest.paymentMethod,
+        status: amountPaid.greaterThanOrEqualTo(total) ? 'PAID' : 'PENDING', items: { create: allocations },
         discountApplications: { create: discountResult.applications },
-      } });
+      } }));
 
       const currentItems = await tx.prescriptionItem.findMany({ where: { prescriptionId }, select: { prescribedQuantity: true, dispensedQuantity: true } });
       const status = currentItems.every((item) => item.dispensedQuantity.greaterThanOrEqualTo(item.prescribedQuantity)) ? 'DISPENSED' : 'PARTIALLY_DISPENSED';

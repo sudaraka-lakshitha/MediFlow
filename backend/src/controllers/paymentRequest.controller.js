@@ -35,7 +35,7 @@ export const paymentRequestController = {
     res.json({ data });
   },
   cancel: async (req, res) => {
-    const data = await paymentRequestService.cancel(Number(req.params.id), req.body.reason, req.user.id);
+    const data = await paymentRequestService.cancel(Number(req.params.id), req.body.reason, req.user.id, req.user.role);
     await recordAudit({ userId: req.user.id, action: 'PAYMENT_REQUEST_CANCELLED', entityType: 'PAYMENT_REQUEST', entityId: data.id, details: { requestNumber: data.requestNumber, reason: req.body.reason }, ipAddress: req.ip });
     res.json({ data });
   },

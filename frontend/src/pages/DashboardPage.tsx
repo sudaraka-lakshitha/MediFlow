@@ -374,6 +374,12 @@ export function DashboardPage() {
           icon="cash-stack"
           tone="teal"
         />
+        <Metric
+          label="Cash collected today"
+          value={money(data?.cashCollectedToday)}
+          icon="wallet2"
+          tone="navy"
+        />
       </div>
       <div className="row g-4">
         <div className="col-xl-8">

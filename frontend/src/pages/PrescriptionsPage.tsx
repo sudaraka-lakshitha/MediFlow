@@ -222,7 +222,7 @@ const usableStock = (product: any) =>
     (sum: number, batch: any) =>
       Number(batch.quantityAvailable) > 0 &&
       (!batch.expiryDate || new Date(batch.expiryDate) >= new Date())
-        ? sum + Number(batch.quantityAvailable)
+        ? sum + Number(batch.quantityAvailable) - Number(batch.quantityReserved || 0)
         : sum,
     0,
   ) || 0;
@@ -367,6 +367,32 @@ export function PrescriptionsPage() {
       setLoading(false);
     }
   }, [staff]);
+  const searchPatients = useCallback(async (query: string) => {
+    if (query.length < 2) return;
+    try {
+      const response = await api.get("/patients", { params: { search: query } });
+      setPatients((prev) => {
+        const byId = new Map(prev.map((patient: any) => [patient.id, patient]));
+        for (const patient of response.data.data) byId.set(patient.id, patient);
+        return [...byId.values()];
+      });
+    } catch {
+      // best-effort live search; keep whatever options are already loaded
+    }
+  }, []);
+  const searchMedicines = useCallback(async (query: string) => {
+    if (query.length < 2) return;
+    try {
+      const response = await api.get("/catalog/products", { params: { search: query } });
+      setProducts((prev) => {
+        const byId = new Map(prev.map((product: any) => [product.id, product]));
+        for (const product of response.data.data) byId.set(product.id, product);
+        return [...byId.values()];
+      });
+    } catch {
+      // best-effort live search; keep whatever options are already loaded
+    }
+  }, []);
   useEffect(() => {
     load();
   }, [load]);
@@ -1701,6 +1727,7 @@ export function PrescriptionsPage() {
                         onChange={(patientId) => {
                           setForm({ ...form, patientId: Number(patientId) });
                         }}
+                        onQueryChange={searchPatients}
                         placeholder="Search patient name or number"
                         required
                         disabled={Boolean(form.sourceUploadId)}
@@ -1919,6 +1946,7 @@ export function PrescriptionsPage() {
                         onChange={(productId) =>
                           selectMedicine(index, Number(productId))
                         }
+                        onQueryChange={searchMedicines}
                         placeholder="Search name, brand, strength or SKU"
                         required
                       />
@@ -3277,14 +3305,21 @@ export function PrescriptionsPage() {
                   <input
                     className="form-control"
                     type={type}
+                    inputMode={key === "phone" ? "numeric" : undefined}
+                    pattern={key === "phone" ? "0[0-9]{9}" : undefined}
+                    maxLength={key === "phone" ? 10 : undefined}
+                    max={key === "dateOfBirth" ? new Date().toISOString().slice(0, 10) : undefined}
                     value={patientForm[key]}
                     onChange={(event) =>
                       setPatientForm({
                         ...patientForm,
-                        [key]: event.target.value,
+                        [key]:
+                          key === "phone"
+                            ? event.target.value.replace(/\D/g, "").slice(0, 10)
+                            : event.target.value,
                       })
                     }
-                    required={["fullName", "email"].includes(key)}
+                    required
                   />
                 </div>
               ))}

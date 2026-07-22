@@ -6,6 +6,7 @@ import {
   type FormEvent,
 } from "react";
 import { api, errorMessage } from "../api/client";
+import { useAuth } from "../auth/useAuth";
 import { Modal, ModalActions } from "../components/Modal";
 import { PredictiveSearchInput } from "../components/PredictiveSearchInput";
 import { SearchableSelect } from "../components/SearchableSelect";
@@ -22,6 +23,8 @@ const emptyRetail = () => ({
 });
 
 export function CashierPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "ADMIN";
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -368,8 +371,9 @@ export function CashierPage() {
                       )}
                       {row.status === "PAID" &&
                         row.paidAt &&
-                        new Date(row.paidAt).toDateString() ===
-                          new Date().toDateString() && (
+                        (isAdmin ||
+                          new Date(row.paidAt).toDateString() ===
+                            new Date().toDateString()) && (
                           <button
                             className="btn btn-sm btn-outline-danger"
                             onClick={() => setRevoke({ ...row, reason: "" })}
@@ -417,6 +421,20 @@ export function CashierPage() {
                 dispensing PIN will be generated on the receipt.
               </small>
             </div>
+            {payment.items?.length > 0 && (
+              <div className="cashier-payment-items">
+                {payment.items.map((item: any) => (
+                  <div key={item.id} className="cashier-payment-item">
+                    <span>
+                      {item.product.genericName} {item.product.strength}
+                    </span>
+                    <span>
+                      × {item.quantity} {item.product.unit}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="cashier-payment-breakdown">
               <span>
                 Medicine subtotal <strong>{money(payment.subtotal)}</strong>
@@ -469,9 +487,11 @@ export function CashierPage() {
             <div className="alert alert-danger small">
               <i className="bi bi-exclamation-triangle me-2" />
               This bill has already been paid ({money(revoke.total)}). Revoking
-              it cancels the bill and its receipt PIN — it can only be done on
-              the same day it was paid, and only before the medicine has been
-              dispensed.
+              it cancels the bill and its receipt PIN, and only before the
+              medicine has been dispensed.{" "}
+              {isAdmin
+                ? "As an admin you can revoke this on any day — use this only for a genuine billing error."
+                : "It can only be done on the same day it was paid; an admin can override that."}
             </div>
             <label className="form-label">Reason for revoking (required)</label>
             <textarea
@@ -555,7 +575,7 @@ export function CashierPage() {
                       options={retailOptions.products.map((candidate) => ({
                         value: candidate.id,
                         label: candidate.genericName,
-                        description: `${candidate.sku} · ${money(candidate.sellingPrice)} · Stock ${candidate.batches.reduce((sum: number, batch: any) => sum + Number(batch.quantityAvailable), 0)}`,
+                        description: `${candidate.sku} · ${money(candidate.sellingPrice)} · Stock ${candidate.batches.reduce((sum: number, batch: any) => sum + Number(batch.quantityAvailable) - Number(batch.quantityReserved || 0), 0)}`,
                       }))}
                       value={item.productId}
                       onChange={(productId) =>

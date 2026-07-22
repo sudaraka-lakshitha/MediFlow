@@ -23,6 +23,6 @@ export const createPdf = ({ title, subtitle, columns, rows, summary = [], chart 
   const width = available / columns.length;
   const drawRow = (values, header = false) => { let y = doc.y; if (y > doc.page.height - 58) { doc.addPage(); heading(); y = doc.y; } if (header) doc.rect(left, y - 3, available, 21).fill('#174a45'); values.forEach((value, index) => doc.font(header ? 'Helvetica-Bold' : 'Helvetica').fontSize(6.8).fillColor(header ? '#ffffff' : '#111827').text(String(value ?? ''), left + index * width + 3, y + (header ? 2 : 0), { width: width - 6, height: 18, ellipsis: true })); doc.y = y + 21; if (!header) doc.moveTo(left, doc.y - 2).lineTo(right, doc.y - 2).strokeColor('#e2e8f0').stroke(); };
   drawRow(columns.map((column) => column.label), true); rows.forEach((data) => drawRow(columns.map((column) => data[column.key])));
-  const pages = doc.bufferedPageRange(); for (let page = 0; page < pages.count; page += 1) { doc.switchToPage(page); doc.font('Helvetica').fontSize(7).fillColor('#94a3b8').text(`Generated ${new Date().toISOString()}  •  Page ${page + 1} of ${pages.count}`, left, doc.page.height - 25, { width: available, align: 'center' }); }
+  const pages = doc.bufferedPageRange(); for (let page = 0; page < pages.count; page += 1) { doc.switchToPage(page); doc.font('Helvetica').fontSize(7).fillColor('#94a3b8').text(`Generated ${new Date().toISOString()}  •  Page ${page + 1} of ${pages.count}`, left, doc.page.height - 25, { width: available, align: 'center', height: 20, lineBreak: false }); }
   doc.end();
 });

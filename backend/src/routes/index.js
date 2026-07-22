@@ -9,7 +9,7 @@ import { authenticate } from '../middleware/authenticate.js';
 import { authorize } from '../middleware/authorize.js';
 import { validate } from '../middleware/validate.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
-import { saleController, paymentSchema, retailSaleSchema } from '../controllers/sale.controller.js';
+import { saleController, paymentSchema, retailSaleSchema, voidSaleSchema } from '../controllers/sale.controller.js';
 import { dashboardController } from '../controllers/dashboard.controller.js';
 import { auditController } from '../controllers/audit.controller.js';
 import { patientRoutes } from './patient.routes.js';
@@ -42,6 +42,7 @@ apiRoutes.get('/sales', authenticate, authorize('ADMIN', 'PHARMACIST', 'PATIENT'
 apiRoutes.post('/sales/retail', authenticate, authorizeCashier, validate({ body: retailSaleSchema }), asyncHandler(saleController.createRetail));
 apiRoutes.get('/sales/:id/invoice.pdf', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams }), asyncHandler(saleController.invoice));
 apiRoutes.post('/sales/:id/pay', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: paymentSchema }), asyncHandler(saleController.pay));
+apiRoutes.post('/sales/:id/void', authenticate, authorizeCashier, validate({ params: idParams, body: voidSaleSchema }), asyncHandler(saleController.void));
 apiRoutes.get('/payment-requests', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), asyncHandler(paymentRequestController.list));
 apiRoutes.get('/cashier/retail-options', authenticate, authorizeCashier, asyncHandler(paymentRequestController.retailOptions));
 apiRoutes.post('/payment-requests/retail', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ body: retailPaymentRequestSchema }), asyncHandler(paymentRequestController.createRetail));
