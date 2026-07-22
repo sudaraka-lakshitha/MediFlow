@@ -3,8 +3,12 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
 import { saleFinancials } from '../utils/reportFinancials.js';
-import { calculateDiscounts } from './discount.service.js';
+import { assertCouponMatched, calculateDiscounts } from './discount.service.js';
 import { batchAllocationOrder, operationSettingsService } from './operationSettings.service.js';
+import { withUniqueRetry } from '../utils/withUniqueRetry.js';
+import { isSameLocalDay } from '../utils/localDate.js';
+
+const saleDetailInclude = { patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } }, cashier: { select: { fullName: true } }, paymentRequest: { select: { requestNumber: true } }, items: { include: { product: true, batch: true } }, discountApplications: true };
 
 export const saleService = {
   async list(user) {
@@ -68,11 +72,32 @@ export const saleService = {
           subtotal = subtotal.add(lineTotal); left = left.sub(quantity);
         }
       }
-      const discountResult = await calculateDiscounts(tx, allocations, subtotal, input.couponCode);
+      const discountResult = assertCouponMatched(await calculateDiscounts(tx, allocations, subtotal, input.couponCode));
       const discount = discountResult.amount; const tax = new Prisma.Decimal(input.tax); const total = Prisma.Decimal.max(0, subtotal.sub(discount).add(tax)); const amountPaid = new Prisma.Decimal(input.amountPaid);
-      const sale = await tx.sale.create({ data: { invoiceNumber: `INV-${Date.now()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`, patientId: input.patientId || null, pharmacistId, cashierId: pharmacistId, subtotal, discount, tax, total, amountPaid, paymentMethod: input.paymentMethod, status: amountPaid.greaterThanOrEqualTo(total) ? 'PAID' : 'PENDING', items: { create: allocations.map(({ categoryId, quantityBefore, quantityAfter, productName, ...item }) => item) }, discountApplications: { create: discountResult.applications } } });
+      const sale = await withUniqueRetry(() => tx.sale.create({ data: { invoiceNumber: `INV-${Date.now()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`, patientId: input.patientId || null, pharmacistId, cashierId: pharmacistId, subtotal, discount, tax, total, amountPaid, paymentMethod: input.paymentMethod, status: amountPaid.greaterThanOrEqualTo(total) ? 'PAID' : 'PENDING', items: { create: allocations.map(({ categoryId, quantityBefore, quantityAfter, productName, ...item }) => item) }, discountApplications: { create: discountResult.applications } } }));
       for (const item of allocations) await tx.stockMovement.create({ data: { productId: item.productId, batchId: item.batchId, type: 'RETAIL_SALE', quantityChange: item.quantity.negated(), quantityBefore: item.quantityBefore, quantityAfter: item.quantityAfter, referenceType: 'SALE', referenceId: sale.id, reason: 'Retail counter sale', performedById: pharmacistId } });
       return tx.sale.findUnique({ where: { id: sale.id }, include: { patient: { select: { fullName: true } }, items: { include: { product: true, batch: true } }, discountApplications: true } });
+    }, { isolationLevel: 'Serializable' });
+  },
+  async voidSale(id, reason, userId, userRole) {
+    return prisma.$transaction(async (tx) => {
+      const sale = await tx.sale.findUnique({ where: { id }, include: { items: true } });
+      if (!sale) throw new AppError(404, 'Sale not found.');
+      if (sale.status === 'VOIDED') throw new AppError(409, 'This sale has already been voided.');
+      if (sale.dispensingId) throw new AppError(409, 'This sale came from a dispensed prescription and cannot be voided here — contact an administrator.');
+      if (userRole !== 'ADMIN' && !isSameLocalDay(sale.createdAt, new Date())) {
+        throw new AppError(409, 'This sale can only be voided on the same day it was made.');
+      }
+      for (const item of sale.items) {
+        const batch = await tx.inventoryBatch.findUnique({ where: { id: item.batchId } });
+        if (!batch) continue;
+        const after = batch.quantityAvailable.add(item.quantity);
+        await tx.inventoryBatch.update({ where: { id: batch.id }, data: { quantityAvailable: after } });
+        await tx.stockMovement.create({ data: { productId: item.productId, batchId: batch.id, type: 'REVERSAL', quantityChange: item.quantity, quantityBefore: batch.quantityAvailable, quantityAfter: after, referenceType: 'SALE', referenceId: sale.id, reason, performedById: userId } });
+      }
+      const claimed = await tx.sale.updateMany({ where: { id, status: { not: 'VOIDED' } }, data: { status: 'VOIDED' } });
+      if (claimed.count !== 1) throw new AppError(409, 'This sale was just updated by someone else. Refresh and try again.');
+      return tx.sale.findUnique({ where: { id }, include: saleDetailInclude });
     }, { isolationLevel: 'Serializable' });
   },
 };

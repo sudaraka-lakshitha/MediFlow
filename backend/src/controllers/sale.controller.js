@@ -9,6 +9,7 @@ export const retailSaleSchema = z.object({
   tax: z.coerce.number().nonnegative().default(0), amountPaid: z.coerce.number().nonnegative().default(0), paymentMethod: z.enum(['CASH', 'CARD', 'OTHER']).default('CASH'),
   items: z.array(z.object({ productId: z.coerce.number().int().positive(), quantity: z.coerce.number().positive() })).min(1).max(100),
 });
+export const voidSaleSchema = z.object({ reason: z.string().trim().min(3).max(500) });
 
 export const saleController = {
   list: async (req, res) => res.json({ data: await saleService.list(req.user) }),
@@ -28,5 +29,10 @@ export const saleController = {
     const sale = await saleService.createRetail(req.body, req.user.id);
     await recordAudit({ userId: req.user.id, action: 'RETAIL_SALE_CREATED', entityType: 'SALE', entityId: sale.id, details: { invoiceNumber: sale.invoiceNumber, itemCount: req.body.items.length }, ipAddress: req.ip });
     res.status(201).json({ data: sale });
+  },
+  void: async (req, res) => {
+    const data = await saleService.voidSale(Number(req.params.id), req.body.reason, req.user.id, req.user.role);
+    await recordAudit({ userId: req.user.id, action: 'SALE_VOIDED', entityType: 'SALE', entityId: data.id, details: { invoiceNumber: data.invoiceNumber, reason: req.body.reason }, ipAddress: req.ip });
+    res.json({ data });
   },
 };

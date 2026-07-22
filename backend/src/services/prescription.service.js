@@ -4,11 +4,12 @@ import { prisma } from '../config/prisma.js';
 import { prescriptionRepository } from '../repositories/prescription.repository.js';
 import { AppError } from '../utils/AppError.js';
 import { calculateQuantity } from '../utils/dosage.js';
-import { calculateDiscounts } from './discount.service.js';
+import { assertCouponMatched, calculateDiscounts } from './discount.service.js';
 import { normalizeLiquidDose } from '../utils/liquidDose.js';
 import { verifyPickupPin } from '../utils/pickupPin.js';
 import { batchAllocationOrder, operationSettingsService } from './operationSettings.service.js';
 import { ageOnDate } from '../utils/age.js';
+import { withUniqueRetry } from '../utils/withUniqueRetry.js';
 
 const serializable = async (operation) => {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -85,7 +86,7 @@ export const prescriptionService = {
         administrationRoute: item.administrationRoute, mealTiming: item.mealTiming, asNeeded: item.asNeeded, specialInstructions: item.specialInstructions };
     });
     return prisma.$transaction(async (tx) => {
-      const prescription = await tx.prescription.create({ data: {
+      const prescription = await withUniqueRetry(() => tx.prescription.create({ data: {
         prescriptionNumber: `RX-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
         patientId: data.patientId, sourceUploadId: data.sourceUploadId || null, prescriberTitle: data.prescriberTitle || null,
         prescriberName: data.prescriberName, prescriberReference: data.prescriberReference,
@@ -96,7 +97,7 @@ export const prescriptionService = {
         createdById: userId,
         items: { create: items },
         retailItems: { create: data.retailItems.map((item) => ({ productId: item.productId, quantity: item.quantity })) },
-      } });
+      } }));
       return tx.prescription.findUnique({ where: { id: prescription.id }, include: { items: { include: { product: true } }, retailItems: { include: { product: true } }, patient: { include: { user: true } } } });
     });
   },
@@ -207,7 +208,7 @@ export const prescriptionService = {
       });
     }
     subtotal = subtotal.toDecimalPlaces(2);
-    const discountResult = await calculateDiscounts(prisma, allocations, subtotal, input.couponCode);
+    const discountResult = assertCouponMatched(await calculateDiscounts(prisma, allocations, subtotal, input.couponCode));
     const selectedProducts = [
       ...input.items.map((requested) => prescription.items.find((item) => item.id === requested.prescriptionItemId)?.product).filter(Boolean),
       ...retailProducts,
@@ -328,21 +329,21 @@ export const prescriptionService = {
         }
       }
 
-      const discountResult = paidRequest ? { amount: paidRequest.discount, applications: [] } : await calculateDiscounts(tx, allocations, subtotal, input.couponCode);
+      const discountResult = paidRequest ? { amount: paidRequest.discount, applications: [] } : assertCouponMatched(await calculateDiscounts(tx, allocations, subtotal, input.couponCode));
       const discount = discountResult.amount;
       const containerFee = paidRequest ? paidRequest.containerFee : new Prisma.Decimal(input.containerFee || 0);
       const tax = paidRequest ? paidRequest.tax : new Prisma.Decimal(input.tax);
       const total = paidRequest ? paidRequest.total : Prisma.Decimal.max(0, subtotal.sub(discount).add(containerFee).add(tax));
       const amountPaid = paidRequest ? paidRequest.amountPaid : new Prisma.Decimal(input.amountPaid);
       const saleSubtotal = paidRequest ? paidRequest.subtotal : subtotal;
-      const sale = await tx.sale.create({ data: {
+      const sale = await withUniqueRetry(() => tx.sale.create({ data: {
         invoiceNumber: `INV-${Date.now()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`,
         dispensingId: dispensing.id, patientId: prescription.patient.userId, pharmacistId,
         cashierId: paidRequest?.cashierId || null, paymentRequestId: paidRequest?.id || null,
         subtotal: saleSubtotal, discount, containerFee, tax, total, amountPaid, paymentMethod: paidRequest?.paymentMethod || input.paymentMethod,
         status: amountPaid.greaterThanOrEqualTo(total) ? 'PAID' : 'PENDING', items: { create: allocations.map(({ categoryId, ...item }) => item) },
         discountApplications: { create: discountResult.applications },
-      } });
+      } }));
 
       const currentItems = await tx.prescriptionItem.findMany({ where: { prescriptionId }, select: { prescribedQuantity: true, dispensedQuantity: true } });
       const status = currentItems.every((item) => item.dispensedQuantity.greaterThanOrEqualTo(item.prescribedQuantity)) ? 'DISPENSED' : 'PARTIALLY_DISPENSED';

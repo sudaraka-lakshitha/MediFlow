@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
+import { AppError } from '../utils/AppError.js';
 
 const ruleData = (data, createdById) => ({
   name: data.name, code: data.code ? data.code.trim().toUpperCase() : null, description: data.description || null,
@@ -35,7 +36,13 @@ export const calculateDiscounts = async (tx, allocations, subtotal, couponCode) 
   const combinedAmount = combinable.reduce((sum, candidate) => sum.add(candidate.amount), new Prisma.Decimal(0));
   const selected = bestSingle && bestSingle.amount.greaterThan(combinedAmount) ? [bestSingle] : combinable;
   const amount = Prisma.Decimal.min(subtotal, selected.reduce((sum, candidate) => sum.add(candidate.amount), new Prisma.Decimal(0))).toDecimalPlaces(2);
-  return { amount, applications: selected.map(({ rule, amount: ruleAmount }) => ({ ruleId: rule.id, ruleName: rule.name, ruleType: rule.type, ruleValue: rule.value, amount: ruleAmount })) };
+  const couponMatched = !normalizedCode || rules.some((rule) => rule.code === normalizedCode);
+  return { amount, couponMatched, applications: selected.map(({ rule, amount: ruleAmount }) => ({ ruleId: rule.id, ruleName: rule.name, ruleType: rule.type, ruleValue: rule.value, amount: ruleAmount })) };
+};
+
+export const assertCouponMatched = (discountResult) => {
+  if (!discountResult.couponMatched) throw new AppError(400, 'This coupon code is invalid, expired, or not yet active.');
+  return discountResult;
 };
 
 export const discountService = {

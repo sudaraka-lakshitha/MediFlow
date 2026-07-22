@@ -1,7 +1,7 @@
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
 import { Prisma } from '@prisma/client';
-import { calculateDiscounts } from './discount.service.js';
+import { assertCouponMatched, calculateDiscounts } from './discount.service.js';
 import { ageOnDate } from '../utils/age.js';
 
 const summarySelect = {
@@ -169,12 +169,12 @@ export const prescriptionUploadService = {
     const lines = [...medicineLines, ...retailLines];
 
     subtotal = subtotal.toDecimalPlaces(2);
-    const discountResult = await calculateDiscounts(
+    const discountResult = assertCouponMatched(await calculateDiscounts(
       prisma,
       allocations,
       subtotal,
       data.couponCode,
-    );
+    ));
     const hasLiquidMedicine = products.some(isLiquidProduct);
     const containerFee = new Prisma.Decimal(data.containerFee || 0).toDecimalPlaces(2);
     if (containerFee.greaterThan(0) && !hasLiquidMedicine) {

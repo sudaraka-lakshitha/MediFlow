@@ -24,6 +24,7 @@ const money = (value: unknown) => `Rs. ${Number(value || 0).toFixed(2)}`;
 export function SalesPage() {
   const { user } = useAuth();
   const staff = user!.role !== "PATIENT";
+  const isAdmin = user!.role === "ADMIN";
   const canDirectRetail =
     user!.role === "ADMIN" || Boolean(user!.cashierAccess);
   const [rows, setRows] = useState<any[]>([]);
@@ -35,6 +36,7 @@ export function SalesPage() {
   const [payment, setPayment] = useState<any>(null);
   const [retail, setRetail] = useState<any>(null);
   const [handover, setHandover] = useState<any>(null);
+  const [voidTarget, setVoidTarget] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [invoiceBusy, setInvoiceBusy] = useState<number | null>(null);
   const load = useCallback(async () => {
@@ -197,6 +199,22 @@ export function SalesPage() {
     } catch (caught) {
       popup?.close();
       setError(errorMessage(caught));
+    }
+  };
+  const submitVoid = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/sales/${voidTarget.id}/void`, {
+        reason: voidTarget.reason,
+      });
+      setVoidTarget(null);
+      await load();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
     }
   };
   const updateRetailItem = (index: number, changes: object) =>
@@ -426,6 +444,23 @@ export function SalesPage() {
                           Record payment
                         </button>
                       )}
+                      {staff &&
+                        !row.dispensingId &&
+                        row.status !== "VOIDED" &&
+                        (isAdmin ||
+                          new Date(row.createdAt).toDateString() ===
+                            new Date().toDateString()) && (
+                          <button
+                            className="btn btn-sm btn-outline-danger"
+                            onClick={() =>
+                              setVoidTarget({ ...row, reason: "" })
+                            }
+                            title="Void this sale"
+                            aria-label={`Void invoice ${row.invoiceNumber}`}
+                          >
+                            <i className="bi bi-x-circle" />
+                          </button>
+                        )}
                     </div>
                   </td>
                 </tr>
@@ -719,6 +754,41 @@ export function SalesPage() {
             <ModalActions
               onClose={() => setPayment(null)}
               submitLabel="Record payment"
+              busy={busy}
+            />
+          </form>
+        </Modal>
+      )}
+      {voidTarget && (
+        <Modal
+          title={`Void ${voidTarget.invoiceNumber}`}
+          onClose={() => setVoidTarget(null)}
+          size="sm"
+        >
+          <form onSubmit={submitVoid}>
+            <div className="alert alert-danger small">
+              <i className="bi bi-exclamation-triangle me-2" />
+              Voiding this sale ({money(voidTarget.total)}) returns its items
+              to stock and marks the invoice void. This cannot be undone.{" "}
+              {isAdmin
+                ? "As an admin you can void this on any day."
+                : "It can only be done on the same day it was made; an admin can override that."}
+            </div>
+            <label className="form-label">Reason for voiding (required)</label>
+            <textarea
+              className="form-control"
+              minLength={3}
+              maxLength={500}
+              value={voidTarget.reason}
+              onChange={(event) =>
+                setVoidTarget({ ...voidTarget, reason: event.target.value })
+              }
+              placeholder="e.g. Wrong item rung up, customer returned goods…"
+              required
+            />
+            <ModalActions
+              onClose={() => setVoidTarget(null)}
+              submitLabel="Void sale"
               busy={busy}
             />
           </form>

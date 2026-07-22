@@ -14,13 +14,14 @@ const localStart = (daysAgo = 0) => {
 export const dashboardController = {
   summary: async (req, res) => {
     if (req.user.role === 'CASHIER') {
-      const [awaitingPayment, paidToday, amountToday, recentRequests] = await Promise.all([
+      const [awaitingPayment, paidToday, amountToday, directRetailToday, recentRequests] = await Promise.all([
         prisma.paymentRequest.count({ where: { status: 'AWAITING_PAYMENT' } }),
         prisma.paymentRequest.count({ where: { cashierId: req.user.id, paidAt: { gte: localStart() } } }),
         prisma.paymentRequest.aggregate({ where: { cashierId: req.user.id, paidAt: { gte: localStart() } }, _sum: { amountPaid: true } }),
+        prisma.sale.aggregate({ where: { cashierId: req.user.id, paymentRequestId: null, createdAt: { gte: localStart() }, status: { not: 'VOIDED' } }, _sum: { amountPaid: true } }),
         prisma.paymentRequest.findMany({ include: { patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } } }, orderBy: { createdAt: 'desc' }, take: 8 }),
       ]);
-      return res.json({ data: { cashier: true, awaitingPayment, paidToday, amountToday: Number(amountToday._sum.amountPaid || 0), recentRequests } });
+      return res.json({ data: { cashier: true, awaitingPayment, paidToday, amountToday: Number(amountToday._sum.amountPaid || 0) + Number(directRetailToday._sum.amountPaid || 0), recentRequests } });
     }
     if (req.user.role === 'PATIENT') {
       const profile = await prisma.patientProfile.findUnique({ where: { userId: req.user.id } });
@@ -37,10 +38,12 @@ export const dashboardController = {
     const today = localStart(); const sevenDays = localStart(6); const monthStart = new Date(today); monthStart.setUTCDate(1);
     const operationSettings = await operationSettingsService.get();
     const near = new Date(); near.setDate(near.getDate() + operationSettings.nearExpiryDays);
-    const [pendingPrescriptions, dispensedToday, salesToday, expiredBatches, nearExpiryBatches, activeUsers, salesWeek, dispensingWeek, prescriptionStatuses, recentActions, recentPrescriptions, recentSales, products, discountMonth] = await Promise.all([
+    const [pendingPrescriptions, dispensedToday, salesToday, cashCollectedToday, directRetailCollectedToday, expiredBatches, nearExpiryBatches, activeUsers, salesWeek, dispensingWeek, prescriptionStatuses, recentActions, recentPrescriptions, recentSales, products, discountMonth] = await Promise.all([
       prisma.prescription.count({ where: { status: 'PENDING' } }),
       prisma.dispensing.count({ where: { dispensedAt: { gte: today } } }),
       prisma.sale.aggregate({ where: { createdAt: { gte: today }, status: { not: 'VOIDED' } }, _sum: { total: true } }),
+      prisma.paymentRequest.aggregate({ where: { paidAt: { gte: today } }, _sum: { amountPaid: true } }),
+      prisma.sale.aggregate({ where: { paymentRequestId: null, createdAt: { gte: today }, status: { not: 'VOIDED' } }, _sum: { amountPaid: true } }),
       prisma.inventoryBatch.count({ where: { expiryDate: { lt: new Date() }, quantityAvailable: { gt: 0 } } }),
       prisma.inventoryBatch.count({ where: { expiryDate: { gte: new Date(), lte: near }, quantityAvailable: { gt: 0 } } }),
       req.user.role === 'ADMIN' ? prisma.user.count({ where: { active: true } }) : Promise.resolve(undefined),
@@ -61,7 +64,9 @@ export const dashboardController = {
     const lowStock = products.map((product) => ({ id: product.id, name: `${product.genericName} ${product.strength}`, stock: product.batches.reduce((sum, batch) => sum + Number(batch.quantityAvailable), 0), reorderLevel: product.reorderLevel })).filter((product) => product.stock <= product.reorderLevel).sort((a, b) => (a.stock / Math.max(1, a.reorderLevel)) - (b.stock / Math.max(1, b.reorderLevel))).slice(0, 6);
 
     res.json({ data: {
-      pendingPrescriptions, dispensedToday, salesToday: Number(salesToday._sum.total || 0), expiredBatches, nearExpiryBatches, activeUsers,
+      pendingPrescriptions, dispensedToday, salesToday: Number(salesToday._sum.total || 0),
+      cashCollectedToday: Number(cashCollectedToday._sum.amountPaid || 0) + Number(directRetailCollectedToday._sum.amountPaid || 0),
+      expiredBatches, nearExpiryBatches, activeUsers,
       operationSettings,
       salesSeries: days.map((date) => ({ date, sales: salesMap[date], dispensings: issueMap[date] })),
       prescriptionStatuses: prescriptionStatuses.map((entry) => ({ status: entry.status, count: entry._count._all })),
