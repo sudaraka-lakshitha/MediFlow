@@ -101,7 +101,7 @@ export function SalesPage() {
           product.active &&
           !product.prescriptionRequired &&
           product.batches.reduce(
-            (sum: number, batch: any) => sum + Number(batch.quantityAvailable),
+            (sum: number, batch: any) => sum + Number(batch.quantityAvailable) - Number(batch.quantityReserved || 0),
             0,
           ) > 0,
       ),
@@ -543,7 +543,7 @@ export function SalesPage() {
               const stock =
                 product?.batches.reduce(
                   (sum: number, batch: any) =>
-                    sum + Number(batch.quantityAvailable),
+                    sum + Number(batch.quantityAvailable) - Number(batch.quantityReserved || 0),
                   0,
                 ) || 0;
               return (

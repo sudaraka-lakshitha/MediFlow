@@ -222,7 +222,7 @@ const usableStock = (product: any) =>
     (sum: number, batch: any) =>
       Number(batch.quantityAvailable) > 0 &&
       (!batch.expiryDate || new Date(batch.expiryDate) >= new Date())
-        ? sum + Number(batch.quantityAvailable)
+        ? sum + Number(batch.quantityAvailable) - Number(batch.quantityReserved || 0)
         : sum,
     0,
   ) || 0;

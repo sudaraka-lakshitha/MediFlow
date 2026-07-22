@@ -53,7 +53,7 @@ export const dashboardController = {
       prisma.auditLog.findMany({ where: { ...buildAuditWhere(), success: true }, include: { user: { select: { fullName: true } } }, orderBy: { createdAt: 'desc' }, take: 8 }),
       prisma.prescription.findMany({ include: { patient: { include: { user: { select: { fullName: true } } } } }, orderBy: { createdAt: 'desc' }, take: 6 }),
       prisma.sale.findMany({ include: { patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } }, discountApplications: true }, orderBy: { createdAt: 'desc' }, take: 6 }),
-      prisma.product.findMany({ where: { active: true }, include: { batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: new Date() }, restricted: false }, select: { quantityAvailable: true } } } }),
+      prisma.product.findMany({ where: { active: true }, include: { batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: new Date() }, restricted: false }, select: { quantityAvailable: true, quantityReserved: true } } } }),
       prisma.discountApplication.aggregate({ where: { createdAt: { gte: monthStart } }, _sum: { amount: true }, _count: { _all: true } }),
     ]);
 
@@ -61,7 +61,7 @@ export const dashboardController = {
     const salesMap = Object.fromEntries(days.map((day) => [day, 0])); const issueMap = Object.fromEntries(days.map((day) => [day, 0]));
     salesWeek.forEach((sale) => { const key = localKey(sale.createdAt); salesMap[key] = (salesMap[key] || 0) + Number(sale.total); });
     dispensingWeek.forEach((issue) => { const key = localKey(issue.dispensedAt); issueMap[key] = (issueMap[key] || 0) + 1; });
-    const lowStock = products.map((product) => ({ id: product.id, name: `${product.genericName} ${product.strength}`, stock: product.batches.reduce((sum, batch) => sum + Number(batch.quantityAvailable), 0), reorderLevel: product.reorderLevel })).filter((product) => product.stock <= product.reorderLevel).sort((a, b) => (a.stock / Math.max(1, a.reorderLevel)) - (b.stock / Math.max(1, b.reorderLevel))).slice(0, 6);
+    const lowStock = products.map((product) => ({ id: product.id, name: `${product.genericName} ${product.strength}`, stock: product.batches.reduce((sum, batch) => sum + Number(batch.quantityAvailable) - Number(batch.quantityReserved || 0), 0), reorderLevel: product.reorderLevel })).filter((product) => product.stock <= product.reorderLevel).sort((a, b) => (a.stock / Math.max(1, a.reorderLevel)) - (b.stock / Math.max(1, b.reorderLevel))).slice(0, 6);
 
     res.json({ data: {
       pendingPrescriptions, dispensedToday, salesToday: Number(salesToday._sum.total || 0),

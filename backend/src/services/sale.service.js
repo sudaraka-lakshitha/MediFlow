@@ -9,6 +9,7 @@ import { withUniqueRetry } from '../utils/withUniqueRetry.js';
 import { isSameLocalDay } from '../utils/localDate.js';
 import { serializable } from '../utils/serializable.js';
 import { assertRetailAgeSuitability } from '../utils/ageSuitability.js';
+import { usableQuantity, usableStockTotal } from '../utils/stock.js';
 
 const saleDetailInclude = { patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } }, cashier: { select: { fullName: true } }, paymentRequest: { select: { requestNumber: true } }, items: { include: { product: true, batch: true } }, discountApplications: true };
 
@@ -64,12 +65,14 @@ export const saleService = {
         const requestedQuantity = new Prisma.Decimal(requested.quantity);
         await tx.lowStockAcknowledgement.deleteMany({ where: { productId: product.id } });
         const batches = await tx.inventoryBatch.findMany({ where: { productId: product.id, quantityAvailable: { gt: 0 }, expiryDate: { gte: now }, restricted: false }, orderBy: allocationOrder });
-        const available = batches.reduce((sum, batch) => sum.add(batch.quantityAvailable), new Prisma.Decimal(0));
+        const available = usableStockTotal(batches);
         if (available.lessThan(requestedQuantity)) throw new AppError(409, `Insufficient usable stock for ${product.genericName}.`);
         let left = requestedQuantity;
         for (const batch of batches) {
           if (left.isZero()) break;
-          const quantity = Prisma.Decimal.min(left, batch.quantityAvailable); const lineTotal = product.sellingPrice.mul(quantity); const after = batch.quantityAvailable.sub(quantity);
+          const usable = usableQuantity(batch);
+          if (usable.lessThanOrEqualTo(0)) continue;
+          const quantity = Prisma.Decimal.min(left, usable); const lineTotal = product.sellingPrice.mul(quantity); const after = batch.quantityAvailable.sub(quantity);
           await tx.inventoryBatch.update({ where: { id: batch.id }, data: { quantityAvailable: after } });
           allocations.push({ productId: product.id, categoryId: product.categoryId, batchId: batch.id, quantity, unitPrice: product.sellingPrice, unitCost: batch.purchasePrice, lineTotal, quantityBefore: batch.quantityAvailable, quantityAfter: after, productName: product.genericName });
           subtotal = subtotal.add(lineTotal); left = left.sub(quantity);

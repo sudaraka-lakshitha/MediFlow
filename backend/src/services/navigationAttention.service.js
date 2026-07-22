@@ -87,7 +87,7 @@ export const navigationAttentionService = {
           lowStockAcknowledgement: { select: { stockLevel: true } },
           batches: {
             where: { expiryDate: { gte: now }, quantityAvailable: { gt: 0 }, restricted: false },
-            select: { quantityAvailable: true },
+            select: { quantityAvailable: true, quantityReserved: true },
           },
         },
       }),

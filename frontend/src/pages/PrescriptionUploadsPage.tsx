@@ -75,7 +75,7 @@ const usableStock = (product: any) =>
   product.batches
     .filter((batch: any) => new Date(batch.expiryDate) >= new Date())
     .reduce(
-      (sum: number, batch: any) => sum + Number(batch.quantityAvailable),
+      (sum: number, batch: any) => sum + Number(batch.quantityAvailable) - Number(batch.quantityReserved || 0),
       0,
     );
 const emptyEstimate = () => ({

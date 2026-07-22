@@ -25,6 +25,7 @@ type Batch = {
   batchNumber: string;
   quantityReceived: number;
   quantityAvailable: number;
+  quantityReserved?: number;
   purchasePrice: string;
   expiryDate: string;
   receivedAt: string;
@@ -285,7 +286,7 @@ export function InventoryPage() {
             (total: number, batch: any) =>
               new Date(batch.expiryDate) >= new Date() &&
               Number(batch.quantityAvailable) > 0
-                ? total + Number(batch.quantityAvailable)
+                ? total + Number(batch.quantityAvailable) - Number(batch.quantityReserved || 0)
                 : total,
             0,
           );
@@ -641,6 +642,11 @@ export function InventoryPage() {
                     <td>
                       <strong>{batch.quantityAvailable}</strong> /{" "}
                       {batch.quantityReceived} {batch.product.unit}
+                      {Number(batch.quantityReserved) > 0 && (
+                        <small className="d-block text-secondary">
+                          {batch.quantityReserved} reserved for paid bills
+                        </small>
+                      )}
                     </td>
                     <td>{new Date(batch.receivedAt).toLocaleString()}</td>
                     <td>{new Date(batch.expiryDate).toLocaleDateString()}</td>

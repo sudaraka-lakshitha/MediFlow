@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { assertCouponMatched, calculateDiscounts } from './discount.service.js';
 import { ageOnDate } from '../utils/age.js';
 import { findAgeUnsuitable } from '../utils/ageSuitability.js';
+import { usableStockTotal } from '../utils/stock.js';
 
 const summarySelect = {
   id: true, originalName: true, mimeType: true, patientNote: true, prepareRequested: true, orderedForSelf: true, recipientName: true, recipientRelationship: true, recipientDateOfBirth: true, status: true, availabilityNotes: true,
@@ -102,7 +103,7 @@ export const prescriptionUploadService = {
           restricted: false,
           expiryDate: { gte: now },
         },
-        select: { quantityAvailable: true },
+        select: { quantityAvailable: true, quantityReserved: true },
       },
     };
     const [products, retailProducts] = await Promise.all([
@@ -139,10 +140,7 @@ export const prescriptionUploadService = {
     const allocations = [];
     const createLine = (requested, product, source) => {
       const quantity = new Prisma.Decimal(requested.quantity);
-      const availableQuantity = product.batches.reduce(
-        (sum, batch) => sum.add(batch.quantityAvailable),
-        new Prisma.Decimal(0),
-      );
+      const availableQuantity = usableStockTotal(product.batches);
       const lineTotal = product.sellingPrice.mul(quantity).toDecimalPlaces(2);
       subtotal = subtotal.add(lineTotal);
       allocations.push({

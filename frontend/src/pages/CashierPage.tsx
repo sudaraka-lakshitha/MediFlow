@@ -575,7 +575,7 @@ export function CashierPage() {
                       options={retailOptions.products.map((candidate) => ({
                         value: candidate.id,
                         label: candidate.genericName,
-                        description: `${candidate.sku} · ${money(candidate.sellingPrice)} · Stock ${candidate.batches.reduce((sum: number, batch: any) => sum + Number(batch.quantityAvailable), 0)}`,
+                        description: `${candidate.sku} · ${money(candidate.sellingPrice)} · Stock ${candidate.batches.reduce((sum: number, batch: any) => sum + Number(batch.quantityAvailable) - Number(batch.quantityReserved || 0), 0)}`,
                       }))}
                       value={item.productId}
                       onChange={(productId) =>

@@ -14,7 +14,7 @@ export const catalogRepository = {
           lowStockAcknowledgement: {
             include: { acknowledgedBy: { select: { id: true, fullName: true } } },
           },
-          batches: { where: { quantityAvailable: { gt: 0 }, restricted: false }, select: { quantityAvailable: true, expiryDate: true } },
+          batches: { where: { quantityAvailable: { gt: 0 }, restricted: false }, select: { quantityAvailable: true, quantityReserved: true, expiryDate: true } },
         },
         orderBy: { genericName: 'asc' },
         take: 300,

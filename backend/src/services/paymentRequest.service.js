@@ -11,6 +11,7 @@ import { isSameLocalDay } from '../utils/localDate.js';
 import { withUniqueRetry } from '../utils/withUniqueRetry.js';
 import { serializable } from '../utils/serializable.js';
 import { assertRetailAgeSuitability } from '../utils/ageSuitability.js';
+import { consumePaymentRequestStock, releaseReservations, reserveStock, usableStockTotal } from '../utils/stock.js';
 
 const include = {
   patient: { select: { id: true, fullName: true, email: true, phone: true } },
@@ -103,6 +104,7 @@ export const paymentRequestService = {
         data: { status: 'CANCELLED', cancellationReason: reason, cancelledById: userId, cancelledAt: new Date() },
       });
       if (claimed.count !== 1) throw new AppError(409, 'This bill was just processed by someone else. Refresh to see its latest status.');
+      await releaseReservations(tx, id);
       const data = await tx.paymentRequest.findUnique({ where: { id }, include });
       return safeRecord(data);
     });
@@ -113,7 +115,7 @@ export const paymentRequestService = {
         where: { active: true, prescriptionRequired: false },
         select: {
           id: true, sku: true, barcode: true, genericName: true, strength: true, unit: true, productType: true, sellingPrice: true,
-          batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: new Date() }, restricted: false }, select: { quantityAvailable: true } },
+          batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: new Date() }, restricted: false }, select: { quantityAvailable: true, quantityReserved: true } },
         },
         orderBy: { genericName: 'asc' },
       }),
@@ -135,7 +137,7 @@ export const paymentRequestService = {
       const product = byId.get(requested.productId);
       if (!product) throw new AppError(404, `Retail product ${requested.productId} was not found or requires a prescription.`);
       const quantity = new Prisma.Decimal(requested.quantity);
-      const available = product.batches.reduce((sum, batch) => sum.add(batch.quantityAvailable), new Prisma.Decimal(0));
+      const available = usableStockTotal(product.batches);
       if (available.lessThan(quantity)) throw new AppError(409, `Insufficient usable stock for ${product.genericName}.`);
       const lineTotal = product.sellingPrice.mul(quantity).toDecimalPlaces(2);
       subtotal = subtotal.add(lineTotal);
@@ -156,8 +158,8 @@ export const paymentRequestService = {
     }));
   },
   async pay(id, paymentMethod, cashierId, paymentReference) {
-    return prisma.$transaction(async (tx) => {
-      const current = await tx.paymentRequest.findUnique({ where: { id } });
+    return serializable(async (tx) => {
+      const current = await tx.paymentRequest.findUnique({ where: { id }, include: { items: true } });
       if (!current) throw new AppError(404, 'Payment request not found.');
       if (current.status !== 'AWAITING_PAYMENT') throw new AppError(409, 'This payment request is not awaiting payment.');
       const pin = generatePickupPin();
@@ -169,6 +171,9 @@ export const paymentRequestService = {
         },
       });
       if (claimed.count !== 1) throw new AppError(409, 'This bill was just processed by another cashier. Refresh to see its latest status.');
+      const operationSettings = await operationSettingsService.get(tx);
+      const allocationOrder = batchAllocationOrder(operationSettings.allocationMethod);
+      await reserveStock(tx, id, current.items, allocationOrder);
       const data = await tx.paymentRequest.findUnique({ where: { id }, include });
       return { data: safeRecord(data), pickupPin: pin };
     });
@@ -191,24 +196,17 @@ export const paymentRequestService = {
     return serializable(async (tx) => {
       const claimed = await tx.paymentRequest.updateMany({ where: { id, type: 'RETAIL', status: 'PAID' }, data: { status: 'FULFILLED', pinVerifiedAt: new Date() } });
       if (claimed.count !== 1) throw new AppError(409, 'This retail order is already being processed or has been fulfilled by another staff member.');
-      const now = new Date(); const saleItems = [];
       const operationSettings = await operationSettingsService.get(tx);
       const allocationOrder = batchAllocationOrder(operationSettings.allocationMethod);
-      for (const requested of request.items) {
-        await tx.lowStockAcknowledgement.deleteMany({ where: { productId: requested.productId } });
-        const batches = await tx.inventoryBatch.findMany({ where: { productId: requested.productId, quantityAvailable: { gt: 0 }, expiryDate: { gte: now }, restricted: false }, orderBy: allocationOrder });
-        const available = batches.reduce((sum, batch) => sum.add(batch.quantityAvailable), new Prisma.Decimal(0));
-        if (available.lessThan(requested.quantity)) throw new AppError(409, `Insufficient usable stock for ${requested.product.genericName}.`);
-        let left = requested.quantity;
-        for (const batch of batches) {
-          if (left.isZero()) break;
-          const quantity = Prisma.Decimal.min(left, batch.quantityAvailable); const after = batch.quantityAvailable.sub(quantity);
-          await tx.inventoryBatch.update({ where: { id: batch.id }, data: { quantityAvailable: after } });
-          const lineTotal = requested.unitPrice.mul(quantity);
-          saleItems.push({ productId: requested.productId, batchId: batch.id, quantity, unitPrice: requested.unitPrice, unitCost: batch.purchasePrice, lineTotal });
-          await tx.stockMovement.create({ data: { productId: requested.productId, batchId: batch.id, type: 'RETAIL_SALE', quantityChange: quantity.negated(), quantityBefore: batch.quantityAvailable, quantityAfter: after, referenceType: 'PAYMENT_REQUEST', referenceId: id, reason: 'Paid pharmacist retail handoff', performedById: pharmacistId } });
-          left = left.sub(quantity);
-        }
+      const itemById = new Map(request.items.map((item) => [item.id, item]));
+      const consumed = await consumePaymentRequestStock(tx, request, allocationOrder);
+      const saleItems = [];
+      for (const entry of consumed) {
+        const requested = itemById.get(entry.paymentRequestItemId);
+        await tx.lowStockAcknowledgement.deleteMany({ where: { productId: entry.productId } });
+        const lineTotal = requested.unitPrice.mul(entry.quantity);
+        saleItems.push({ productId: entry.productId, batchId: entry.batchId, quantity: entry.quantity, unitPrice: requested.unitPrice, unitCost: entry.unitCost, lineTotal });
+        await tx.stockMovement.create({ data: { productId: entry.productId, batchId: entry.batchId, type: 'RETAIL_SALE', quantityChange: entry.quantity.negated(), quantityBefore: entry.quantityBefore, quantityAfter: entry.quantityAfter, referenceType: 'PAYMENT_REQUEST', referenceId: id, reason: 'Paid pharmacist retail handoff', performedById: pharmacistId } });
       }
       const sale = await withUniqueRetry(() => tx.sale.create({ data: {
         invoiceNumber: `INV-${Date.now()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`, patientId: request.patientId,
