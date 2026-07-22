@@ -18,7 +18,11 @@ export const patientService = {
     return prisma.patientNotice.create({ data: { patientId: patient.userId, createdById, title: data.title, message: data.message }, include: { createdBy: { select: { fullName: true, role: true } } } });
   },
   list: () => prisma.patientProfile.findMany({ include, orderBy: { createdAt:'desc' }, take:300 }),
-  create(data, staff) {
+  async create(data, staff) {
+    if (data.phone) {
+      const existing = await prisma.user.findFirst({ where: { phone: data.phone, role: 'PATIENT' }, select: { fullName: true, patientProfile: { select: { id: true, patientNumber: true } } } });
+      if (existing) throw new AppError(409, `A patient with this phone number already exists: ${existing.fullName} (${existing.patientProfile?.patientNumber || 'no patient number'}). Search for them instead of creating a duplicate.`);
+    }
     return prisma.$transaction(async (tx) => {
       const generatedPassword = data.password || temporaryPassword();
       const user = await tx.user.create({ data: { email:data.email.toLowerCase(), fullName:data.fullName, phone:data.phone||null, passwordHash:await bcrypt.hash(generatedPassword,12), mustChangePassword:true, role:'PATIENT' } });

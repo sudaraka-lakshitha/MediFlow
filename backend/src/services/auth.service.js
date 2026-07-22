@@ -28,6 +28,9 @@ export const authService = {
   async register(data) {
     const email = data.email.trim().toLowerCase();
     if (await userRepository.findByEmail(email)) throw new AppError(409, 'An account already uses this email address.');
+    if (data.phone && await prisma.user.findFirst({ where: { phone: data.phone, role: 'PATIENT' } })) {
+      throw new AppError(409, 'An account already uses this phone number. Sign in or reset your password instead.');
+    }
     const passwordHash = await bcrypt.hash(data.password, 12);
     const user = await prisma.$transaction(async (tx) => {
       const created = await tx.user.create({ data: { email, passwordHash, fullName: data.fullName.trim(), phone: data.phone, role: 'PATIENT' } });

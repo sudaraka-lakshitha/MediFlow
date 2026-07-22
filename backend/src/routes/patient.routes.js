@@ -18,5 +18,5 @@ patientRoutes.post('/:id/notices',validate({params:idParams,body:patientNoticeSc
 patientRoutes.post('/',validate({body:createPatientSchema}),asyncHandler(patientController.create));
 patientRoutes.put('/:id',validate({params:idParams,body:updatePatientSchema}),asyncHandler(patientController.update));
 patientRoutes.post('/:id/reset-password',validate({params:idParams,body:patientPasswordSchema}),asyncHandler(patientController.resetPassword));
-patientRoutes.patch('/:id/active',authorize('ADMIN'),validate({params:idParams,body:activeSchema}),asyncHandler(patientController.setActive));
+patientRoutes.patch('/:id/active',authorize('ADMIN','PHARMACIST'),validate({params:idParams,body:activeSchema}),asyncHandler(patientController.setActive));
 patientRoutes.delete('/:id',validate({params:idParams}),asyncHandler(patientController.remove));

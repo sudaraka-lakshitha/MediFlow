@@ -3277,14 +3277,21 @@ export function PrescriptionsPage() {
                   <input
                     className="form-control"
                     type={type}
+                    inputMode={key === "phone" ? "numeric" : undefined}
+                    pattern={key === "phone" ? "0[0-9]{9}" : undefined}
+                    maxLength={key === "phone" ? 10 : undefined}
+                    max={key === "dateOfBirth" ? new Date().toISOString().slice(0, 10) : undefined}
                     value={patientForm[key]}
                     onChange={(event) =>
                       setPatientForm({
                         ...patientForm,
-                        [key]: event.target.value,
+                        [key]:
+                          key === "phone"
+                            ? event.target.value.replace(/\D/g, "").slice(0, 10)
+                            : event.target.value,
                       })
                     }
-                    required={["fullName", "email"].includes(key)}
+                    required
                   />
                 </div>
               ))}
