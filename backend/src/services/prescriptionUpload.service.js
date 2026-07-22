@@ -3,6 +3,7 @@ import { AppError } from '../utils/AppError.js';
 import { Prisma } from '@prisma/client';
 import { assertCouponMatched, calculateDiscounts } from './discount.service.js';
 import { ageOnDate } from '../utils/age.js';
+import { findAgeUnsuitable } from '../utils/ageSuitability.js';
 
 const summarySelect = {
   id: true, originalName: true, mimeType: true, patientNote: true, prepareRequested: true, orderedForSelf: true, recipientName: true, recipientRelationship: true, recipientDateOfBirth: true, status: true, availabilityNotes: true,
@@ -42,7 +43,7 @@ const validateRecipientAge = async (upload, products) => {
   }
   const age = ageOnDate(dateOfBirth, new Date());
   if (age < 0 || age > 130) throw new AppError(400, 'The medicine recipient date of birth is invalid.');
-  const unsuitable = products.filter((product) => (product.minimumAgeYears != null && age < product.minimumAgeYears) || (product.maximumAgeYears != null && age > product.maximumAgeYears));
+  const unsuitable = findAgeUnsuitable(products, age);
   if (unsuitable.length) throw new AppError(400, `${unsuitable.map((product) => product.genericName).join(', ')} ${unsuitable.length === 1 ? 'is' : 'are'} outside the configured age range for this medicine recipient (${age} years). Review the medicine or update its verified age guidance.`);
 };
 

@@ -85,6 +85,13 @@ export const inventoryService = {
     });
   },
   updateBatch: (id, data) => prisma.$transaction(async (tx) => {
+    const current = await tx.inventoryBatch.findUnique({ where: { id } });
+    if (!current) throw new AppError(404, 'Inventory batch not found.');
+    const currentlyExpired = current.expiryDate < new Date();
+    const expiryChanged = current.expiryDate.getTime() !== new Date(data.expiryDate).getTime();
+    if (currentlyExpired && expiryChanged) {
+      throw new AppError(409, 'Expired batches cannot have their expiry date changed here — use "Process expired stock" instead.');
+    }
     const batch = await tx.inventoryBatch.update({ where: { id }, data: { supplierId: data.supplierId, batchNumber: data.batchNumber, purchasePrice: data.purchasePrice, expiryDate: data.expiryDate }, include: { product: true, supplier: true } });
     await tx.lowStockAcknowledgement.deleteMany({ where: { productId: batch.productId } });
     return batch;
@@ -168,11 +175,15 @@ export const inventoryService = {
       if (Number(batch.quantityAvailable) !== 0) {
         throw new AppError(409, 'Only empty batches (available quantity = 0) can be deleted.');
       }
-      // Delete any associated stock movements, dispensing items, and sale items to prevent FK constraints
+      const [movementCount, dispensingCount, saleCount] = await Promise.all([
+        tx.stockMovement.count({ where: { batchId, type: { not: 'RECEIPT' } } }),
+        tx.dispensingItem.count({ where: { batchId } }),
+        tx.saleItem.count({ where: { batchId } }),
+      ]);
+      if (movementCount > 0 || dispensingCount > 0 || saleCount > 0) {
+        throw new AppError(409, 'This batch has transaction history and cannot be deleted. Only a batch that was received but never issued against can be removed.');
+      }
       await tx.stockMovement.deleteMany({ where: { batchId } });
-      await tx.dispensingItem.deleteMany({ where: { batchId } });
-      await tx.saleItem.deleteMany({ where: { batchId } });
-      
       return tx.inventoryBatch.delete({ where: { id: batchId } });
     });
   },

@@ -7,6 +7,8 @@ import { assertCouponMatched, calculateDiscounts } from './discount.service.js';
 import { batchAllocationOrder, operationSettingsService } from './operationSettings.service.js';
 import { withUniqueRetry } from '../utils/withUniqueRetry.js';
 import { isSameLocalDay } from '../utils/localDate.js';
+import { serializable } from '../utils/serializable.js';
+import { assertRetailAgeSuitability } from '../utils/ageSuitability.js';
 
 const saleDetailInclude = { patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } }, cashier: { select: { fullName: true } }, paymentRequest: { select: { requestNumber: true } }, items: { include: { product: true, batch: true } }, discountApplications: true };
 
@@ -41,7 +43,7 @@ export const saleService = {
     return prisma.sale.findUnique({ where: { id } });
   },
   async createRetail(input, pharmacistId) {
-    return prisma.$transaction(async (tx) => {
+    return serializable(async (tx) => {
       const actor = await tx.user.findUnique({ where: { id: pharmacistId }, select: { role: true, cashierAccess: true } });
       if (!actor) throw new AppError(403, 'Billing user is unavailable.');
       if (input.patientId) {
@@ -50,6 +52,7 @@ export const saleService = {
       }
       const requestedIds = [...new Set(input.items.map((item) => item.productId))];
       const products = await tx.product.findMany({ where: { id: { in: requestedIds }, active: true }, include: { category: true } });
+      await assertRetailAgeSuitability(input.patientId, products);
       const byId = new Map(products.map((product) => [product.id, product]));
       const allocations = []; let subtotal = new Prisma.Decimal(0); const now = new Date();
       const operationSettings = await operationSettingsService.get(tx);
@@ -68,7 +71,7 @@ export const saleService = {
           if (left.isZero()) break;
           const quantity = Prisma.Decimal.min(left, batch.quantityAvailable); const lineTotal = product.sellingPrice.mul(quantity); const after = batch.quantityAvailable.sub(quantity);
           await tx.inventoryBatch.update({ where: { id: batch.id }, data: { quantityAvailable: after } });
-          allocations.push({ productId: product.id, categoryId: product.categoryId, batchId: batch.id, quantity, unitPrice: product.sellingPrice, lineTotal, quantityBefore: batch.quantityAvailable, quantityAfter: after, productName: product.genericName });
+          allocations.push({ productId: product.id, categoryId: product.categoryId, batchId: batch.id, quantity, unitPrice: product.sellingPrice, unitCost: batch.purchasePrice, lineTotal, quantityBefore: batch.quantityAvailable, quantityAfter: after, productName: product.genericName });
           subtotal = subtotal.add(lineTotal); left = left.sub(quantity);
         }
       }
@@ -77,10 +80,10 @@ export const saleService = {
       const sale = await withUniqueRetry(() => tx.sale.create({ data: { invoiceNumber: `INV-${Date.now()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`, patientId: input.patientId || null, pharmacistId, cashierId: pharmacistId, subtotal, discount, tax, total, amountPaid, paymentMethod: input.paymentMethod, status: amountPaid.greaterThanOrEqualTo(total) ? 'PAID' : 'PENDING', items: { create: allocations.map(({ categoryId, quantityBefore, quantityAfter, productName, ...item }) => item) }, discountApplications: { create: discountResult.applications } } }));
       for (const item of allocations) await tx.stockMovement.create({ data: { productId: item.productId, batchId: item.batchId, type: 'RETAIL_SALE', quantityChange: item.quantity.negated(), quantityBefore: item.quantityBefore, quantityAfter: item.quantityAfter, referenceType: 'SALE', referenceId: sale.id, reason: 'Retail counter sale', performedById: pharmacistId } });
       return tx.sale.findUnique({ where: { id: sale.id }, include: { patient: { select: { fullName: true } }, items: { include: { product: true, batch: true } }, discountApplications: true } });
-    }, { isolationLevel: 'Serializable' });
+    });
   },
   async voidSale(id, reason, userId, userRole) {
-    return prisma.$transaction(async (tx) => {
+    return serializable(async (tx) => {
       const sale = await tx.sale.findUnique({ where: { id }, include: { items: true } });
       if (!sale) throw new AppError(404, 'Sale not found.');
       if (sale.status === 'VOIDED') throw new AppError(409, 'This sale has already been voided.');
@@ -98,6 +101,6 @@ export const saleService = {
       const claimed = await tx.sale.updateMany({ where: { id, status: { not: 'VOIDED' } }, data: { status: 'VOIDED' } });
       if (claimed.count !== 1) throw new AppError(409, 'This sale was just updated by someone else. Refresh and try again.');
       return tx.sale.findUnique({ where: { id }, include: saleDetailInclude });
-    }, { isolationLevel: 'Serializable' });
+    });
   },
 };

@@ -25,6 +25,9 @@ export const errorHandler = (error, req, res, _next) => {
     } else if (error.code === 'P2003') {
       status = 409;
       message = 'This record is referenced by pharmacy history and cannot be deleted. Deactivate it instead.';
+    } else if (error.code === 'P2034') {
+      status = 409;
+      message = 'This item was just updated by another transaction. Please try again.';
     }
   }
 

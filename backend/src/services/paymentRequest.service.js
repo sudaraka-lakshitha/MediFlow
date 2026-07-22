@@ -9,6 +9,8 @@ import { verifyPickupPin } from '../utils/pickupPin.js';
 import { batchAllocationOrder, operationSettingsService } from './operationSettings.service.js';
 import { isSameLocalDay } from '../utils/localDate.js';
 import { withUniqueRetry } from '../utils/withUniqueRetry.js';
+import { serializable } from '../utils/serializable.js';
+import { assertRetailAgeSuitability } from '../utils/ageSuitability.js';
 
 const include = {
   patient: { select: { id: true, fullName: true, email: true, phone: true } },
@@ -126,6 +128,7 @@ export const paymentRequestService = {
     }
     const requestedIds = [...new Set(input.items.map((item) => item.productId))];
     const products = await prisma.product.findMany({ where: { id: { in: requestedIds }, active: true, prescriptionRequired: false }, include: { category: true, batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: new Date() }, restricted: false } } } });
+    await assertRetailAgeSuitability(input.patientId, products);
     const byId = new Map(products.map((product) => [product.id, product]));
     const lines = []; const allocations = []; let subtotal = new Prisma.Decimal(0);
     for (const requested of input.items) {
@@ -179,12 +182,13 @@ export const paymentRequestService = {
     const request = await prisma.paymentRequest.findUnique({ where: { id }, include: { items: { include: { product: true } } } });
     if (!request || request.type !== 'RETAIL') throw new AppError(404, 'Retail payment request not found.');
     if (request.status !== 'PAID') throw new AppError(402, 'Cashier payment has not been completed for this retail request.');
+    await assertRetailAgeSuitability(request.patientId, request.items.map((item) => item.product));
     if (request.pinAttempts >= 5) throw new AppError(423, 'The receipt PIN is locked after too many failed attempts.');
     if (!verifyPickupPin(request.id, pickupPin, request.pickupPinHash)) {
       await prisma.paymentRequest.update({ where: { id }, data: { pinAttempts: { increment: 1 } } });
       throw new AppError(400, 'The receipt PIN is incorrect.');
     }
-    return prisma.$transaction(async (tx) => {
+    return serializable(async (tx) => {
       const claimed = await tx.paymentRequest.updateMany({ where: { id, type: 'RETAIL', status: 'PAID' }, data: { status: 'FULFILLED', pinVerifiedAt: new Date() } });
       if (claimed.count !== 1) throw new AppError(409, 'This retail order is already being processed or has been fulfilled by another staff member.');
       const now = new Date(); const saleItems = [];
@@ -201,7 +205,7 @@ export const paymentRequestService = {
           const quantity = Prisma.Decimal.min(left, batch.quantityAvailable); const after = batch.quantityAvailable.sub(quantity);
           await tx.inventoryBatch.update({ where: { id: batch.id }, data: { quantityAvailable: after } });
           const lineTotal = requested.unitPrice.mul(quantity);
-          saleItems.push({ productId: requested.productId, batchId: batch.id, quantity, unitPrice: requested.unitPrice, lineTotal });
+          saleItems.push({ productId: requested.productId, batchId: batch.id, quantity, unitPrice: requested.unitPrice, unitCost: batch.purchasePrice, lineTotal });
           await tx.stockMovement.create({ data: { productId: requested.productId, batchId: batch.id, type: 'RETAIL_SALE', quantityChange: quantity.negated(), quantityBefore: batch.quantityAvailable, quantityAfter: after, referenceType: 'PAYMENT_REQUEST', referenceId: id, reason: 'Paid pharmacist retail handoff', performedById: pharmacistId } });
           left = left.sub(quantity);
         }
@@ -213,6 +217,6 @@ export const paymentRequestService = {
         items: { create: saleItems },
       } }));
       return sale;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    });
   },
 };

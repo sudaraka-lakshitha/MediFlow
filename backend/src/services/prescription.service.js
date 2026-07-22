@@ -9,17 +9,9 @@ import { normalizeLiquidDose } from '../utils/liquidDose.js';
 import { verifyPickupPin } from '../utils/pickupPin.js';
 import { batchAllocationOrder, operationSettingsService } from './operationSettings.service.js';
 import { ageOnDate } from '../utils/age.js';
+import { findAgeUnsuitable } from '../utils/ageSuitability.js';
 import { withUniqueRetry } from '../utils/withUniqueRetry.js';
-
-const serializable = async (operation) => {
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      return await prisma.$transaction(operation, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-    } catch (error) {
-      if (error.code !== 'P2034' || attempt === 3) throw error;
-    }
-  }
-};
+import { serializable } from '../utils/serializable.js';
 const isLiquidProduct = (product) =>
   ['ml', 'millilitre', 'milliliter', 'l', 'litre', 'liter'].includes(String(product?.unit || '').toLowerCase())
   || /syrup|suspension|solution|elixir|liquid/i.test(String(product?.dosageForm || ''));
@@ -37,7 +29,7 @@ const validatePatientAge = async (data, products) => {
   }
   const age = ageOnDate(dateOfBirth, data.prescriptionDate);
   if (age < 0 || age > 130) throw new AppError(400, 'The medicine recipient date of birth is invalid for the prescription date.');
-  const unsuitable = products.filter((product) => (product.minimumAgeYears != null && age < product.minimumAgeYears) || (product.maximumAgeYears != null && age > product.maximumAgeYears));
+  const unsuitable = findAgeUnsuitable(products, age);
   if (unsuitable.length) throw new AppError(400, `${unsuitable.map((product) => product.genericName).join(', ')} ${unsuitable.length === 1 ? 'is' : 'are'} outside the configured age range for this medicine recipient (${age} years). Review the medicine or update its verified age guidance.`);
 };
 
@@ -287,11 +279,12 @@ export const prescriptionService = {
           await tx.dispensingItem.create({ data: {
             dispensingId: dispensing.id, prescriptionItemId: item.id, batchId: batch.id,
             quantity, unitPrice: paidRequest?.items.find((paidItem) => paidItem.prescriptionItemId === item.id)?.unitPrice || item.product.sellingPrice,
+            unitCost: batch.purchasePrice,
           } });
           const unitPrice = paidRequest?.items.find((paidItem) => paidItem.prescriptionItemId === item.id)?.unitPrice || item.product.sellingPrice;
           const lineTotal = unitPrice.mul(quantity);
           subtotal = subtotal.add(lineTotal);
-          allocations.push({ productId: item.productId, categoryId: item.product.categoryId, batchId: batch.id, quantity, unitPrice, lineTotal });
+          allocations.push({ productId: item.productId, categoryId: item.product.categoryId, batchId: batch.id, quantity, unitPrice, unitCost: batch.purchasePrice, lineTotal });
           left = left.sub(quantity);
         }
         await tx.prescriptionItem.update({ where: { id: item.id }, data: { dispensedQuantity: { increment: requestedQuantity } } });
@@ -323,7 +316,7 @@ export const prescriptionService = {
           subtotal = subtotal.add(lineTotal);
           allocations.push({
             productId: requested.productId, categoryId: requested.product.categoryId, batchId: batch.id,
-            quantity, unitPrice: requested.unitPrice, lineTotal,
+            quantity, unitPrice: requested.unitPrice, unitCost: batch.purchasePrice, lineTotal,
           });
           left = left.sub(quantity);
         }

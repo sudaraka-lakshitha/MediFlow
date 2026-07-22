@@ -15,7 +15,7 @@ type Manufacturer = { id: number; name: string; country?: string; website?: stri
 type Product = { id: number; sku: string; productType: 'MEDICINE' | 'NON_MEDICINAL'; genericName: string; brandName?: string; activeIngredient?: string; strength: string; dosageForm: string; unit: string; variantGroup?: string; barcode?: string; manufacturerId?: number; manufacturer?: Manufacturer; manufacturerName?: string; storageInstructions?: string; minimumAgeYears?: number | null; maximumAgeYears?: number | null; sellingPrice: string; reorderLevel: number; prescriptionRequired: boolean; active: boolean; categoryId: number; category: Category; rxNormCui?: string; pubchemCid?: number; smiles?: string; batches: { quantityAvailable: number }[] };
 type Tab = 'products' | 'categories' | 'suppliers' | 'manufacturers';
 
-const productEmpty = { sku: '', productType: 'MEDICINE', genericName: '', brandName: '', activeIngredient: '', strength: '', dosageForm: 'Tablet', unit: 'tablet', manufacturerId: 0, storageInstructions: 'Store below 25°C in a dry place.', minimumAgeYears: '', maximumAgeYears: '', sellingPrice: 0, reorderLevel: 10, prescriptionRequired: true, categoryId: 0 };
+const productEmpty = { sku: '', barcode: '', productType: 'MEDICINE', genericName: '', brandName: '', activeIngredient: '', strength: '', dosageForm: 'Tablet', unit: 'tablet', manufacturerId: 0, storageInstructions: 'Store below 25°C in a dry place.', minimumAgeYears: '', maximumAgeYears: '', sellingPrice: 0, reorderLevel: 10, prescriptionRequired: true, categoryId: 0 };
 const categoryEmpty = { name: '', description: '' };
 const supplierEmpty = { name: '', contactPerson: '', phone: '', email: '', address: '' };
 const manufacturerEmpty = { name: '', country: '', website: '', phone: '', email: '' };
@@ -63,7 +63,7 @@ export function CatalogPage() {
   const open = (kind: 'product' | 'category' | 'supplier' | 'manufacturer', record?: any) => {
     if (kind === 'product') {
       setSkuModified(record ? true : false);
-      setProductForm(record ? { sku: record.sku, productType: record.productType || 'MEDICINE', genericName: record.genericName, brandName: record.brandName || '', activeIngredient: record.activeIngredient || record.genericName, strength: record.strength, dosageForm: record.dosageForm, unit: record.unit, manufacturerId: record.manufacturerId || 0, storageInstructions: record.storageInstructions || '', sellingPrice: Number(record.sellingPrice), reorderLevel: record.reorderLevel, prescriptionRequired: record.prescriptionRequired, categoryId: record.categoryId } : { ...productEmpty });
+      setProductForm(record ? { sku: record.sku, barcode: record.barcode || '', productType: record.productType || 'MEDICINE', genericName: record.genericName, brandName: record.brandName || '', activeIngredient: record.activeIngredient || record.genericName, strength: record.strength, dosageForm: record.dosageForm, unit: record.unit, manufacturerId: record.manufacturerId || 0, storageInstructions: record.storageInstructions || '', sellingPrice: Number(record.sellingPrice), reorderLevel: record.reorderLevel, prescriptionRequired: record.prescriptionRequired, categoryId: record.categoryId } : { ...productEmpty });
       if (record) setProductForm((current: any) => ({ ...current, minimumAgeYears: record.minimumAgeYears ?? '', maximumAgeYears: record.maximumAgeYears ?? '' }));
     }
     if (kind === 'category') setCategoryForm(record ? { name: record.name, description: record.description || '' } : { ...categoryEmpty });
@@ -104,6 +104,12 @@ export function CatalogPage() {
           )}
           {productForm.sku && products.some(p => p.sku.toUpperCase() === productForm.sku.trim().toUpperCase() && p.id !== modal?.record?.id) && (
             <div className="text-danger small mt-1">⚠️ Warning: SKU is already in use by another product.</div>
+          )}
+        </div>
+        <div>
+          <TextField label="Barcode (optional)" tooltip="The manufacturer's scannable barcode (e.g. EAN-13/UPC), if this item has one printed on its packaging." value={productForm.barcode} onChange={(barcode) => setProductForm({ ...productForm, barcode })} />
+          {productForm.barcode && products.some(p => p.barcode && p.barcode === productForm.barcode.trim() && p.id !== modal?.record?.id) && (
+            <div className="text-danger small mt-1">⚠️ Warning: Barcode is already in use by another product.</div>
           )}
         </div>
         <div>
