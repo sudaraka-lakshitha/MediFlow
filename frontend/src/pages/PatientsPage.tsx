@@ -500,7 +500,7 @@ export function PatientsPage() {
                       <ul className="list-unstyled mb-0 small">
                         {rx.items?.map((item: any) => (
                           <li key={item.id}>
-                            • {item.product.genericName} {item.product.strength} ({item.quantity} {item.product.unit})
+                            • {item.product.genericName} {item.product.strength} ({item.prescribedQuantity} {item.product.unit})
                           </li>
                         ))}
                       </ul>

@@ -97,4 +97,9 @@ export const patientService = {
     });
     return profile;
   },
+  async healthRecordForUser(userId) {
+    const profile = await prisma.patientProfile.findUnique({ where: { userId }, select: { id: true } });
+    if (!profile) throw new AppError(404, 'Patient profile not found.');
+    return this.healthRecord(profile.id);
+  },
 };

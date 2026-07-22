@@ -40,6 +40,11 @@ const StockMovementsPage = lazy(() =>
     default: module.StockMovementsPage,
   })),
 );
+const PatientHealthRecordPage = lazy(() =>
+  import("./pages/PatientHealthRecordPage").then((module) => ({
+    default: module.PatientHealthRecordPage,
+  })),
+);
 const PrescriptionsPage = lazy(() =>
   import("./pages/PrescriptionsPage").then((module) => ({
     default: module.PrescriptionsPage,
@@ -141,6 +146,10 @@ export default function App() {
             >
               <Route element={<Layout />}>
                 <Route path="profile" element={<PatientProfilePage />} />
+                <Route
+                  path="health-record"
+                  element={<PatientHealthRecordPage />}
+                />
               </Route>
             </Route>
             <Route

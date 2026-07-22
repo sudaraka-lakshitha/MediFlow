@@ -11,6 +11,7 @@ import { activeSchema } from '../validators/common.validator.js';
 export const patientRoutes=Router();
 patientRoutes.use(authenticate);
 patientRoutes.get('/my-notices',authorize('PATIENT'),asyncHandler(patientController.myNotices));
+patientRoutes.get('/me/health-record',authorize('PATIENT'),asyncHandler(patientController.myHealthRecord));
 patientRoutes.use(authorize('ADMIN','PHARMACIST'));
 patientRoutes.get('/',validate({query:searchQuery}),asyncHandler(patientController.list));
 patientRoutes.get('/:id/health-record',validate({params:idParams}),asyncHandler(patientController.healthRecord));
