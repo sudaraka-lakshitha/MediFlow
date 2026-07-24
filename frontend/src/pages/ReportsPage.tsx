@@ -38,6 +38,7 @@ export function ReportsPage() {
   const [customName, setCustomName] = useState('Profitability report');
   const [customReport, setCustomReport] = useState<CustomReport | null>(null);
   const [customLoading, setCustomLoading] = useState(false);
+  const [monthlyMonth, setMonthlyMonth] = useState(today.slice(0, 7));
 
   const load = useCallback(async () => {
     if (!from || !to || from > to) { setError('The start date must be before or equal to the end date.'); return; }
@@ -72,11 +73,11 @@ export function ReportsPage() {
   const download = async (type: 'period' | 'monthly', format: 'csv' | 'pdf') => {
     try {
       const key = `${type}-${format}`; setExporting(key); setError('');
-      const query = type === 'period' ? `from=${from}&to=${to}` : `month=${from.slice(0, 7)}`;
+      const query = type === 'period' ? `from=${from}&to=${to}` : `month=${monthlyMonth}`;
       const response = await api.get(`/reports/${type}.${format}?${query}`, { responseType: 'blob' });
       const url = URL.createObjectURL(response.data);
       const link = document.createElement('a'); link.href = url;
-      link.download = type === 'period' ? `mediflow-${from}-to-${to}.${format}` : `mediflow-stock-${from.slice(0, 7)}.${format}`;
+      link.download = type === 'period' ? `mediflow-${from}-to-${to}.${format}` : `mediflow-stock-${monthlyMonth}.${format}`;
       document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
     } catch (e) { setError(errorMessage(e)); } finally { setExporting(''); }
   };
@@ -165,7 +166,7 @@ export function ReportsPage() {
         </div></div>
       </div>
 
-      <div className="panel mt-4 mb-0"><div className="panel-header"><div><h3>Monthly stock movement report</h3><small className="text-secondary">Opening, received, dispensed, adjusted and closing stock values for the month containing the start date.</small></div><div className="d-flex gap-2"><button className="btn btn-sm btn-outline-primary" disabled={!!exporting} onClick={() => download('monthly', 'csv')}>CSV</button><button className="btn btn-sm btn-primary" disabled={!!exporting} onClick={() => download('monthly', 'pdf')}>PDF</button></div></div><span className="badge text-bg-light">Month: {from.slice(0, 7)}</span></div>
+      <div className="panel mt-4 mb-0"><div className="panel-header"><div><h3>Monthly stock movement report</h3><small className="text-secondary">Opening, received, dispensed, adjusted and closing stock values for the selected month.</small></div><div className="d-flex align-items-center gap-2"><input type="month" className="form-control form-control-sm" style={{ width: 'auto' }} value={monthlyMonth} max={today.slice(0, 7)} onChange={(event) => setMonthlyMonth(event.target.value)} /><button className="btn btn-sm btn-outline-primary" disabled={!!exporting} onClick={() => download('monthly', 'csv')}>CSV</button><button className="btn btn-sm btn-primary" disabled={!!exporting} onClick={() => download('monthly', 'pdf')}>PDF</button></div></div><span className="badge text-bg-light">Month: {monthlyMonth}</span></div>
     </>}
   </>;
 }
