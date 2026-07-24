@@ -187,10 +187,10 @@ The repository includes the DDInter curated dataset for academic use. Run these 
 
 ```powershell
 # Import curated DDInter interaction pairs
-npm --prefix backend run ddi:import
+node backend/scripts/import-ddinter.js
 
 # Train the experimental prediction model
-npm --prefix backend run ddi:train
+node backend/ml/train.mjs
 ```
 
 > **Notes:**
@@ -203,7 +203,19 @@ npm --prefix backend run ddi:train
 
 ## 8. Start the development servers
 
-You need **two separate PowerShell windows** running simultaneously.
+### Option A — one-click launcher (recommended)
+
+Double-click **`start-mediflow.bat`** in the project root (or run it from a terminal). It will:
+
+1. Check that Node.js, npm, and XAMPP MySQL are installed.
+2. Start XAMPP MySQL if it isn't already running.
+3. Start the API in its own window.
+4. Start the frontend in its own window.
+5. Open the app in your browser.
+
+Each service is skipped automatically if it's already running, so it's safe to re-run at any time. Pass `--no-browser` to skip the automatic browser launch.
+
+### Option B — manual (two separate PowerShell windows)
 
 **Window 1 — API server:**
 
@@ -371,17 +383,22 @@ MediFlow/
 
 ## Implemented workflows
 
-- Patient self-registration and staff-created accounts
+- Patient self-registration and staff-created accounts, with a self-service health record portal (profile, allergies/conditions, full prescription and dispensing history)
 - JWT authentication with bcrypt password hashing and revocable sessions
-- Role-based access: Admin, Pharmacist, Cashier, Patient
+- Role-based access: Admin, Pharmacist, Cashier, Patient (plus optional cashier-desk access for pharmacists)
 - Drug research using RxNorm, PubChem, and openFDA public labels
-- Prescription recording, verification, rejection, and dispensing
-- Batch inventory receipts, expiry tracking, adjustments, and stock ledger
+- Online prescription submission (image, PDF, and/or typed text together) for self or a third-party recipient, with age-based suitability checks
+- "Estimate only" vs "process now" upload flows, with a patient-facing accept-estimate action
+- Prescription recording, verification, rejection, editing, and dispensing
+- Cashier bill editing while awaiting payment, and same-day (or admin any-time) revoke of a paid bill with a mandatory reason
+- Stock reservation at payment time — paid items are held against a bill until dispensed or released on cancellation, preventing overselling
+- Batch inventory receipts, expiry tracking, adjustments, and a dedicated stock-movement audit view
 - Cashier payment handoff with pickup PIN confirmation
+- Retail (non-prescription) sales through both the pharmacist counter and the cashier queue, with sale voiding
 - Automatic discount rules (coupon, category, order-level)
 - Bottle/container fee tracking through invoices and receipts
-- CSV/PDF reports with sales trends, top medicines, and pharmacist activity
-- Audit logs with drill-down, CSV export, and request ID tracing
+- CSV/PDF reports with sales trends, top medicines, and pharmacist activity; report and receipt PDFs visually reflect the record's actual status (paid/voided/cancelled/etc.)
+- Audit logs with drill-down, CSV export, configurable retention/trash, and request ID tracing
 - Bulk product create/update via CSV or Excel upload
 
 ---
