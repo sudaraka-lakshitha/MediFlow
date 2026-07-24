@@ -1345,7 +1345,7 @@ export function PrescriptionsPage() {
           );
           return (
             <div className="border rounded-3 p-3 mb-3" key={rx.id}>
-              <div className="d-flex justify-content-between align-items-start gap-2">
+              <div className="prescription-card-header">
                 <div>
                   <strong>{rx.prescriptionNumber}</strong>
                   {rx.originalPrescriptionId && (
@@ -1520,7 +1520,7 @@ export function PrescriptionsPage() {
                     </div>
                   </div>
                 </div>
-                <div className="d-flex align-items-center gap-2">
+                <div className="d-flex flex-wrap align-items-center gap-2 prescription-card-status">
                   <small className="text-secondary">Prescription:</small>
                   <Status value={rx.status} />
                   {!staff && !["DISPENSED", "REJECTED"].includes(rx.status) && (
