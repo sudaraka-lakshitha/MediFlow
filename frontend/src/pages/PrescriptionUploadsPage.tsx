@@ -170,6 +170,7 @@ export function PrescriptionUploadsPage() {
   }, [load, admin, patient]);
   const saveRetention = async () => {
     setBusy(true);
+    setError("");
     try {
       await api.put("/prescription-uploads/retention", { days: retentionDays });
     } catch (caught) {
@@ -222,6 +223,7 @@ export function PrescriptionUploadsPage() {
       .filter(Boolean)
       .join("\n\n");
     setBusy(true);
+    setError("");
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -275,6 +277,7 @@ export function PrescriptionUploadsPage() {
     setReview(null);
   };
   const openReview = async (item: Upload) => {
+    setError("");
     setReview(item);
     setReviewForm({
       status: item.status === "PENDING" ? "AVAILABLE" : item.status,
@@ -450,6 +453,7 @@ export function PrescriptionUploadsPage() {
     event.preventDefault();
     if (!review) return;
     setBusy(true);
+    setError("");
     try {
       await api.put(`/prescription-uploads/${review.id}/review`, {
         ...reviewForm,
@@ -473,6 +477,7 @@ export function PrescriptionUploadsPage() {
       return;
     }
     setBusy(true);
+    setError("");
     try {
       await api.put(`/prescription-uploads/${review.id}/review`, {
         status: "REJECTED",
@@ -507,6 +512,7 @@ export function PrescriptionUploadsPage() {
           <button
             className="btn btn-primary"
             onClick={() => {
+              setError("");
               setUploadForm({
                 file: null,
                 prescriptionText: "",
@@ -794,6 +800,7 @@ export function PrescriptionUploadsPage() {
                 </span>
               </label>
             </fieldset>
+            <Alert message={error} />
             <ModalActions
               onClose={() => setUploadOpen(false)}
               submitLabel="Upload prescription"
@@ -1439,6 +1446,7 @@ export function PrescriptionUploadsPage() {
                   customer before creating a prepared order.
                 </div>
               )}
+              <Alert message={error} />
               <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3">
                 <button type="button" className="btn btn-outline-danger" disabled={busy} onClick={rejectUpload}>
                   <i className="bi bi-x-octagon me-2" />Reject upload

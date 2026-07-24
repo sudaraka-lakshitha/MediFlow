@@ -59,11 +59,13 @@ export function UsersPage() {
     return () => clearTimeout(timer);
   }, [load]);
   const openCreate = () => {
+    setError("");
     setSelected(null);
     setForm({ ...empty });
     setModal("create");
   };
   const openEdit = (row: UserRow) => {
+    setError("");
     setSelected(row);
     setForm({
       fullName: row.fullName,
@@ -76,6 +78,7 @@ export function UsersPage() {
     setModal("edit");
   };
   const openReset = (row: UserRow) => {
+    setError("");
     setSelected(row);
     setForm({ ...empty, password: "" });
     setModal("reset");
@@ -120,6 +123,7 @@ export function UsersPage() {
   const remove = async () => {
     if (!confirm) return;
     setBusy(true);
+    setError("");
     try {
       await api.delete(`/users/${confirm.id}`);
       setConfirm(null);
@@ -378,6 +382,7 @@ export function UsersPage() {
                 </div>
               )}
             </div>
+            <Alert message={error} />
             <ModalActions
               onClose={() => setModal(null)}
               submitLabel={
@@ -405,6 +410,7 @@ export function UsersPage() {
               sessions will be revoked and this temporary password must be changed
               at the next sign-in.
             </small>
+            <Alert message={error} />
             <ModalActions
               onClose={() => setModal(null)}
               submitLabel="Reset password"

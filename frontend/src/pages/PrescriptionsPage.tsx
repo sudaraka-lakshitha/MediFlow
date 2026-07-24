@@ -548,6 +548,7 @@ export function PrescriptionsPage() {
   }, [action?.type, action?.rx.id, dispense]);
 
   const openEditor = (rx?: Rx) => {
+    setError("");
     if (rx)
       setForm({
         patientId: rx.patient.id,
@@ -787,10 +788,12 @@ export function PrescriptionsPage() {
     event.preventDefault();
     if (!editor) return;
     setBusy(true);
+    setError("");
     try {
       if (editor.mode === "create") {
         const response = await api.post("/prescriptions", payload());
         closeEditor();
+        setError("");
         setReverify(response.data.data);
       } else {
         await api.put(`/prescriptions/${editor.rx!.id}`, payload());
@@ -807,6 +810,7 @@ export function PrescriptionsPage() {
     event.preventDefault();
     if (!reverify) return;
     setBusy(true);
+    setError("");
     try {
       await api.post(`/prescriptions/${reverify.id}/verify`);
       setReverify(null);
@@ -818,6 +822,7 @@ export function PrescriptionsPage() {
     }
   };
   const openCollectionModal = (rx: Rx) => {
+    setError("");
     setCollectionModal(rx);
     setCollectionForm({
       plannedPickupAt: rx.plannedPickupAt ? localDateTime(rx.plannedPickupAt) : "",
@@ -828,6 +833,7 @@ export function PrescriptionsPage() {
     event.preventDefault();
     if (!collectionModal) return;
     setBusy(true);
+    setError("");
     try {
       await api.patch(`/prescriptions/${collectionModal.id}/pickup-details`, {
         pickupNote: collectionForm.pickupNote,
@@ -856,6 +862,7 @@ export function PrescriptionsPage() {
     setReason("");
     setQuote(null);
     setQuoteError("");
+    setError("");
     if (sourceFileUrl) URL.revokeObjectURL(sourceFileUrl);
     setSourceFileUrl("");
     setSourceFileText("");
@@ -951,6 +958,7 @@ export function PrescriptionsPage() {
     event.preventDefault();
     if (!action) return;
     setBusy(true);
+    setError("");
     try {
       if (action.type === "reject") {
         await api.post(`/prescriptions/${action.rx.id}/reject`, { reason });
@@ -1142,6 +1150,7 @@ export function PrescriptionsPage() {
   const sendToCashier = async () => {
     if (!action || action.type !== "dispense") return;
     setBusy(true);
+    setError("");
     try {
       await api.post(`/prescriptions/${action.rx.id}/payment-request`, {
         items: dispense.items.map((item: any) => ({
@@ -1168,6 +1177,7 @@ export function PrescriptionsPage() {
   const updateCashierBill = async () => {
     if (!action || action.type !== "dispense") return;
     setBusy(true);
+    setError("");
     try {
       await api.put(`/prescriptions/${action.rx.id}/payment-request`, {
         items: dispense.items.map((item: any) => ({
@@ -1194,6 +1204,7 @@ export function PrescriptionsPage() {
   const remove = async () => {
     if (!confirm) return;
     setBusy(true);
+    setError("");
     try {
       await api.delete(`/prescriptions/${confirm.id}`);
       setConfirm(null);
@@ -1207,6 +1218,7 @@ export function PrescriptionsPage() {
   const createPatient = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
+    setError("");
     try {
       const response = await api.post("/patients", {
         ...patientForm,
@@ -1381,7 +1393,8 @@ export function PrescriptionsPage() {
                         </span>
                       )}
                       {rx.paymentRequest && (
-                        <span className="ms-2">
+                        <span className="ms-2 d-inline-flex align-items-center gap-1">
+                          <small className="text-secondary">Billing:</small>
                           <Status value={rx.paymentRequest.status} />
                         </span>
                       )}
@@ -1508,6 +1521,7 @@ export function PrescriptionsPage() {
                   </div>
                 </div>
                 <div className="d-flex align-items-center gap-2">
+                  <small className="text-secondary">Prescription:</small>
                   <Status value={rx.status} />
                   {!staff && !["DISPENSED", "REJECTED"].includes(rx.status) && (
                     <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => openCollectionModal(rx)}>
@@ -1545,14 +1559,18 @@ export function PrescriptionsPage() {
                               ? "Awaiting cashier payment"
                               : rx.paymentRequest.status === "PAID"
                                 ? "Verify PIN and dispense"
-                                : "Dispensed",
+                                : rx.paymentRequest.status === "CANCELLED"
+                                  ? "Bill cancelled — resend to cashier"
+                                  : "Dispensed",
                           icon: !rx.paymentRequest
                             ? "send"
                             : rx.paymentRequest.status === "AWAITING_PAYMENT"
                               ? "hourglass-split"
                               : rx.paymentRequest.status === "PAID"
                                 ? "shield-check"
-                                : "bag-check",
+                                : rx.paymentRequest.status === "CANCELLED"
+                                  ? "arrow-repeat"
+                                  : "bag-check",
                           onClick: () => openAction("dispense", rx),
                           disabled:
                             !["VERIFIED", "PARTIALLY_DISPENSED"].includes(
@@ -2530,6 +2548,7 @@ export function PrescriptionsPage() {
                   </div>
                 )}
               </section>
+              <Alert message={error} />
               <ModalActions
                 onClose={closeEditor}
                 submitLabel={
@@ -2572,6 +2591,7 @@ export function PrescriptionsPage() {
                 </li>
               ))}
             </ul>
+            <Alert message={error} />
             <ModalActions
               onClose={() => setReverify(null)}
               submitLabel="Confirm & verify"
@@ -2595,6 +2615,7 @@ export function PrescriptionsPage() {
               onChange={(event) => setReason(event.target.value)}
               required
             />
+            <Alert message={error} />
             <ModalActions
               onClose={() => setAction(null)}
               submitLabel="Reject prescription"
@@ -3118,8 +3139,27 @@ export function PrescriptionsPage() {
                   </div>
                 </div>
               )}
+              <Alert message={error} />
+              {action.rx.paymentRequest?.status === "CANCELLED" && (
+                <div className="alert alert-danger mt-3">
+                  <strong>This bill was cancelled.</strong>
+                  <small className="d-block">
+                    {action.rx.paymentRequest.requestNumber}
+                    {action.rx.paymentRequest.cancellationReason
+                      ? ` · Reason: ${action.rx.paymentRequest.cancellationReason}`
+                      : ""}
+                  </small>
+                  <small className="d-block">
+                    The prescription itself is still verified. Sending it to
+                    the cashier again starts a new billing cycle with a new
+                    request number and PIN.
+                  </small>
+                </div>
+              )}
               {(!action.rx.paymentRequest ||
-                action.rx.paymentRequest.status === "AWAITING_PAYMENT") && (
+                ["AWAITING_PAYMENT", "CANCELLED"].includes(
+                  action.rx.paymentRequest.status,
+                )) && (
                 <div className="d-flex justify-content-end gap-2 mt-4">
                   <button
                     type="button"
@@ -3133,15 +3173,17 @@ export function PrescriptionsPage() {
                     className="btn btn-primary"
                     disabled={busy || quoteBusy || !quote || !!quoteError}
                     onClick={
-                      action.rx.paymentRequest
+                      action.rx.paymentRequest?.status === "AWAITING_PAYMENT"
                         ? updateCashierBill
                         : sendToCashier
                     }
                   >
                     <i className="bi bi-send me-2" />
-                    {action.rx.paymentRequest
+                    {action.rx.paymentRequest?.status === "AWAITING_PAYMENT"
                       ? "Update bill sent to cashier"
-                      : "Send combined invoice to cashier"}
+                      : action.rx.paymentRequest?.status === "CANCELLED"
+                        ? "Resend to cashier"
+                        : "Send combined invoice to cashier"}
                   </button>
                 </div>
               )}
@@ -3357,6 +3399,7 @@ export function PrescriptionsPage() {
                 />
               </div>
             </div>
+            <Alert message={error} />
             <ModalActions
               onClose={() => setPatientModal(false)}
               submitLabel="Create and select patient"
@@ -3459,6 +3502,7 @@ export function PrescriptionsPage() {
                 rows={3}
               />
             </div>
+            <Alert message={error} />
             <ModalActions
               onClose={() => setCollectionModal(null)}
               submitLabel="Save Collection Details"

@@ -154,6 +154,7 @@ export function CashierPage() {
     }
   };
   const openRetail = async () => {
+    setError("");
     try {
       const response = await api.get("/cashier/retail-options");
       setRetailOptions(response.data.data);
@@ -353,9 +354,10 @@ export function CashierPage() {
                       {row.status === "AWAITING_PAYMENT" && (
                         <button
                           className="btn btn-sm btn-primary"
-                          onClick={() =>
-                            setPayment({ ...row, paymentMethod: "CASH", paymentReference: "" })
-                          }
+                          onClick={() => {
+                            setError("");
+                            setPayment({ ...row, paymentMethod: "CASH", paymentReference: "" });
+                          }}
                         >
                           Receive payment
                         </button>
@@ -376,7 +378,10 @@ export function CashierPage() {
                             new Date().toDateString()) && (
                           <button
                             className="btn btn-sm btn-outline-danger"
-                            onClick={() => setRevoke({ ...row, reason: "" })}
+                            onClick={() => {
+                              setError("");
+                              setRevoke({ ...row, reason: "" });
+                            }}
                           >
                             <i className="bi bi-x-circle me-1" />
                             Revoke
@@ -469,6 +474,7 @@ export function CashierPage() {
                 <input className="form-control" value={payment.paymentReference || ""} onChange={(event) => setPayment({ ...payment, paymentReference: event.target.value })} maxLength={120} placeholder="Transaction or bank reference" />
               </div>
             )}
+            <Alert message={error} />
             <ModalActions
               onClose={() => setPayment(null)}
               submitLabel={`Confirm ${money(payment.total)}`}
@@ -505,6 +511,7 @@ export function CashierPage() {
               placeholder="e.g. Wrong items billed, customer changed their mind, entered by mistake…"
               required
             />
+            <Alert message={error} />
             <ModalActions
               onClose={() => setRevoke(null)}
               submitLabel="Revoke bill"
@@ -695,6 +702,7 @@ export function CashierPage() {
                 </small>
               </div>
             </div>
+            <Alert message={error} />
             <ModalActions
               onClose={() => setRetail(null)}
               submitLabel="Complete sale and print receipt"

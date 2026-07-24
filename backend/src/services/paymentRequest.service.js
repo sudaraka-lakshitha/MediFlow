@@ -52,6 +52,30 @@ export const paymentRequestService = {
     const incomplete = prescription.items.some((item) => Number(item.prescribedQuantity.sub(item.dispensedQuantity)) !== Number(quantities.get(item.id) || 0));
     if (incomplete) throw new AppError(409, 'Every remaining prescribed item must be included in the cashier request.');
     const quote = await prescriptionService.quoteDispensing(prescriptionId, { ...input, amountPaid: 0, paymentMethod: 'CASH' });
+    // A prescription can only ever have one PaymentRequest row (prescriptionId is unique), so a bill that was
+    // cancelled and needs to be sent to the cashier again reuses that same row as a fresh billing cycle instead
+    // of inserting a second one. The original cancellation stays on record in the audit log.
+    if (prescription.paymentRequest) {
+      return withUniqueRetry(() => prisma.$transaction(async (tx) => {
+        await tx.paymentRequestItem.deleteMany({ where: { paymentRequestId: prescription.paymentRequest.id } });
+        await tx.paymentRequest.update({
+          where: { id: prescription.paymentRequest.id },
+          data: {
+            requestNumber: `PAY-${Date.now()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`,
+            status: 'AWAITING_PAYMENT', pharmacistId,
+            subtotal: quote.subtotal, discount: quote.discount, containerFee: quote.containerFee, tax: quote.tax, total: quote.total,
+            couponCode: input.couponCode || null,
+            cashierId: null, amountPaid: 0, paymentMethod: null, paymentReference: null, paidAt: null,
+            pickupPinHash: null, pickupPinEncrypted: null, pinAttempts: 0, pinVerifiedAt: null,
+            cancellationReason: null, cancelledById: null, cancelledAt: null,
+          },
+        });
+        await tx.paymentRequestItem.createMany({
+          data: quote.lines.map((line) => ({ paymentRequestId: prescription.paymentRequest.id, prescriptionItemId: line.prescriptionItemId, productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice, lineTotal: line.lineTotal })),
+        });
+        return tx.paymentRequest.findUnique({ where: { id: prescription.paymentRequest.id }, include });
+      }));
+    }
     return withUniqueRetry(() => prisma.paymentRequest.create({
       data: {
         requestNumber: `PAY-${Date.now()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`,
