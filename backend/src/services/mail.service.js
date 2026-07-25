@@ -13,6 +13,7 @@ const transporter = configured ? nodemailer.createTransport({
   connectionTimeout: 10_000,
   greetingTimeout: 10_000,
   socketTimeout: 10_000,
+  family: 4,
 }) : null;
 
 const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (character) => ({
