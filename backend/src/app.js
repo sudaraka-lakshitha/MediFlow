@@ -31,7 +31,7 @@ const frontendDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 if (existsSync(frontendDist)) {
   app.use(express.static(frontendDist));
   app.use((req, res, next) => {
-    if (req.method === 'GET' && req.accepts('html')) return res.sendFile(path.join(frontendDist, 'index.html'));
+    if ((req.method === 'GET' || req.method === 'HEAD') && req.accepts('html')) return res.sendFile(path.join(frontendDist, 'index.html'));
     return next();
   });
 }
