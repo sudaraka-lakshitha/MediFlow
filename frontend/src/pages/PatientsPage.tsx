@@ -85,11 +85,13 @@ export function PatientsPage() {
     load();
   }, [load]);
   const openCreate = () => {
+    setError("");
     setSelected(null);
     setForm({ ...empty });
     setModal("create");
   };
   const openEdit = (p: Patient) => {
+    setError("");
     setSelected(p);
     setForm({
       fullName: p.user.fullName,
@@ -103,6 +105,7 @@ export function PatientsPage() {
     setModal("edit");
   };
   const openReset = (p: Patient) => {
+    setError("");
     setSelected(p);
     setForm({ ...empty });
     setModal("reset");
@@ -111,6 +114,7 @@ export function PatientsPage() {
     event.preventDefault();
     if (!selected) return;
     setBusy(true);
+    setError("");
     try {
       await api.post(`/patients/${selected.id}/notices`, noticeForm);
       setModal(null);
@@ -124,6 +128,7 @@ export function PatientsPage() {
   const save = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
+    setError("");
     try {
       let response: any = null;
       if (modal === "create")
@@ -256,7 +261,7 @@ export function PatientsPage() {
                         {
                           label: "Send notice",
                           icon: "bell",
-                          onClick: () => { setSelected(p); setNoticeForm({ title: "", message: "" }); setModal("notice"); },
+                          onClick: () => { setError(""); setSelected(p); setNoticeForm({ title: "", message: "" }); setModal("notice"); },
                         },
                         {
                           label: "Reset password",
@@ -353,6 +358,7 @@ export function PatientsPage() {
                 </div>
               )}
             </div>
+            <Alert message={error} />
             <ModalActions
               onClose={() => setModal(null)}
               submitLabel={
@@ -370,6 +376,7 @@ export function PatientsPage() {
             <input className="form-control mb-3" value={noticeForm.title} onChange={(event) => setNoticeForm({ ...noticeForm, title: event.target.value })} maxLength={150} required />
             <label className="form-label">Message</label>
             <textarea className="form-control" value={noticeForm.message} onChange={(event) => setNoticeForm({ ...noticeForm, message: event.target.value })} rows={5} maxLength={1000} required />
+            <Alert message={error} />
             <ModalActions onClose={() => setModal(null)} submitLabel="Send notice" busy={busy} />
           </form>
         </Modal>
@@ -389,6 +396,7 @@ export function PatientsPage() {
             <small className="text-secondary d-block mt-2">
               Leave blank to generate one automatically.
             </small>
+            <Alert message={error} />
             <ModalActions
               onClose={() => setModal(null)}
               submitLabel="Reset password"

@@ -6,6 +6,7 @@ import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
 import { userRepository } from '../repositories/user.repository.js';
 import { mailService } from './mail.service.js';
+import { logger } from '../config/logger.js';
 
 const safeUser = (user) => ({
   id: user.id,
@@ -99,7 +100,8 @@ export const authService = {
       await mailService.sendPasswordResetOtp({ email: user.email, fullName: user.fullName, otp, expiresInMinutes: env.PASSWORD_RESET_OTP_MINUTES });
     } catch (error) {
       await prisma.passwordResetOtp.deleteMany({ where: { userId: user.id, codeHash } });
-      throw error;
+      logger.error('Password reset email failed to send.', { error, smtpHost: env.SMTP_HOST, smtpPort: env.SMTP_PORT, smtpUser: env.SMTP_USER });
+      throw new AppError(502, 'Could not send the password reset email right now. Please try again shortly or contact the pharmacy.');
     }
     return response;
   },

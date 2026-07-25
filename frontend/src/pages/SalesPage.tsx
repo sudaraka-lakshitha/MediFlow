@@ -127,6 +127,7 @@ export function SalesPage() {
   const savePayment = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
+    setError("");
     try {
       await api.post(`/sales/${payment.id}/pay`, {
         amount: Number(payment.amount),
@@ -264,7 +265,10 @@ export function SalesPage() {
         {staff && (
           <button
             className="btn btn-primary"
-            onClick={() => setRetail(emptyRetail())}
+            onClick={() => {
+              setError("");
+              setRetail(emptyRetail());
+            }}
           >
             <i className="bi bi-cart-plus me-2" />
             {canDirectRetail
@@ -335,9 +339,10 @@ export function SalesPage() {
                           <>
                             <button
                               className="btn btn-sm btn-primary"
-                              onClick={() =>
-                                setHandover({ ...request, pickupPin: "" })
-                              }
+                              onClick={() => {
+                                setError("");
+                                setHandover({ ...request, pickupPin: "" });
+                              }}
                             >
                               <i className="bi bi-shield-check me-1" />
                               Verify PIN and hand over
@@ -455,7 +460,8 @@ export function SalesPage() {
                       {staff && row.status === "PENDING" && (
                         <button
                           className="btn btn-sm btn-outline-primary"
-                          onClick={() =>
+                          onClick={() => {
+                            setError("");
                             setPayment({
                               id: row.id,
                               invoiceNumber: row.invoiceNumber,
@@ -464,8 +470,8 @@ export function SalesPage() {
                               amount:
                                 Number(row.total) - Number(row.amountPaid),
                               paymentMethod: "CASH",
-                            })
-                          }
+                            });
+                          }}
                         >
                           Record payment
                         </button>
@@ -478,9 +484,10 @@ export function SalesPage() {
                             new Date().toDateString()) && (
                           <button
                             className="btn btn-sm btn-outline-danger"
-                            onClick={() =>
-                              setVoidTarget({ ...row, reason: "" })
-                            }
+                            onClick={() => {
+                              setError("");
+                              setVoidTarget({ ...row, reason: "" });
+                            }}
                             title="Void this sale"
                             aria-label={`Void invoice ${row.invoiceNumber}`}
                           >
@@ -690,6 +697,7 @@ export function SalesPage() {
                 </small>
               </div>
             </div>
+            <Alert message={error} />
             <ModalActions
               onClose={() => setRetail(null)}
               submitLabel={
@@ -736,6 +744,7 @@ export function SalesPage() {
               required
               autoFocus
             />
+            <Alert message={error} />
             <ModalActions
               onClose={() => setHandover(null)}
               submitLabel="Verify PIN and hand over goods"
@@ -779,6 +788,7 @@ export function SalesPage() {
               <option>CARD</option>
               <option>OTHER</option>
             </select>
+            <Alert message={error} />
             <ModalActions
               onClose={() => setPayment(null)}
               submitLabel="Record payment"
@@ -814,6 +824,7 @@ export function SalesPage() {
               placeholder="e.g. Wrong item rung up, customer returned goods…"
               required
             />
+            <Alert message={error} />
             <ModalActions
               onClose={() => setVoidTarget(null)}
               submitLabel="Void sale"
