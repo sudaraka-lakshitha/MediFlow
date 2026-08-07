@@ -214,7 +214,9 @@ export const paymentRequestService = {
   async documentData(id, user, requirePaid = false) {
     const record = await this.get(id, user);
     if (requirePaid && !['PAID', 'FULFILLED'].includes(record.status)) throw new AppError(409, 'Payment must be completed before the receipt is available.');
-    return { ...record, pickupPin: requirePaid ? decryptPickupPin(record.pickupPinEncrypted) : null };
+    // Once collected, the PIN has served its purpose - never surface it again, even to staff.
+    const showPin = requirePaid && record.status === 'PAID';
+    return { ...record, pickupPin: showPin ? decryptPickupPin(record.pickupPinEncrypted) : null };
   },
   async fulfillRetail(id, pickupPin, pharmacistId) {
     const request = await prisma.paymentRequest.findUnique({ where: { id }, include: { items: { include: { product: true } } } });
