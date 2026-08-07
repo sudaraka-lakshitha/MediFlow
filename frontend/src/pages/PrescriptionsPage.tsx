@@ -16,6 +16,7 @@ import { PasswordField } from "../components/PasswordField";
 import { SearchableSelect } from "../components/SearchableSelect";
 import { PredictiveSearchInput } from "../components/PredictiveSearchInput";
 import { Alert, Empty, Loading, Status } from "../components/Ui";
+import { isCountableUnit, issuableTotal } from "../utils/unitMeasure";
 import "../prescriptions.css";
 
 type RxItem = {
@@ -668,15 +669,7 @@ export function PrescriptionsPage() {
     );
     const dose = effectiveDose(item);
     const raw = dose * Number(item.timesPerDay) * Number(item.daysSupply);
-    return {
-      product,
-      dose,
-      total: /tablet|capsule|patch|suppository|sachet/i.test(
-        product?.unit || "",
-      )
-        ? Math.ceil(raw)
-        : Number(raw.toFixed(3)),
-    };
+    return { product, dose, total: issuableTotal(raw, product?.unit) };
   };
   const generatedDirections = (item: Line) => {
     const { product, dose } = calculated(item);
@@ -1589,7 +1582,9 @@ export function PrescriptionsPage() {
                             : rx.paymentRequest.status === "AWAITING_PAYMENT"
                               ? "Awaiting cashier payment"
                               : rx.paymentRequest.status === "PAID"
-                                ? "Verify PIN and dispense"
+                                ? operationSettings.requirePickupPin
+                                  ? "Verify PIN and dispense"
+                                  : "Dispense"
                                 : rx.paymentRequest.status === "CANCELLED"
                                   ? "Bill cancelled — resend to cashier"
                                   : "Dispensed",
@@ -2396,8 +2391,8 @@ export function PrescriptionsPage() {
                           <input
                             className="form-control"
                             type="number"
-                            min={liquid ? "0.1" : "0.25"}
-                            step={liquid ? "0.1" : "0.25"}
+                            min={isCountableUnit(auto.product?.unit) ? "1" : "0.1"}
+                            step={isCountableUnit(auto.product?.unit) ? "1" : "0.1"}
                             value={item.overrideQuantity}
                             onChange={(event) =>
                               updateLine(index, {
@@ -2758,8 +2753,12 @@ export function PrescriptionsPage() {
                 <i className="bi bi-shield-lock me-2" />
                 <strong>One combined checkout.</strong> Confirm the prescribed
                 medicines, add any non-prescription retail products requested
-                by the customer, then send one total to the cashier. Dispensing
-                remains locked until payment and PIN verification.
+                by the customer, then send one total to the cashier.{" "}
+                {operationSettings.cashierCanDispenseAtPayment
+                  ? "The cashier hands the medicine over as soon as it is paid for."
+                  : operationSettings.requirePickupPin
+                    ? "Dispensing remains locked until payment and PIN verification."
+                    : "Dispensing remains locked until the cashier takes payment."}
               </div>
               <PatientClinicalWarning
                 patient={patients.find((p) => p.id === action.rx.patient.id)}
@@ -3243,7 +3242,8 @@ export function PrescriptionsPage() {
                   <small className="d-block">
                     The prescription itself is still verified. Sending it to
                     the cashier again starts a new billing cycle with a new
-                    request number and PIN.
+                    request number
+                    {operationSettings.requirePickupPin ? " and PIN" : ""}.
                   </small>
                 </div>
               )}

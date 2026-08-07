@@ -431,8 +431,13 @@ export function CashierPage() {
               <strong>Amount due: {money(payment.total)}</strong>
               <br />
               <small>
-                Confirm the customer has paid the full amount. A one-time
-                dispensing PIN will be generated on the receipt.
+                Confirm the customer has paid the full amount.{" "}
+                {operationSettings.cashierCanDispenseAtPayment &&
+                payment.prescription
+                  ? "The medicine is dispensed as soon as you record this payment — hand it over to the customer."
+                  : operationSettings.requirePickupPin
+                    ? "A one-time dispensing PIN will be generated on the receipt."
+                    : "PIN verification is turned off, so the pharmacist can dispense straight after payment."}
               </small>
             </div>
             {payment.items?.length > 0 && (
@@ -735,7 +740,7 @@ export function CashierPage() {
               {paid.dispensed.invoiceNumber} — hand the items over to the
               customer now.
             </div>
-          ) : (
+          ) : operationSettings.requirePickupPin ? (
             <>
               <label className="form-label">Dispensing verification PIN</label>
               <div
@@ -745,11 +750,16 @@ export function CashierPage() {
                 {paid.pickupPin}
               </div>
               <p className="text-secondary small mt-2">
-                {operationSettings.requirePickupPin
-                  ? "Give the printed receipt to the customer. The pharmacist must enter this PIN before medicines can leave the pharmacy."
-                  : "Give the printed receipt to the customer. PIN verification is turned off for this pharmacy, so this code isn't required to dispense."}
+                Give the printed receipt to the customer. The pharmacist must
+                enter this PIN before medicines can leave the pharmacy.
               </p>
             </>
+          ) : (
+            <p className="text-secondary small mt-2">
+              Give the printed receipt to the customer. PIN verification is
+              turned off for this pharmacy, so they can collect straight from
+              the pharmacist.
+            </p>
           )}
           <div className="d-grid gap-2">
             <button
@@ -757,7 +767,9 @@ export function CashierPage() {
               onClick={() => openPdf(paid.data, "receipt")}
             >
               <i className="bi bi-printer me-2" />
-              Print physical receipt with PIN
+              {operationSettings.requirePickupPin && !paid.dispensed
+                ? "Print physical receipt with PIN"
+                : "Print physical receipt"}
             </button>
             <button
               className="btn btn-outline-secondary"

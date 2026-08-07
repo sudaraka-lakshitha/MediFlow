@@ -290,8 +290,11 @@ export function SalesPage() {
             <div>
               <h3>Retail cashier handovers</h3>
               <small className="text-secondary">
-                Pharmacist-prepared retail bills require cashier payment and PIN
-                verification before goods are handed over.
+                Pharmacist-prepared retail bills require cashier payment
+                {operationSettings.requirePickupPin
+                  ? " and PIN verification"
+                  : ""}{" "}
+                before goods are handed over.
               </small>
             </div>
           </div>
@@ -351,7 +354,9 @@ export function SalesPage() {
                               }}
                             >
                               <i className="bi bi-shield-check me-1" />
-                              Verify PIN and hand over
+                              {operationSettings.requirePickupPin
+                                ? "Verify PIN and hand over"
+                                : "Hand over"}
                             </button>
                             <button
                               className="btn btn-sm btn-outline-secondary"
@@ -519,8 +524,10 @@ export function SalesPage() {
             <div className="alert alert-info py-2">
               <i className="bi bi-info-circle me-2" />
               {canDirectRetail
-                ? "You are authorized to complete this retail sale directly; no PIN handoff is required."
-                : "This retail bill will be sent to the cashier. Verify the paid receipt PIN before handing over goods."}
+                ? "You are authorized to complete this retail sale directly; no separate handoff step is required."
+                : operationSettings.requirePickupPin
+                  ? "This retail bill will be sent to the cashier. Verify the paid receipt PIN before handing over goods."
+                  : "This retail bill will be sent to the cashier. Hand the goods over once payment is confirmed."}
             </div>
             <div className="form-grid">
               <div>
@@ -729,8 +736,9 @@ export function SalesPage() {
               </strong>
               <br />
               <small>
-                Enter the PIN from the customer's paid receipt before releasing
-                the retail goods.
+                {operationSettings.requirePickupPin
+                  ? "Enter the PIN from the customer's paid receipt before releasing the retail goods."
+                  : "Confirm the customer's identity before releasing the retail goods."}
               </small>
             </div>
             {operationSettings.requirePickupPin ? (

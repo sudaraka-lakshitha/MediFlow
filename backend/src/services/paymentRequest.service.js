@@ -211,8 +211,12 @@ export const paymentRequestService = {
   async documentData(id, user, requirePaid = false) {
     const record = await this.get(id, user);
     if (requirePaid && !['PAID', 'FULFILLED'].includes(record.status)) throw new AppError(409, 'Payment must be completed before the receipt is available.');
-    // Once collected, the PIN has served its purpose - never surface it again, even to staff.
-    const showPin = requirePaid && record.status === 'PAID';
+    // The PIN only belongs on a receipt while it can still be used: the order has been paid
+    // for, is waiting to be collected, and the pharmacy actually verifies PINs. Once collected
+    // (or when PIN checks are switched off entirely) printing it is noise the customer would
+    // reasonably mistake for something they still have to present.
+    const { requirePickupPin } = await operationSettingsService.get();
+    const showPin = requirePaid && record.status === 'PAID' && requirePickupPin;
     return { ...record, pickupPin: showPin ? decryptPickupPin(record.pickupPinEncrypted) : null };
   },
   async fulfillRetail(id, pickupPin, pharmacistId) {
