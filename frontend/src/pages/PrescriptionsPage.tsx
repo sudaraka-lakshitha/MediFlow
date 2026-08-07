@@ -1543,7 +1543,11 @@ export function PrescriptionsPage() {
                           label: "Edit prescription",
                           icon: "pencil",
                           onClick: () => openEditor(rx),
-                          disabled: rx.status !== "PENDING",
+                          disabled:
+                            !["PENDING", "VERIFIED"].includes(rx.status) ||
+                            (rx.status === "VERIFIED" &&
+                              Boolean(rx.paymentRequest) &&
+                              rx.paymentRequest.status !== "CANCELLED"),
                         },
                         {
                           label: "Verify",
@@ -1698,11 +1702,21 @@ export function PrescriptionsPage() {
           title={
             editor.mode === "create"
               ? "Record prescription"
-              : "Edit pending prescription"
+              : editor.rx?.status === "VERIFIED"
+                ? "Edit verified prescription"
+                : "Edit pending prescription"
           }
           onClose={closeEditor}
           size={sourceFileUrl ? "xl" : "lg"}
         >
+          {editor.mode === "edit" && editor.rx?.status === "VERIFIED" && (
+            <div className="alert alert-warning" role="alert">
+              <i className="bi bi-exclamation-triangle me-2" />
+              This prescription was already verified. Saving changes will move
+              it back to <strong>Pending</strong> and it will need to be
+              re-verified before it can be billed or dispensed.
+            </div>
+          )}
           <div className={sourceFileUrl ? "prescription-editor-split" : ""}>
             {sourceFileUrl && (
               <aside className="prescription-source-pane">
