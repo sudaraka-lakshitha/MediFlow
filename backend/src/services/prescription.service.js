@@ -7,12 +7,13 @@ import { calculateQuantity } from '../utils/dosage.js';
 import { assertCouponMatched, calculateDiscounts } from './discount.service.js';
 import { normalizeLiquidDose } from '../utils/liquidDose.js';
 import { verifyPickupPin } from '../utils/pickupPin.js';
-import { batchAllocationOrder, operationSettingsService } from './operationSettings.service.js';
+import { operationSettingsService } from './operationSettings.service.js';
 import { ageOnDate } from '../utils/age.js';
 import { findAgeUnsuitable } from '../utils/ageSuitability.js';
 import { withUniqueRetry } from '../utils/withUniqueRetry.js';
 import { serializable } from '../utils/serializable.js';
-import { consumePaymentRequestStock, usableStockTotal } from '../utils/stock.js';
+import { usableStockTotal } from '../utils/stock.js';
+import { performPrescriptionDispense } from '../utils/prescriptionDispense.js';
 const isLiquidProduct = (product) =>
   ['ml', 'millilitre', 'milliliter', 'l', 'litre', 'liter'].includes(String(product?.unit || '').toLowerCase())
   || /syrup|suspension|solution|elixir|liquid/i.test(String(product?.dosageForm || ''));
@@ -237,99 +238,27 @@ export const prescriptionService = {
   },
 
   async dispense(prescriptionId, input, pharmacistId) {
-    if (!input.paymentRequestId || !input.pickupPin) throw new AppError(402, 'Every prescription must be paid at the cashier and verified with the receipt PIN before dispensing.');
+    const operationSettings = await operationSettingsService.get();
+    const pinRequired = operationSettings.requirePickupPin;
+    if (!input.paymentRequestId || (pinRequired && !input.pickupPin)) {
+      throw new AppError(402, pinRequired
+        ? 'Every prescription must be paid at the cashier and verified with the receipt PIN before dispensing.'
+        : 'Every prescription must be paid at the cashier before dispensing.');
+    }
     const paidRequest = await prisma.paymentRequest.findFirst({ where: { id: input.paymentRequestId, prescriptionId }, include: { items: { include: { product: true } } } });
     if (!paidRequest || paidRequest.status !== 'PAID') throw new AppError(402, 'Cashier payment has not been completed for this prescription.');
-    if (paidRequest.pinAttempts >= 5) throw new AppError(423, 'The receipt PIN is locked after too many failed attempts. Ask an administrator for assistance.');
-    if (!verifyPickupPin(paidRequest.id, input.pickupPin, paidRequest.pickupPinHash)) {
-      await prisma.paymentRequest.update({ where: { id: paidRequest.id }, data: { pinAttempts: { increment: 1 } } });
-      throw new AppError(400, 'The receipt PIN is incorrect.');
+    if (pinRequired) {
+      if (paidRequest.pinAttempts >= 5) throw new AppError(423, 'The receipt PIN is locked after too many failed attempts. Ask an administrator for assistance.');
+      if (!verifyPickupPin(paidRequest.id, input.pickupPin, paidRequest.pickupPinHash)) {
+        await prisma.paymentRequest.update({ where: { id: paidRequest.id }, data: { pinAttempts: { increment: 1 } } });
+        throw new AppError(400, 'The receipt PIN is incorrect.');
+      }
     }
     const paidPrescriptionItems = paidRequest.items.filter((item) => item.prescriptionItemId != null);
     const paidItems = new Map(paidPrescriptionItems.map((item) => [item.prescriptionItemId, Number(item.quantity)]));
     if (paidPrescriptionItems.length !== input.items.length || input.items.some((item) => Number(item.quantity) !== Number(paidItems.get(item.prescriptionItemId)))) {
       throw new AppError(409, 'Dispensing quantities must exactly match the paid cashier request.');
     }
-    return serializable(async (tx) => {
-      const prescription = await tx.prescription.findUnique({
-        where: { id: prescriptionId },
-        include: { patient: { include: { user: true } }, items: { include: { product: true } } },
-      });
-      if (!prescription) throw new AppError(404, 'Prescription not found.');
-      if (!['VERIFIED', 'PARTIALLY_DISPENSED'].includes(prescription.status)) {
-        throw new AppError(409, 'Only verified prescriptions can be dispensed.');
-      }
-      const claimed = await tx.paymentRequest.updateMany({ where: { id: paidRequest.id, status: 'PAID' }, data: { status: 'FULFILLED', pinVerifiedAt: new Date() } });
-      if (claimed.count !== 1) throw new AppError(409, 'This prescription bill is already being processed or has been completed by another staff member.');
-
-      for (const requested of input.items) {
-        const item = prescription.items.find((candidate) => candidate.id === requested.prescriptionItemId);
-        if (!item) throw new AppError(404, `Prescription item ${requested.prescriptionItemId} was not found.`);
-        const requestedQuantity = new Prisma.Decimal(requested.quantity);
-        const remaining = item.prescribedQuantity.sub(item.dispensedQuantity);
-        if (requestedQuantity.greaterThan(remaining)) throw new AppError(409, `${item.product.genericName}: quantity exceeds the prescribed remainder.`);
-      }
-
-      const dispensing = await tx.dispensing.create({ data: { prescriptionId, pharmacistId, notes: input.notes } });
-      const operationSettings = await operationSettingsService.get(tx);
-      const allocationOrder = batchAllocationOrder(operationSettings.allocationMethod);
-      const itemById = new Map(paidRequest.items.map((item) => [item.id, item]));
-      const consumed = await consumePaymentRequestStock(tx, paidRequest, allocationOrder);
-      const allocations = [];
-      const dispensedQuantities = new Map();
-
-      for (const entry of consumed) {
-        const paidItem = itemById.get(entry.paymentRequestItemId);
-        const isPrescriptionItem = paidItem.prescriptionItemId != null;
-        await tx.lowStockAcknowledgement.deleteMany({ where: { productId: entry.productId } });
-        const lineTotal = paidItem.unitPrice.mul(entry.quantity);
-        await tx.stockMovement.create({ data: {
-          productId: entry.productId, batchId: entry.batchId,
-          type: isPrescriptionItem ? 'DISPENSING' : 'RETAIL_SALE',
-          quantityChange: entry.quantity.negated(), quantityBefore: entry.quantityBefore, quantityAfter: entry.quantityAfter,
-          referenceType: isPrescriptionItem ? 'DISPENSING' : 'PAYMENT_REQUEST',
-          referenceId: isPrescriptionItem ? dispensing.id : paidRequest.id,
-          reason: isPrescriptionItem ? 'Prescription dispensing' : 'Retail item on prescription invoice',
-          performedById: pharmacistId,
-        } });
-        if (isPrescriptionItem) {
-          await tx.dispensingItem.create({ data: {
-            dispensingId: dispensing.id, prescriptionItemId: paidItem.prescriptionItemId, batchId: entry.batchId,
-            quantity: entry.quantity, unitPrice: paidItem.unitPrice, unitCost: entry.unitCost,
-          } });
-          dispensedQuantities.set(paidItem.prescriptionItemId, (dispensedQuantities.get(paidItem.prescriptionItemId) || new Prisma.Decimal(0)).add(entry.quantity));
-        }
-        allocations.push({ productId: entry.productId, batchId: entry.batchId, quantity: entry.quantity, unitPrice: paidItem.unitPrice, unitCost: entry.unitCost, lineTotal });
-      }
-      for (const [prescriptionItemId, quantity] of dispensedQuantities) {
-        await tx.prescriptionItem.update({ where: { id: prescriptionItemId }, data: { dispensedQuantity: { increment: quantity } } });
-      }
-
-      const paidRetailItems = paidRequest.items.filter((item) => item.prescriptionItemId == null);
-      const discountResult = { amount: paidRequest.discount, applications: [] };
-      const discount = discountResult.amount;
-      const containerFee = paidRequest.containerFee;
-      const tax = paidRequest.tax;
-      const total = paidRequest.total;
-      const amountPaid = paidRequest.amountPaid;
-      const saleSubtotal = paidRequest.subtotal;
-      const sale = await withUniqueRetry(() => tx.sale.create({ data: {
-        invoiceNumber: `INV-${Date.now()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`,
-        dispensingId: dispensing.id, patientId: prescription.patient.userId, pharmacistId,
-        cashierId: paidRequest.cashierId, paymentRequestId: paidRequest.id,
-        subtotal: saleSubtotal, discount, containerFee, tax, total, amountPaid, paymentMethod: paidRequest.paymentMethod,
-        status: amountPaid.greaterThanOrEqualTo(total) ? 'PAID' : 'PENDING', items: { create: allocations },
-        discountApplications: { create: discountResult.applications },
-      } }));
-
-      const currentItems = await tx.prescriptionItem.findMany({ where: { prescriptionId }, select: { prescribedQuantity: true, dispensedQuantity: true } });
-      const status = currentItems.every((item) => item.dispensedQuantity.greaterThanOrEqualTo(item.prescribedQuantity)) ? 'DISPENSED' : 'PARTIALLY_DISPENSED';
-      await tx.prescription.update({ where: { id: prescriptionId }, data: { status } });
-      return {
-        dispensingId: dispensing.id, saleId: sale.id, invoiceNumber: sale.invoiceNumber,
-        subtotal: saleSubtotal, discount, appliedDiscounts: discountResult.applications, total, amountPaid,
-        retailItemCount: paidRetailItems.length, paymentStatus: sale.status, prescriptionStatus: status,
-      };
-    });
+    return serializable((tx) => performPrescriptionDispense(tx, { prescriptionId, paymentRequestId: paidRequest.id, performedById: pharmacistId, notes: input.notes }));
   },
 };

@@ -40,10 +40,19 @@ export function CashierPage() {
     products: any[];
     patients: any[];
   }>({ products: [], patients: [] });
+  const [operationSettings, setOperationSettings] = useState({
+    requirePickupPin: true,
+    cashierCanDispenseAtPayment: false,
+  });
   const load = useCallback(async () => {
     try {
       setError("");
-      setRows((await api.get("/payment-requests")).data.data);
+      const [rowsResponse, settingsResponse] = await Promise.all([
+        api.get("/payment-requests"),
+        api.get("/settings/operations"),
+      ]);
+      setRows(rowsResponse.data.data);
+      setOperationSettings(settingsResponse.data.data);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -720,17 +729,28 @@ export function CashierPage() {
           <div className="alert alert-success">
             Payment recorded successfully.
           </div>
-          <label className="form-label">Dispensing verification PIN</label>
-          <div
-            className="display-5 text-center fw-bold border rounded-3 py-3 text-primary"
-            style={{ letterSpacing: "0.35em" }}
-          >
-            {paid.pickupPin}
-          </div>
-          <p className="text-secondary small mt-2">
-            Give the printed receipt to the customer. The pharmacist must enter
-            this PIN before medicines can leave the pharmacy.
-          </p>
+          {paid.dispensed ? (
+            <div className="alert alert-primary">
+              <strong>Medicine dispensed.</strong> Invoice{" "}
+              {paid.dispensed.invoiceNumber} — hand the items over to the
+              customer now.
+            </div>
+          ) : (
+            <>
+              <label className="form-label">Dispensing verification PIN</label>
+              <div
+                className="display-5 text-center fw-bold border rounded-3 py-3 text-primary"
+                style={{ letterSpacing: "0.35em" }}
+              >
+                {paid.pickupPin}
+              </div>
+              <p className="text-secondary small mt-2">
+                {operationSettings.requirePickupPin
+                  ? "Give the printed receipt to the customer. The pharmacist must enter this PIN before medicines can leave the pharmacy."
+                  : "Give the printed receipt to the customer. PIN verification is turned off for this pharmacy, so this code isn't required to dispense."}
+              </p>
+            </>
+          )}
           <div className="d-grid gap-2">
             <button
               className="btn btn-primary"

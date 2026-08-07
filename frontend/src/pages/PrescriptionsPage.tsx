@@ -296,6 +296,10 @@ export function PrescriptionsPage() {
   const [rows, setRows] = useState<Rx[]>([]);
   const [patients, setPatients] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
+  const [operationSettings, setOperationSettings] = useState({
+    requirePickupPin: true,
+    cashierCanDispenseAtPayment: false,
+  });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -354,12 +358,17 @@ export function PrescriptionsPage() {
     try {
       const requests = [api.get("/prescriptions")];
       if (staff)
-        requests.push(api.get("/patients"), api.get("/catalog/products"));
+        requests.push(
+          api.get("/patients"),
+          api.get("/catalog/products"),
+          api.get("/settings/operations"),
+        );
       const result = await Promise.all(requests);
       setRows(result[0].data.data);
       if (staff) {
         setPatients(result[1].data.data);
         setProducts(result[2].data.data);
+        setOperationSettings(result[3].data.data);
       }
     } catch (caught) {
       setError(errorMessage(caught));
@@ -966,7 +975,10 @@ export function PrescriptionsPage() {
         load();
       }
       if (action.type === "dispense") {
-        const response = await api.post(`/prescriptions/${action.rx.id}/dispense`, dispense);
+        const response = await api.post(`/prescriptions/${action.rx.id}/dispense`, {
+          ...dispense,
+          pickupPin: dispense.pickupPin || undefined,
+        });
         setDispenseSuccess(response.data.data);
         load();
       }
@@ -3247,29 +3259,39 @@ export function PrescriptionsPage() {
                 <div className="alert alert-success mt-3">
                   <strong>Cashier payment confirmed.</strong>
                   <div className="row align-items-end mt-2">
-                    <div className="col-md-7">
-                      <label className="form-label">
-                        Six-digit PIN from customer receipt
-                      </label>
-                      <input
-                        className="form-control form-control-lg text-center"
-                        inputMode="numeric"
-                        maxLength={6}
-                        pattern="[0-9]{6}"
-                        value={dispense.pickupPin || ""}
-                        onChange={(event) =>
-                          setDispense({
-                            ...dispense,
-                            pickupPin: event.target.value
-                              .replace(/\D/g, "")
-                              .slice(0, 6),
-                            paymentRequestId: action.rx.paymentRequest.id,
-                          })
-                        }
-                        placeholder="______"
-                        required
-                      />
-                    </div>
+                    {operationSettings.requirePickupPin && (
+                      <div className="col-md-7">
+                        <label className="form-label">
+                          Six-digit PIN from customer receipt
+                        </label>
+                        <input
+                          className="form-control form-control-lg text-center"
+                          inputMode="numeric"
+                          maxLength={6}
+                          pattern="[0-9]{6}"
+                          value={dispense.pickupPin || ""}
+                          onChange={(event) =>
+                            setDispense({
+                              ...dispense,
+                              pickupPin: event.target.value
+                                .replace(/\D/g, "")
+                                .slice(0, 6),
+                              paymentRequestId: action.rx.paymentRequest.id,
+                            })
+                          }
+                          placeholder="______"
+                          required
+                        />
+                      </div>
+                    )}
+                    {!operationSettings.requirePickupPin && (
+                      <div className="col-md-7">
+                        <small className="text-secondary">
+                          PIN verification is turned off for this pharmacy —
+                          confirm with the patient and dispense directly.
+                        </small>
+                      </div>
+                    )}
                     <div className="col-md-5">
                       <button
                         type="button"
@@ -3288,13 +3310,18 @@ export function PrescriptionsPage() {
               {action.rx.paymentRequest?.status === "PAID" && (
                 <ModalActions
                   onClose={closeAction}
-                  submitLabel="Verify PIN and dispense"
+                  submitLabel={
+                    operationSettings.requirePickupPin
+                      ? "Verify PIN and dispense"
+                      : "Dispense"
+                  }
                   busy={
                     busy ||
                     quoteBusy ||
                     !quote ||
                     !!quoteError ||
-                    Boolean((dispense.pickupPin || "").length !== 6)
+                    (operationSettings.requirePickupPin &&
+                      Boolean((dispense.pickupPin || "").length !== 6))
                   }
                   busyLabel={busy ? "Dispensing…" : "Calculating…"}
                 />

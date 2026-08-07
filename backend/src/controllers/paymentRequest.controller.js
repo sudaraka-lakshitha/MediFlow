@@ -10,7 +10,7 @@ export const retailPaymentRequestSchema = z.object({
   tax: z.coerce.number().nonnegative().default(0),
   items: z.array(z.object({ productId: z.coerce.number().int().positive(), quantity: z.coerce.number().positive() })).min(1).max(100),
 });
-export const retailFulfillSchema = z.object({ pickupPin: z.string().regex(/^\d{6}$/) });
+export const retailFulfillSchema = z.object({ pickupPin: z.string().regex(/^\d{6}$/).optional() });
 export const paymentRequestController = {
   list: async (req, res) => res.json({ data: await paymentRequestService.list(req.user) }),
   create: async (req, res) => {
