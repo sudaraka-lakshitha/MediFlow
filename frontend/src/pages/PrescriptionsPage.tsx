@@ -1237,6 +1237,13 @@ export function PrescriptionsPage() {
 
   return (
     <>
+      <datalist id="retail-quantity-options">
+        <option value="1" />
+        <option value="2" />
+        <option value="3" />
+        <option value="5" />
+        <option value="10" />
+      </datalist>
       <div className="page-intro">
         <div>
           <h2>Prescription workflow</h2>
@@ -1988,8 +1995,8 @@ export function PrescriptionsPage() {
                         className="form-control"
                         type="number"
                         list={liquid ? undefined : "solid-dose-options"}
-                        step="0.001"
-                        min="0.001"
+                        step={liquid ? "0.1" : "0.25"}
+                        min={liquid ? "0.1" : "0.25"}
                         value={
                           liquid && item.liquidDoseMode === "STRENGTH"
                             ? auto.dose
@@ -2348,8 +2355,8 @@ export function PrescriptionsPage() {
                           <input
                             className="form-control"
                             type="number"
-                            min="0.001"
-                            step="0.001"
+                            min={liquid ? "0.1" : "0.25"}
+                            step={liquid ? "0.1" : "0.25"}
                             value={item.overrideQuantity}
                             onChange={(event) =>
                               updateLine(index, {
@@ -2507,6 +2514,7 @@ export function PrescriptionsPage() {
                               <input
                                 className="form-control"
                                 type="number"
+                                list="retail-quantity-options"
                                 min="0.001"
                                 max={
                                   selectedProduct
@@ -2882,6 +2890,7 @@ export function PrescriptionsPage() {
                               <input
                                 className="form-control"
                                 type="number"
+                                list="retail-quantity-options"
                                 min="0.001"
                                 max={available || undefined}
                                 step="0.001"
