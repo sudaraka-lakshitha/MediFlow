@@ -71,6 +71,8 @@ const emptyForm = {
   expiryDate: "",
   note: "",
   quantityChange: 0,
+  adjustDirection: "INCREASE" as "INCREASE" | "DECREASE",
+  adjustQuantity: 0,
   reason: "",
   dispositionAction: "DISCARDED" as DispositionAction,
   dispositionQuantity: 0,
@@ -236,8 +238,9 @@ export function InventoryPage() {
         });
       }
       if (modal === "adjust" && selected) {
+        const magnitude = Math.abs(Number(form.adjustQuantity));
         await api.post(`/inventory/batches/${selected.id}/adjust`, {
-          quantityChange: Number(form.quantityChange),
+          quantityChange: form.adjustDirection === "DECREASE" ? -magnitude : magnitude,
           reason: form.reason,
         });
       }
@@ -962,25 +965,56 @@ export function InventoryPage() {
                 </div>
               )}
 
-              {modal === "adjust" && (
+              {modal === "adjust" && selected && (
                 <>
                   <div>
-                    <label className="form-label">Quantity change</label>
+                    <label className="form-label">Direction</label>
+                    <div className="btn-group w-100" role="group">
+                      <button
+                        type="button"
+                        className={`btn ${form.adjustDirection === "INCREASE" ? "btn-primary" : "btn-outline-primary"}`}
+                        onClick={() =>
+                          setForm({ ...form, adjustDirection: "INCREASE" })
+                        }
+                      >
+                        <i className="bi bi-plus-lg me-1" />
+                        Add stock
+                      </button>
+                      <button
+                        type="button"
+                        className={`btn ${form.adjustDirection === "DECREASE" ? "btn-primary" : "btn-outline-primary"}`}
+                        onClick={() =>
+                          setForm({ ...form, adjustDirection: "DECREASE" })
+                        }
+                      >
+                        <i className="bi bi-dash-lg me-1" />
+                        Remove stock
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="form-label">Quantity</label>
                     <input
                       className="form-control"
                       type="number"
+                      min="0.001"
                       step="0.001"
-                      value={form.quantityChange}
+                      value={form.adjustQuantity}
                       onChange={(event) =>
                         setForm({
                           ...form,
-                          quantityChange: Number(event.target.value),
+                          adjustQuantity: Number(event.target.value),
                         })
                       }
                       required
                     />
                     <small className="text-secondary">
-                      Use a negative value to reduce stock.
+                      Current stock: {Number(selected.quantityAvailable)}{" "}
+                      {selected.product?.unit}. New stock will be{" "}
+                      {form.adjustDirection === "DECREASE"
+                        ? Number(selected.quantityAvailable) - Math.abs(Number(form.adjustQuantity) || 0)
+                        : Number(selected.quantityAvailable) + Math.abs(Number(form.adjustQuantity) || 0)}{" "}
+                      {selected.product?.unit}.
                     </small>
                   </div>
                   <div>
