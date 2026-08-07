@@ -1733,7 +1733,10 @@ textarea.form-control { min-height: 80px; resize: vertical; }
   .demo-note-heading small { text-align: left; }
   .demo-account { grid-template-columns: 1fr; gap: 1px; }
   .metric-grid { grid-template-columns: 1fr; }
-  .content { padding-inline: 10px; }
+  /* Must stay >= the Bootstrap row gutter (.row.g-4 pulls itself out by 12px a side),
+     otherwise every grid page hangs a couple of pixels past the viewport and the whole
+     document picks up a horizontal scrollbar. */
+  .content { padding-inline: 12px; }
   .combined-retail-panel { padding: 10px; }
   .inventory-low-stock-item { flex-direction: column; align-items: stretch; }
   .inventory-low-stock-level { text-align: left; }

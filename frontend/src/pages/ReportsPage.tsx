@@ -166,7 +166,7 @@ export function ReportsPage() {
         </div></div>
       </div>
 
-      <div className="panel mt-4 mb-0"><div className="panel-header"><div><h3>Monthly stock movement report</h3><small className="text-secondary">Opening, received, dispensed, adjusted and closing stock values for the selected month.</small></div><div className="d-flex align-items-center gap-2"><input type="month" className="form-control form-control-sm" style={{ width: 'auto' }} value={monthlyMonth} max={today.slice(0, 7)} onChange={(event) => setMonthlyMonth(event.target.value)} /><button className="btn btn-sm btn-outline-primary" disabled={!!exporting} onClick={() => download('monthly', 'csv')}>CSV</button><button className="btn btn-sm btn-primary" disabled={!!exporting} onClick={() => download('monthly', 'pdf')}>PDF</button></div></div><span className="badge text-bg-light">Month: {monthlyMonth}</span></div>
+      <div className="panel mt-4 mb-0"><div className="panel-header"><div><h3>Monthly stock movement report</h3><small className="text-secondary">Opening, received, dispensed, adjusted and closing stock values for the selected month.</small></div><div className="d-flex align-items-center gap-2 flex-wrap"><input type="month" className="form-control form-control-sm" style={{ width: 'auto' }} value={monthlyMonth} max={today.slice(0, 7)} onChange={(event) => setMonthlyMonth(event.target.value)} /><button className="btn btn-sm btn-outline-primary" disabled={!!exporting} onClick={() => download('monthly', 'csv')}>CSV</button><button className="btn btn-sm btn-primary" disabled={!!exporting} onClick={() => download('monthly', 'pdf')}>PDF</button></div></div><span className="badge text-bg-light">Month: {monthlyMonth}</span></div>
     </>}
   </>;
 }
