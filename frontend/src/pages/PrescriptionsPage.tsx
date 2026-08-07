@@ -1259,10 +1259,11 @@ export function PrescriptionsPage() {
       </datalist>
       <div className="page-intro">
         <div>
-          <h2>Prescription workflow</h2>
+          <h2>{staff ? "Prescription workflow" : "My prescriptions"}</h2>
           <p>
-            Structured directions, exact timestamps, pharmacist tracking, and
-            FIFO dispensing.
+            {staff
+              ? "Structured directions, exact timestamps, pharmacist tracking, and FIFO dispensing."
+              : "Your prescriptions, how to take each medicine, and what has been collected so far."}
           </p>
         </div>
         {staff && (

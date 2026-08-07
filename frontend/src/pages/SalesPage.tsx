@@ -262,10 +262,11 @@ export function SalesPage() {
     <>
       <div className="page-intro">
         <div>
-          <h2>Sales & billing</h2>
+          <h2>{staff ? "Sales & billing" : "My invoices"}</h2>
           <p>
-            Prescription invoices, counter sales, discounts, FIFO stock cost,
-            profit, balances, and payments.
+            {staff
+              ? "Prescription invoices, counter sales, discounts, FIFO stock cost, profit, balances, and payments."
+              : "Your prescription and counter purchases, what was charged, and what has been paid."}
           </p>
         </div>
         {staff && (
