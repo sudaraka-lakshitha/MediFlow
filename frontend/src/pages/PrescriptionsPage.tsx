@@ -1830,6 +1830,19 @@ export function PrescriptionsPage() {
                       placeholder="Prescriber name"
                       required
                     />
+                    <button
+                      type="button"
+                      className="btn btn-outline-secondary"
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          prescriberTitle: "",
+                          prescriberName: "Not Mentioned",
+                        })
+                      }
+                    >
+                      Not mentioned
+                    </button>
                   </div>
                   <datalist id="prescriber-options">
                     {[...new Set(rows.map((row) => row.prescriberName))].map(
