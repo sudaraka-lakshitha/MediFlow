@@ -152,10 +152,28 @@ export const prescriptionService = {
     if (verified.count !== 1) throw new AppError(409, 'This prescription was just processed by another staff member. Refresh to see its latest status.');
     return prisma.prescription.findUnique({ where: { id } });
   },
-  async reject(id, reason) {
-    const rejected = await prisma.prescription.updateMany({ where: { id, status: { in: ['PENDING', 'VERIFIED'] } }, data: { status: 'REJECTED', rejectionReason: reason } });
-    if (rejected.count !== 1) throw new AppError(409, 'This prescription was just processed by another staff member. Refresh to see its latest status.');
-    return prisma.prescription.findUnique({ where: { id } });
+  async reject(id, reason, userId) {
+    return prisma.$transaction(async (tx) => {
+      const current = await tx.prescription.findUnique({ where: { id }, select: { paymentRequest: { select: { id: true, status: true } } } });
+      if (!current) throw new AppError(404, 'Prescription not found.');
+      // Money already changed hands - rejecting here would strand a paid bill that can never be
+      // dispensed, so the payment has to be revoked (and refunded) before the clinical rejection.
+      if (current.paymentRequest && ['PAID', 'FULFILLED'].includes(current.paymentRequest.status)) {
+        throw new AppError(409, current.paymentRequest.status === 'PAID'
+          ? 'This prescription has already been paid for. Revoke and refund the cashier bill before rejecting it.'
+          : 'This prescription has already been dispensed, so it can no longer be rejected.');
+      }
+      const rejected = await tx.prescription.updateMany({ where: { id, status: { in: ['PENDING', 'VERIFIED'] } }, data: { status: 'REJECTED', rejectionReason: reason } });
+      if (rejected.count !== 1) throw new AppError(409, 'This prescription was just processed by another staff member. Refresh to see its latest status.');
+      // A rejected prescription must never leave a payable bill behind for the cashier to collect on.
+      if (current.paymentRequest && current.paymentRequest.status === 'AWAITING_PAYMENT') {
+        await tx.paymentRequest.updateMany({
+          where: { id: current.paymentRequest.id, status: 'AWAITING_PAYMENT' },
+          data: { status: 'CANCELLED', cancellationReason: `Prescription rejected: ${reason}`, cancelledById: userId, cancelledAt: new Date() },
+        });
+      }
+      return tx.prescription.findUnique({ where: { id } });
+    });
   },
 
   async quoteDispensing(prescriptionId, input) {

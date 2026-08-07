@@ -7,7 +7,7 @@ import { prescriptionService } from './prescription.service.js';
 import { assertCouponMatched, calculateDiscounts } from './discount.service.js';
 import { verifyPickupPin } from '../utils/pickupPin.js';
 import { batchAllocationOrder, operationSettingsService } from './operationSettings.service.js';
-import { isSameLocalDay } from '../utils/localDate.js';
+import { billCancellationPolicy } from '../utils/billCancellation.js';
 import { withUniqueRetry } from '../utils/withUniqueRetry.js';
 import { serializable } from '../utils/serializable.js';
 import { assertRetailAgeSuitability } from '../utils/ageSuitability.js';
@@ -116,17 +116,14 @@ export const paymentRequestService = {
       return tx.paymentRequest.findUnique({ where: { id: existing.id }, include });
     });
   },
-  async cancel(id, reason, userId, userRole) {
+  async cancel(id, reason, user) {
     return prisma.$transaction(async (tx) => {
       const current = await tx.paymentRequest.findUnique({ where: { id } });
-      if (!current) throw new AppError(404, 'Payment request not found.');
-      if (current.status !== 'PAID') throw new AppError(409, 'Only a paid bill that has not yet been dispensed or handed over can be revoked.');
-      if (userRole !== 'ADMIN' && (!current.paidAt || !isSameLocalDay(current.paidAt, new Date()))) {
-        throw new AppError(409, 'This bill can only be revoked on the same day it was paid.');
-      }
+      const policy = billCancellationPolicy(current, user);
+      if (!policy.allowed) throw new AppError(policy.statusCode, policy.message);
       const claimed = await tx.paymentRequest.updateMany({
-        where: { id, status: 'PAID' },
-        data: { status: 'CANCELLED', cancellationReason: reason, cancelledById: userId, cancelledAt: new Date() },
+        where: { id, status: current.status },
+        data: { status: 'CANCELLED', cancellationReason: reason, cancelledById: user.id, cancelledAt: new Date() },
       });
       if (claimed.count !== 1) throw new AppError(409, 'This bill was just processed by someone else. Refresh to see its latest status.');
       await releaseReservations(tx, id);

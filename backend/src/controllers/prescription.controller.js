@@ -30,7 +30,7 @@ export const prescriptionController = {
     res.json({ data });
   },
   reject: async (req, res) => {
-    const data = await prescriptionService.reject(Number(req.params.id), req.body.reason);
+    const data = await prescriptionService.reject(Number(req.params.id), req.body.reason, req.user.id);
     await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_REJECTED', entityType: 'PRESCRIPTION', entityId: data.id, details: { reason: req.body.reason }, ipAddress: req.ip });
     res.json({ data });
   },

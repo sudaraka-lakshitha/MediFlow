@@ -311,7 +311,7 @@ export function PrescriptionsPage() {
   const [sourceFileText, setSourceFileText] = useState("");
   const [sourceViewerHeight, setSourceViewerHeight] = useState(620);
   const [action, setAction] = useState<{
-    type: "reject" | "dispense" | "history";
+    type: "reject" | "dispense" | "history" | "withdraw";
     rx: Rx;
   } | null>(null);
   const [confirm, setConfirm] = useState<Rx | null>(null);
@@ -865,7 +865,7 @@ export function PrescriptionsPage() {
     }
   };
   const openAction = (
-    type: "reject" | "dispense" | "history",
+    type: "reject" | "dispense" | "history" | "withdraw",
     rx: Rx,
   ) => {
     setReason("");
@@ -971,6 +971,14 @@ export function PrescriptionsPage() {
     try {
       if (action.type === "reject") {
         await api.post(`/prescriptions/${action.rx.id}/reject`, { reason });
+        closeAction();
+        load();
+      }
+      if (action.type === "withdraw") {
+        await api.post(
+          `/payment-requests/${action.rx.paymentRequest.id}/cancel`,
+          { reason },
+        );
         closeAction();
         load();
       }
@@ -1599,6 +1607,13 @@ export function PrescriptionsPage() {
                             !["VERIFIED", "PARTIALLY_DISPENSED"].includes(
                               rx.status,
                             ) || rx.paymentRequest?.status === "FULFILLED",
+                        },
+                        {
+                          label: "Withdraw cashier bill",
+                          icon: "x-square",
+                          onClick: () => openAction("withdraw", rx),
+                          disabled:
+                            rx.paymentRequest?.status !== "AWAITING_PAYMENT",
                         },
                         {
                           label: "Issue history",
@@ -2665,6 +2680,35 @@ export function PrescriptionsPage() {
             <ModalActions
               onClose={() => setAction(null)}
               submitLabel="Reject prescription"
+              busy={busy}
+            />
+          </form>
+        </Modal>
+      )}
+      {action?.type === "withdraw" && (
+        <Modal
+          title={`Withdraw bill · ${action.rx.prescriptionNumber}`}
+          onClose={() => setAction(null)}
+          size="sm"
+        >
+          <form onSubmit={saveAction}>
+            <div className="alert alert-warning">
+              <i className="bi bi-exclamation-triangle me-2" />
+              This pulls {action.rx.paymentRequest?.requestNumber} back from the
+              cashier so it can no longer be paid. The prescription stays
+              verified — you can correct it and send a fresh bill afterwards.
+            </div>
+            <label className="form-label">Mandatory reason</label>
+            <textarea
+              className="form-control"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              required
+            />
+            <Alert message={error} />
+            <ModalActions
+              onClose={() => setAction(null)}
+              submitLabel="Withdraw bill"
               busy={busy}
             />
           </form>
