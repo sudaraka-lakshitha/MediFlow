@@ -8,6 +8,8 @@ export function SettingsPage() {
     nearExpiryDays: 90,
     auditTrashEnabled: true,
     auditTrashRetentionDays: 30,
+    requirePickupPin: true,
+    cashierCanDispenseAtPayment: false,
   });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -188,6 +190,64 @@ export function SettingsPage() {
               1–365 days. Turning trash off prevents new records from being
               moved there; existing trash remains recoverable until its
               retention deadline.
+            </p>
+          </div>
+        </div>
+
+        <div className="form-section">
+          <div className="form-section-title">Dispensing &amp; pickup security</div>
+          <div className="setting-inline">
+            <div>
+              <div className="form-check form-switch mb-3">
+                <input
+                  className="form-check-input"
+                  type="checkbox"
+                  role="switch"
+                  id="requirePickupPin"
+                  checked={form.requirePickupPin}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      requirePickupPin: event.target.checked,
+                    })
+                  }
+                />
+                <label className="form-check-label" htmlFor="requirePickupPin">
+                  Require a pickup PIN before handing over medicine
+                </label>
+              </div>
+              <div className="form-check form-switch">
+                <input
+                  className="form-check-input"
+                  type="checkbox"
+                  role="switch"
+                  id="cashierCanDispenseAtPayment"
+                  checked={form.cashierCanDispenseAtPayment}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      cashierCanDispenseAtPayment: event.target.checked,
+                    })
+                  }
+                />
+                <label
+                  className="form-check-label"
+                  htmlFor="cashierCanDispenseAtPayment"
+                >
+                  Let cashiers hand over pharmacist-prepared medicine at the
+                  point of payment
+                </label>
+              </div>
+            </div>
+            <p>
+              Turning off the pickup PIN removes the extra verification step
+              between payment and hand-over — a reasonable simplification for
+              a small pharmacy where one customer is served at a time, but a
+              real safeguard is lost for busier pharmacies with multiple
+              staff and customers. When cashier dispense-at-payment is
+              enabled, prescription bills are marked dispensed the moment the
+              cashier takes payment — no separate pharmacist PIN-verification
+              step happens at all, since the same transaction covers both.
             </p>
           </div>
         </div>

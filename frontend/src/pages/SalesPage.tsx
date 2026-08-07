@@ -31,6 +31,10 @@ export function SalesPage() {
   const [products, setProducts] = useState<any[]>([]);
   const [patients, setPatients] = useState<any[]>([]);
   const [retailRequests, setRetailRequests] = useState<any[]>([]);
+  const [operationSettings, setOperationSettings] = useState({
+    requirePickupPin: true,
+    cashierCanDispenseAtPayment: false,
+  });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [payment, setPayment] = useState<any>(null);
@@ -47,6 +51,7 @@ export function SalesPage() {
           api.get("/catalog/products"),
           api.get("/patients"),
           api.get("/payment-requests"),
+          api.get("/settings/operations"),
         );
       const result = await Promise.all(requests);
       setRows(result[0].data.data);
@@ -58,6 +63,7 @@ export function SalesPage() {
             (request: any) => request.type === "RETAIL",
           ),
         );
+        setOperationSettings(result[4].data.data);
       }
     } catch (caught) {
       setError(errorMessage(caught));
@@ -178,7 +184,7 @@ export function SalesPage() {
     try {
       const response = await api.post(
         `/payment-requests/${handover.id}/fulfill-retail`,
-        { pickupPin: handover.pickupPin },
+        { pickupPin: handover.pickupPin || undefined },
       );
       setHandover(null);
       await load();
@@ -727,28 +733,45 @@ export function SalesPage() {
                 the retail goods.
               </small>
             </div>
-            <label className="form-label">Six-digit receipt PIN</label>
-            <input
-              className="form-control form-control-lg text-center"
-              inputMode="numeric"
-              maxLength={6}
-              pattern="[0-9]{6}"
-              value={handover.pickupPin}
-              onChange={(event) =>
-                setHandover({
-                  ...handover,
-                  pickupPin: event.target.value.replace(/\D/g, "").slice(0, 6),
-                })
-              }
-              placeholder="______"
-              required
-              autoFocus
-            />
+            {operationSettings.requirePickupPin ? (
+              <>
+                <label className="form-label">Six-digit receipt PIN</label>
+                <input
+                  className="form-control form-control-lg text-center"
+                  inputMode="numeric"
+                  maxLength={6}
+                  pattern="[0-9]{6}"
+                  value={handover.pickupPin}
+                  onChange={(event) =>
+                    setHandover({
+                      ...handover,
+                      pickupPin: event.target.value.replace(/\D/g, "").slice(0, 6),
+                    })
+                  }
+                  placeholder="______"
+                  required
+                  autoFocus
+                />
+              </>
+            ) : (
+              <small className="text-secondary">
+                PIN verification is turned off for this pharmacy — confirm
+                with the patient and hand over the goods directly.
+              </small>
+            )}
             <Alert message={error} />
             <ModalActions
               onClose={() => setHandover(null)}
-              submitLabel="Verify PIN and hand over goods"
-              busy={busy || handover.pickupPin.length !== 6}
+              submitLabel={
+                operationSettings.requirePickupPin
+                  ? "Verify PIN and hand over goods"
+                  : "Hand over goods"
+              }
+              busy={
+                busy ||
+                (operationSettings.requirePickupPin &&
+                  handover.pickupPin.length !== 6)
+              }
             />
           </form>
         </Modal>

@@ -63,7 +63,7 @@ apiRoutes.patch('/audit-logs/:id/restore', authenticate, authorize('ADMIN'), val
 apiRoutes.get('/error-logs', authenticate, authorize('ADMIN'), asyncHandler(auditController.errors));
 apiRoutes.delete('/error-logs', authenticate, authorize('ADMIN'), asyncHandler(auditController.clearErrors));
 
-apiRoutes.get('/settings/operations', authenticate, authorize('ADMIN'), asyncHandler(operationSettingsController.get));
+apiRoutes.get('/settings/operations', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER'), asyncHandler(operationSettingsController.get));
 apiRoutes.put('/settings/operations', authenticate, authorize('ADMIN'), validate({ body: operationSettingsSchema }), asyncHandler(operationSettingsController.update));
 const exportDataset = z.object({ dataset: z.enum(['products','categories','manufacturers','suppliers','inventory','stockMovements','patients']) });
 apiRoutes.get('/admin-exports/:dataset.csv', authenticate, authorize('ADMIN'), validate({ params: exportDataset }), asyncHandler(adminExportController.download));

@@ -27,6 +27,8 @@ describe("audit trash policy validation", () => {
       nearExpiryDays: 90,
       auditTrashEnabled: true,
       auditTrashRetentionDays: 45,
+      requirePickupPin: true,
+      cashierCanDispenseAtPayment: false,
     })).toMatchObject({ auditTrashEnabled: true, auditTrashRetentionDays: 45 });
   });
 

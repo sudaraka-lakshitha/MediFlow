@@ -12,6 +12,7 @@ import { withUniqueRetry } from '../utils/withUniqueRetry.js';
 import { serializable } from '../utils/serializable.js';
 import { assertRetailAgeSuitability } from '../utils/ageSuitability.js';
 import { consumePaymentRequestStock, releaseReservations, reserveStock, usableStockTotal } from '../utils/stock.js';
+import { performPrescriptionDispense } from '../utils/prescriptionDispense.js';
 
 const include = {
   patient: { select: { id: true, fullName: true, email: true, phone: true } },
@@ -198,8 +199,16 @@ export const paymentRequestService = {
       const operationSettings = await operationSettingsService.get(tx);
       const allocationOrder = batchAllocationOrder(operationSettings.allocationMethod);
       await reserveStock(tx, id, current.items, allocationOrder);
+
+      let dispensed = null;
+      if (operationSettings.cashierCanDispenseAtPayment && current.prescriptionId) {
+        dispensed = await performPrescriptionDispense(tx, {
+          prescriptionId: current.prescriptionId, paymentRequestId: id, performedById: cashierId,
+          notes: 'Dispensed at payment by the cashier (cashier dispense-at-payment enabled).',
+        });
+      }
       const data = await tx.paymentRequest.findUnique({ where: { id }, include });
-      return { data: safeRecord(data), pickupPin: pin };
+      return { data: safeRecord(data), pickupPin: dispensed ? null : pin, dispensed };
     });
   },
   async documentData(id, user, requirePaid = false) {
@@ -212,10 +221,13 @@ export const paymentRequestService = {
     if (!request || request.type !== 'RETAIL') throw new AppError(404, 'Retail payment request not found.');
     if (request.status !== 'PAID') throw new AppError(402, 'Cashier payment has not been completed for this retail request.');
     await assertRetailAgeSuitability(request.patientId, request.items.map((item) => item.product));
-    if (request.pinAttempts >= 5) throw new AppError(423, 'The receipt PIN is locked after too many failed attempts.');
-    if (!verifyPickupPin(request.id, pickupPin, request.pickupPinHash)) {
-      await prisma.paymentRequest.update({ where: { id }, data: { pinAttempts: { increment: 1 } } });
-      throw new AppError(400, 'The receipt PIN is incorrect.');
+    const operationSettings = await operationSettingsService.get();
+    if (operationSettings.requirePickupPin) {
+      if (request.pinAttempts >= 5) throw new AppError(423, 'The receipt PIN is locked after too many failed attempts.');
+      if (!verifyPickupPin(request.id, pickupPin, request.pickupPinHash)) {
+        await prisma.paymentRequest.update({ where: { id }, data: { pinAttempts: { increment: 1 } } });
+        throw new AppError(400, 'The receipt PIN is incorrect.');
+      }
     }
     return serializable(async (tx) => {
       const claimed = await tx.paymentRequest.updateMany({ where: { id, type: 'RETAIL', status: 'PAID' }, data: { status: 'FULFILLED', pinVerifiedAt: new Date() } });

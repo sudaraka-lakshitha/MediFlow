@@ -296,6 +296,10 @@ export function PrescriptionsPage() {
   const [rows, setRows] = useState<Rx[]>([]);
   const [patients, setPatients] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
+  const [operationSettings, setOperationSettings] = useState({
+    requirePickupPin: true,
+    cashierCanDispenseAtPayment: false,
+  });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -354,12 +358,17 @@ export function PrescriptionsPage() {
     try {
       const requests = [api.get("/prescriptions")];
       if (staff)
-        requests.push(api.get("/patients"), api.get("/catalog/products"));
+        requests.push(
+          api.get("/patients"),
+          api.get("/catalog/products"),
+          api.get("/settings/operations"),
+        );
       const result = await Promise.all(requests);
       setRows(result[0].data.data);
       if (staff) {
         setPatients(result[1].data.data);
         setProducts(result[2].data.data);
+        setOperationSettings(result[3].data.data);
       }
     } catch (caught) {
       setError(errorMessage(caught));
@@ -966,7 +975,10 @@ export function PrescriptionsPage() {
         load();
       }
       if (action.type === "dispense") {
-        const response = await api.post(`/prescriptions/${action.rx.id}/dispense`, dispense);
+        const response = await api.post(`/prescriptions/${action.rx.id}/dispense`, {
+          ...dispense,
+          pickupPin: dispense.pickupPin || undefined,
+        });
         setDispenseSuccess(response.data.data);
         load();
       }
@@ -1237,6 +1249,13 @@ export function PrescriptionsPage() {
 
   return (
     <>
+      <datalist id="retail-quantity-options">
+        <option value="1" />
+        <option value="2" />
+        <option value="3" />
+        <option value="5" />
+        <option value="10" />
+      </datalist>
       <div className="page-intro">
         <div>
           <h2>Prescription workflow</h2>
@@ -1536,7 +1555,11 @@ export function PrescriptionsPage() {
                           label: "Edit prescription",
                           icon: "pencil",
                           onClick: () => openEditor(rx),
-                          disabled: rx.status !== "PENDING",
+                          disabled:
+                            !["PENDING", "VERIFIED"].includes(rx.status) ||
+                            (rx.status === "VERIFIED" &&
+                              Boolean(rx.paymentRequest) &&
+                              rx.paymentRequest.status !== "CANCELLED"),
                         },
                         {
                           label: "Verify",
@@ -1691,11 +1714,21 @@ export function PrescriptionsPage() {
           title={
             editor.mode === "create"
               ? "Record prescription"
-              : "Edit pending prescription"
+              : editor.rx?.status === "VERIFIED"
+                ? "Edit verified prescription"
+                : "Edit pending prescription"
           }
           onClose={closeEditor}
           size={sourceFileUrl ? "xl" : "lg"}
         >
+          {editor.mode === "edit" && editor.rx?.status === "VERIFIED" && (
+            <div className="alert alert-warning" role="alert">
+              <i className="bi bi-exclamation-triangle me-2" />
+              This prescription was already verified. Saving changes will move
+              it back to <strong>Pending</strong> and it will need to be
+              re-verified before it can be billed or dispensed.
+            </div>
+          )}
           <div className={sourceFileUrl ? "prescription-editor-split" : ""}>
             {sourceFileUrl && (
               <aside className="prescription-source-pane">
@@ -1830,6 +1863,19 @@ export function PrescriptionsPage() {
                       placeholder="Prescriber name"
                       required
                     />
+                    <button
+                      type="button"
+                      className="btn btn-outline-secondary"
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          prescriberTitle: "",
+                          prescriberName: "Not Mentioned",
+                        })
+                      }
+                    >
+                      Not mentioned
+                    </button>
                   </div>
                   <datalist id="prescriber-options">
                     {[...new Set(rows.map((row) => row.prescriberName))].map(
@@ -1942,10 +1988,8 @@ export function PrescriptionsPage() {
                 const auto = calculated(item);
                 const liquid = isLiquid(auto.product);
                 return (
-                  <div
-                    className="row g-2 border rounded-3 p-2 mb-3"
-                    key={index}
-                  >
+                  <div className="border rounded-3 p-2 mb-3" key={index}>
+                    <div className="row g-2">
                     <div className="col-md-5">
                       <label className="form-label small">Medicine</label>
                       <SearchableSelect
@@ -1971,14 +2015,14 @@ export function PrescriptionsPage() {
                     </div>
                     <div className="col-md-2">
                       <label className="form-label small">
-                        {liquid ? "Volume each dose (mL)" : "Dose each time"}
+                        {liquid ? "mL each time" : "Dose each time"}
                       </label>
                       <input
                         className="form-control"
                         type="number"
                         list={liquid ? undefined : "solid-dose-options"}
-                        step="0.001"
-                        min="0.001"
+                        step={liquid ? "0.1" : "0.25"}
+                        min={liquid ? "0.1" : "0.25"}
                         value={
                           liquid && item.liquidDoseMode === "STRENGTH"
                             ? auto.dose
@@ -2337,8 +2381,8 @@ export function PrescriptionsPage() {
                           <input
                             className="form-control"
                             type="number"
-                            min="0.001"
-                            step="0.001"
+                            min={liquid ? "0.1" : "0.25"}
+                            step={liquid ? "0.1" : "0.25"}
                             value={item.overrideQuantity}
                             onChange={(event) =>
                               updateLine(index, {
@@ -2365,6 +2409,7 @@ export function PrescriptionsPage() {
                         </div>
                       </>
                     )}
+                    </div>
                   </div>
                 );
               })}
@@ -2495,6 +2540,7 @@ export function PrescriptionsPage() {
                               <input
                                 className="form-control"
                                 type="number"
+                                list="retail-quantity-options"
                                 min="0.001"
                                 max={
                                   selectedProduct
@@ -2870,6 +2916,7 @@ export function PrescriptionsPage() {
                               <input
                                 className="form-control"
                                 type="number"
+                                list="retail-quantity-options"
                                 min="0.001"
                                 max={available || undefined}
                                 step="0.001"
@@ -3212,29 +3259,39 @@ export function PrescriptionsPage() {
                 <div className="alert alert-success mt-3">
                   <strong>Cashier payment confirmed.</strong>
                   <div className="row align-items-end mt-2">
-                    <div className="col-md-7">
-                      <label className="form-label">
-                        Six-digit PIN from customer receipt
-                      </label>
-                      <input
-                        className="form-control form-control-lg text-center"
-                        inputMode="numeric"
-                        maxLength={6}
-                        pattern="[0-9]{6}"
-                        value={dispense.pickupPin || ""}
-                        onChange={(event) =>
-                          setDispense({
-                            ...dispense,
-                            pickupPin: event.target.value
-                              .replace(/\D/g, "")
-                              .slice(0, 6),
-                            paymentRequestId: action.rx.paymentRequest.id,
-                          })
-                        }
-                        placeholder="______"
-                        required
-                      />
-                    </div>
+                    {operationSettings.requirePickupPin && (
+                      <div className="col-md-7">
+                        <label className="form-label">
+                          Six-digit PIN from customer receipt
+                        </label>
+                        <input
+                          className="form-control form-control-lg text-center"
+                          inputMode="numeric"
+                          maxLength={6}
+                          pattern="[0-9]{6}"
+                          value={dispense.pickupPin || ""}
+                          onChange={(event) =>
+                            setDispense({
+                              ...dispense,
+                              pickupPin: event.target.value
+                                .replace(/\D/g, "")
+                                .slice(0, 6),
+                              paymentRequestId: action.rx.paymentRequest.id,
+                            })
+                          }
+                          placeholder="______"
+                          required
+                        />
+                      </div>
+                    )}
+                    {!operationSettings.requirePickupPin && (
+                      <div className="col-md-7">
+                        <small className="text-secondary">
+                          PIN verification is turned off for this pharmacy —
+                          confirm with the patient and dispense directly.
+                        </small>
+                      </div>
+                    )}
                     <div className="col-md-5">
                       <button
                         type="button"
@@ -3253,13 +3310,18 @@ export function PrescriptionsPage() {
               {action.rx.paymentRequest?.status === "PAID" && (
                 <ModalActions
                   onClose={closeAction}
-                  submitLabel="Verify PIN and dispense"
+                  submitLabel={
+                    operationSettings.requirePickupPin
+                      ? "Verify PIN and dispense"
+                      : "Dispense"
+                  }
                   busy={
                     busy ||
                     quoteBusy ||
                     !quote ||
                     !!quoteError ||
-                    Boolean((dispense.pickupPin || "").length !== 6)
+                    (operationSettings.requirePickupPin &&
+                      Boolean((dispense.pickupPin || "").length !== 6))
                   }
                   busyLabel={busy ? "Dispensing…" : "Calculating…"}
                 />

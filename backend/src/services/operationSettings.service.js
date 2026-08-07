@@ -5,6 +5,8 @@ const keys = {
   nearExpiryDays: "nearExpiryWarningDays",
   auditTrashEnabled: "auditTrashEnabled",
   auditTrashRetentionDays: "auditTrashRetentionDays",
+  requirePickupPin: "requirePickupPin",
+  cashierCanDispenseAtPayment: "cashierCanDispenseAtPayment",
 };
 
 const defaults = {
@@ -12,6 +14,8 @@ const defaults = {
   nearExpiryDays: 90,
   auditTrashEnabled: true,
   auditTrashRetentionDays: 30,
+  requirePickupPin: true,
+  cashierCanDispenseAtPayment: false,
 };
 
 const settingMap = (rows) =>
@@ -51,6 +55,14 @@ export const operationSettingsService = {
         parsedAuditTrashDays <= 365
           ? parsedAuditTrashDays
           : defaults.auditTrashRetentionDays,
+      requirePickupPin:
+        values[keys.requirePickupPin] === undefined
+          ? defaults.requirePickupPin
+          : values[keys.requirePickupPin] === "true",
+      cashierCanDispenseAtPayment:
+        values[keys.cashierCanDispenseAtPayment] === undefined
+          ? defaults.cashierCanDispenseAtPayment
+          : values[keys.cashierCanDispenseAtPayment] === "true",
     };
   },
 
@@ -75,6 +87,16 @@ export const operationSettingsService = {
         where: { key: keys.auditTrashRetentionDays },
         create: { key: keys.auditTrashRetentionDays, value: String(data.auditTrashRetentionDays) },
         update: { value: String(data.auditTrashRetentionDays) },
+      }),
+      prisma.systemSetting.upsert({
+        where: { key: keys.requirePickupPin },
+        create: { key: keys.requirePickupPin, value: String(data.requirePickupPin) },
+        update: { value: String(data.requirePickupPin) },
+      }),
+      prisma.systemSetting.upsert({
+        where: { key: keys.cashierCanDispenseAtPayment },
+        create: { key: keys.cashierCanDispenseAtPayment, value: String(data.cashierCanDispenseAtPayment) },
+        update: { value: String(data.cashierCanDispenseAtPayment) },
       }),
     ]);
     return this.get();
