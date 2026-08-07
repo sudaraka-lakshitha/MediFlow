@@ -39,7 +39,7 @@
   display: grid;
   grid-template-columns: 1.25fr 0.8fr 1.25fr 0.8fr 1.25fr 1.5fr;
   gap: 10px;
-  align-items: end;
+  align-items: start;
 }
 
 .liquid-dose-result {

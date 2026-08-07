@@ -156,10 +156,24 @@ export const prescriptionService = {
   async quoteDispensing(prescriptionId, input) {
     const prescription = await prisma.prescription.findUnique({
       where: { id: prescriptionId },
-      include: { items: { include: { product: true } } },
+      include: { items: { include: { product: true } }, paymentRequest: { select: { id: true, status: true } } },
     });
     if (!prescription) throw new AppError(404, 'Prescription not found.');
     if (!['VERIFIED', 'PARTIALLY_DISPENSED'].includes(prescription.status)) throw new AppError(409, 'Only verified prescriptions can be quoted for dispensing.');
+
+    // A PAID bill already holds a reservation against these exact units. Re-quoting it (e.g. the
+    // live preview while the dispense modal is open) must not count that hold against itself, or a
+    // bill that reserved the last remaining stock would falsely report itself as insufficient.
+    const ownPaymentRequestId = prescription.paymentRequest?.status === 'PAID' ? prescription.paymentRequest.id : null;
+    const ownReservations = ownPaymentRequestId
+      ? await prisma.stockReservation.findMany({ where: { paymentRequestId: ownPaymentRequestId }, select: { batchId: true, quantity: true, batch: { select: { productId: true } } } })
+      : [];
+    const ownReservedByProduct = new Map();
+    const ownReservedByBatch = new Map();
+    for (const reservation of ownReservations) {
+      ownReservedByProduct.set(reservation.batch.productId, (ownReservedByProduct.get(reservation.batch.productId) || new Prisma.Decimal(0)).add(reservation.quantity));
+      ownReservedByBatch.set(reservation.batchId, (ownReservedByBatch.get(reservation.batchId) || new Prisma.Decimal(0)).add(reservation.quantity));
+    }
 
     const allocations = []; const lines = []; let subtotal = new Prisma.Decimal(0); const now = new Date();
     for (const requested of input.items) {
@@ -168,7 +182,8 @@ export const prescriptionService = {
       const quantity = new Prisma.Decimal(requested.quantity); const remaining = item.prescribedQuantity.sub(item.dispensedQuantity);
       if (quantity.greaterThan(remaining)) throw new AppError(409, `${item.product.genericName}: quantity exceeds the prescribed remainder.`);
       const stock = await prisma.inventoryBatch.aggregate({ where: { productId: item.productId, quantityAvailable: { gt: 0 }, expiryDate: { gte: now }, restricted: false }, _sum: { quantityAvailable: true, quantityReserved: true } });
-      const available = (stock._sum.quantityAvailable || new Prisma.Decimal(0)).sub(stock._sum.quantityReserved || 0);
+      const reservedByOthers = (stock._sum.quantityReserved || new Prisma.Decimal(0)).sub(ownReservedByProduct.get(item.productId) || 0);
+      const available = (stock._sum.quantityAvailable || new Prisma.Decimal(0)).sub(reservedByOthers);
       if (available.lessThan(quantity)) throw new AppError(409, `Insufficient usable stock for ${item.product.genericName}.`);
       const lineTotal = item.product.sellingPrice.mul(quantity).toDecimalPlaces(2); subtotal = subtotal.add(lineTotal);
       allocations.push({ productId: item.productId, categoryId: item.product.categoryId, quantity, unitPrice: item.product.sellingPrice, lineTotal });
@@ -181,7 +196,7 @@ export const prescriptionService = {
       where: { id: { in: retailProductIds }, active: true, prescriptionRequired: false },
       include: {
         category: true,
-        batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: now }, restricted: false }, select: { quantityAvailable: true, quantityReserved: true } },
+        batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: now }, restricted: false }, select: { id: true, quantityAvailable: true, quantityReserved: true } },
       },
     }) : [];
     if (retailProducts.length !== retailProductIds.length) throw new AppError(400, 'One or more retail items are unavailable or require a prescription.');
@@ -189,7 +204,8 @@ export const prescriptionService = {
     for (const requested of retailRequests) {
       const product = retailById.get(requested.productId);
       const quantity = new Prisma.Decimal(requested.quantity);
-      const available = usableStockTotal(product.batches);
+      const adjustedBatches = product.batches.map((batch) => ({ ...batch, quantityReserved: batch.quantityReserved.sub(ownReservedByBatch.get(batch.id) || 0) }));
+      const available = usableStockTotal(adjustedBatches);
       if (available.lessThan(quantity)) throw new AppError(409, `Insufficient usable stock for ${product.genericName}.`);
       const lineTotal = product.sellingPrice.mul(quantity).toDecimalPlaces(2);
       subtotal = subtotal.add(lineTotal);

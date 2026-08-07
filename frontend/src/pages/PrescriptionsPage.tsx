@@ -1942,10 +1942,8 @@ export function PrescriptionsPage() {
                 const auto = calculated(item);
                 const liquid = isLiquid(auto.product);
                 return (
-                  <div
-                    className="row g-2 border rounded-3 p-2 mb-3"
-                    key={index}
-                  >
+                  <div className="border rounded-3 p-2 mb-3" key={index}>
+                    <div className="row g-2">
                     <div className="col-md-5">
                       <label className="form-label small">Medicine</label>
                       <SearchableSelect
@@ -1971,7 +1969,7 @@ export function PrescriptionsPage() {
                     </div>
                     <div className="col-md-2">
                       <label className="form-label small">
-                        {liquid ? "Volume each dose (mL)" : "Dose each time"}
+                        {liquid ? "mL each time" : "Dose each time"}
                       </label>
                       <input
                         className="form-control"
@@ -2365,6 +2363,7 @@ export function PrescriptionsPage() {
                         </div>
                       </>
                     )}
+                    </div>
                   </div>
                 );
               })}
