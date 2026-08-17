@@ -62,7 +62,9 @@ apiRoutes.post('/bank-accounts', authenticate, authorize('ADMIN'), validate({ bo
 apiRoutes.put('/bank-accounts/:id', authenticate, authorize('ADMIN'), validate({ params: idParams, body: bankAccountSchema }), asyncHandler(bankAccountController.update));
 apiRoutes.patch('/bank-accounts/:id/active', authenticate, authorize('ADMIN'), validate({ params: idParams, body: bankAccountActiveSchema }), asyncHandler(bankAccountController.setActive));
 
-apiRoutes.get('/payment-requests/:id/handoff.pdf', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER'), validate({ params: idParams }), asyncHandler(paymentRequestController.handoff));
+// Patients are included so they can read the invoice they are being asked to pay;
+// documentData() resolves it through get(), which only lets a patient see their own.
+apiRoutes.get('/payment-requests/:id/handoff.pdf', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams }), asyncHandler(paymentRequestController.handoff));
 apiRoutes.get('/payment-requests/:id/receipt.pdf', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams }), asyncHandler(paymentRequestController.receipt));
 apiRoutes.get('/audit-logs/me', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER'), validate({ query: myActivityQuerySchema }), asyncHandler(auditController.myActivity));
 apiRoutes.get('/audit-logs', authenticate, authorize('ADMIN'), validate({ query: auditQuerySchema }), asyncHandler(auditController.list));

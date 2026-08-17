@@ -43,6 +43,11 @@ export function SalesPage() {
   const [voidTarget, setVoidTarget] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [invoiceBusy, setInvoiceBusy] = useState<number | null>(null);
+  // Patient-side online payment
+  const [myInvoices, setMyInvoices] = useState<any[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
+  const [payOnline, setPayOnline] = useState<any>(null);
+  const [declineTarget, setDeclineTarget] = useState<any>(null);
   const load = useCallback(async () => {
     try {
       const requests = [api.get("/sales")];
@@ -53,6 +58,7 @@ export function SalesPage() {
           api.get("/payment-requests"),
           api.get("/settings/operations"),
         );
+      else requests.push(api.get("/payment-requests"), api.get("/bank-accounts"));
       const result = await Promise.all(requests);
       setRows(result[0].data.data);
       if (staff) {
@@ -64,6 +70,9 @@ export function SalesPage() {
           ),
         );
         setOperationSettings(result[4].data.data);
+      } else {
+        setMyInvoices(result[1].data.data);
+        setBankAccounts(result[2].data.data);
       }
     } catch (caught) {
       setError(errorMessage(caught));
@@ -177,6 +186,60 @@ export function SalesPage() {
       setBusy(false);
     }
   };
+  const submitSlip = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!payOnline.file) {
+      setError("Attach the bank slip before sending it.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const fileBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () =>
+          resolve(String(reader.result).split(",")[1] || "");
+        reader.onerror = () => reject(new Error("Could not read that file."));
+        reader.readAsDataURL(payOnline.file);
+      });
+      await api.post(`/payment-requests/${payOnline.invoice.id}/slip`, {
+        originalName: payOnline.file.name,
+        mimeType: payOnline.file.type,
+        fileBase64,
+        declaredAmount: Number(payOnline.declaredAmount),
+        bankAccountId: payOnline.bankAccountId
+          ? Number(payOnline.bankAccountId)
+          : null,
+        reference: payOnline.reference || null,
+        paidOn: payOnline.paidOn || null,
+        note: payOnline.note || null,
+      });
+      setPayOnline(null);
+      await load();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitDecline = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/payment-requests/${declineTarget.invoice.id}/decline`, {
+        reason: declineTarget.reason,
+      });
+      setDeclineTarget(null);
+      await load();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const fulfillRetail = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -285,6 +348,136 @@ export function SalesPage() {
         )}
       </div>
       <Alert message={error} />
+
+      {!staff &&
+        (() => {
+          const openInvoices = myInvoices.filter((invoice: any) =>
+            ["AWAITING_PAYMENT", "SLIP_SUBMITTED"].includes(invoice.status),
+          );
+          if (!openInvoices.length) return null;
+          return (
+            <div className="panel">
+              <div className="panel-header">
+                <div>
+                  <h3>Invoices to pay</h3>
+                  <small className="text-secondary">
+                    Pay at the pharmacy counter, or transfer the amount to the
+                    pharmacy and send us the bank slip.
+                  </small>
+                </div>
+              </div>
+              {openInvoices.map((invoice: any) => {
+                const pendingSlip = (invoice.slips || []).find(
+                  (slip: any) => slip.status === "PENDING",
+                );
+                const lastRejected = (invoice.slips || []).find(
+                  (slip: any) => slip.status === "REJECTED",
+                );
+                return (
+                  <div
+                    key={invoice.id}
+                    className="border rounded-3 p-3 mb-3"
+                  >
+                    <div className="d-flex flex-wrap justify-content-between align-items-start gap-2">
+                      <div>
+                        <strong>{invoice.requestNumber}</strong>
+                        <small className="d-block text-secondary">
+                          {invoice.prescription?.prescriptionNumber ||
+                            "Pharmacy items"}{" "}
+                          · {new Date(invoice.createdAt).toLocaleDateString()}
+                        </small>
+                      </div>
+                      <div className="text-end">
+                        <strong className="d-block fs-5">
+                          {money(invoice.total)}
+                        </strong>
+                        <Status value={invoice.status} />
+                      </div>
+                    </div>
+
+                    <div className="mt-2">
+                      {invoice.items.map((item: any) => (
+                        <small className="d-block text-secondary" key={item.id}>
+                          {item.product.genericName} {item.product.strength} ×{" "}
+                          {item.quantity} — {money(item.lineTotal)}
+                        </small>
+                      ))}
+                    </div>
+
+                    {pendingSlip ? (
+                      <div className="alert alert-info mt-3 mb-0">
+                        <strong>Your bank slip is being checked.</strong>
+                        <small className="d-block">
+                          You sent {money(pendingSlip.declaredAmount)} on{" "}
+                          {pendingSlip.paidOn
+                            ? new Date(pendingSlip.paidOn).toLocaleDateString()
+                            : "an unstated date"}
+                          . The pharmacy will confirm it shortly and start
+                          preparing your medicine.
+                        </small>
+                      </div>
+                    ) : (
+                      <>
+                        {lastRejected && (
+                          <div className="alert alert-warning mt-3 mb-2">
+                            <strong>Your last slip was not accepted.</strong>
+                            <small className="d-block">
+                              {lastRejected.rejectionReason}
+                            </small>
+                          </div>
+                        )}
+                        <div className="d-flex flex-wrap gap-2 mt-3">
+                          <button
+                            className="btn btn-primary"
+                            onClick={() => {
+                              setError("");
+                              setPayOnline({
+                                invoice,
+                                declaredAmount: Number(invoice.total),
+                                bankAccountId: bankAccounts[0]?.id || "",
+                                reference: invoice.requestNumber,
+                                paidOn: new Date().toISOString().slice(0, 10),
+                                note: "",
+                                file: null,
+                              });
+                            }}
+                            disabled={!bankAccounts.length}
+                          >
+                            <i className="bi bi-bank me-2" />
+                            Pay by bank transfer
+                          </button>
+                          <button
+                            className="btn btn-outline-danger"
+                            onClick={() => {
+                              setError("");
+                              setDeclineTarget({ invoice, reason: "" });
+                            }}
+                          >
+                            Decline this invoice
+                          </button>
+                          <button
+                            className="btn btn-outline-secondary"
+                            onClick={() => paymentPdf(invoice, "handoff")}
+                          >
+                            <i className="bi bi-printer me-1" />
+                            View invoice
+                          </button>
+                        </div>
+                        {!bankAccounts.length && (
+                          <small className="d-block text-secondary mt-2">
+                            Online payment is not available right now — please
+                            pay at the pharmacy counter.
+                          </small>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+
       {staff && retailRequests.length > 0 && (
         <div className="panel">
           <div className="panel-header">
@@ -724,6 +917,174 @@ export function SalesPage() {
           </form>
         </Modal>
       )}
+      {payOnline && (
+        <Modal
+          title={`Pay by bank transfer — ${payOnline.invoice.requestNumber}`}
+          onClose={() => setPayOnline(null)}
+          size="lg"
+        >
+          <form onSubmit={submitSlip}>
+            <div className="alert alert-info">
+              <strong>Amount to transfer: {money(payOnline.invoice.total)}</strong>
+              <small className="d-block">
+                Transfer to one of the accounts below, then attach the bank slip
+                so the pharmacy can confirm it.
+              </small>
+            </div>
+
+            <label className="form-label">Pharmacy bank account</label>
+            <div className="mb-3">
+              {bankAccounts.map((account: any) => (
+                <label
+                  key={account.id}
+                  className={`d-block border rounded-3 p-3 mb-2 ${
+                    Number(payOnline.bankAccountId) === account.id
+                      ? "border-primary"
+                      : ""
+                  }`}
+                  style={{ cursor: "pointer" }}
+                >
+                  <div className="d-flex align-items-start gap-2">
+                    <input
+                      type="radio"
+                      name="bankAccount"
+                      className="form-check-input mt-1"
+                      checked={Number(payOnline.bankAccountId) === account.id}
+                      onChange={() =>
+                        setPayOnline({ ...payOnline, bankAccountId: account.id })
+                      }
+                    />
+                    <div>
+                      <strong>{account.bankName}</strong>
+                      {account.branch && (
+                        <span className="text-secondary"> · {account.branch}</span>
+                      )}
+                      <small className="d-block">
+                        {account.accountName} — <strong>{account.accountNumber}</strong>
+                      </small>
+                      {account.instructions && (
+                        <small className="d-block text-secondary">
+                          {account.instructions}
+                        </small>
+                      )}
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            <div className="form-grid">
+              <div>
+                <label className="form-label">Amount you transferred</label>
+                <input
+                  className="form-control"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={payOnline.declaredAmount}
+                  onChange={(event) =>
+                    setPayOnline({ ...payOnline, declaredAmount: event.target.value })
+                  }
+                  required
+                />
+              </div>
+              <div>
+                <label className="form-label">Date of transfer</label>
+                <input
+                  className="form-control"
+                  type="date"
+                  max={new Date().toISOString().slice(0, 10)}
+                  value={payOnline.paidOn}
+                  onChange={(event) =>
+                    setPayOnline({ ...payOnline, paidOn: event.target.value })
+                  }
+                />
+              </div>
+              <div className="full">
+                <label className="form-label">Bank reference</label>
+                <input
+                  className="form-control"
+                  value={payOnline.reference}
+                  onChange={(event) =>
+                    setPayOnline({ ...payOnline, reference: event.target.value })
+                  }
+                  placeholder="The reference shown on your transfer"
+                />
+              </div>
+              <div className="full">
+                <label className="form-label">Bank slip</label>
+                <input
+                  className="form-control"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,application/pdf"
+                  onChange={(event) =>
+                    setPayOnline({
+                      ...payOnline,
+                      file: event.target.files?.[0] || null,
+                    })
+                  }
+                  required
+                />
+                <small className="text-secondary">
+                  A photo or PDF of the deposit slip or transfer confirmation.
+                </small>
+              </div>
+              <div className="full">
+                <label className="form-label">Note (optional)</label>
+                <input
+                  className="form-control"
+                  value={payOnline.note}
+                  onChange={(event) =>
+                    setPayOnline({ ...payOnline, note: event.target.value })
+                  }
+                />
+              </div>
+            </div>
+
+            <Alert message={error} />
+            <ModalActions
+              onClose={() => setPayOnline(null)}
+              submitLabel="Send slip to the pharmacy"
+              busy={busy}
+            />
+          </form>
+        </Modal>
+      )}
+
+      {declineTarget && (
+        <Modal
+          title={`Decline invoice — ${declineTarget.invoice.requestNumber}`}
+          onClose={() => setDeclineTarget(null)}
+          size="sm"
+        >
+          <form onSubmit={submitDecline}>
+            <div className="alert alert-warning">
+              <strong>This cancels the invoice.</strong>
+              <small className="d-block">
+                Your prescription stays on file, so the pharmacy can quote it
+                again with different quantities if you ask.
+              </small>
+            </div>
+            <label className="form-label">Why are you declining it?</label>
+            <textarea
+              className="form-control"
+              value={declineTarget.reason}
+              onChange={(event) =>
+                setDeclineTarget({ ...declineTarget, reason: event.target.value })
+              }
+              placeholder="For example: more than I expected, I would like a smaller quantity."
+              required
+            />
+            <Alert message={error} />
+            <ModalActions
+              onClose={() => setDeclineTarget(null)}
+              submitLabel="Decline invoice"
+              busy={busy || declineTarget.reason.trim().length < 3}
+            />
+          </form>
+        </Modal>
+      )}
+
       {handover && (
         <Modal
           title={`Retail handover — ${handover.requestNumber}`}

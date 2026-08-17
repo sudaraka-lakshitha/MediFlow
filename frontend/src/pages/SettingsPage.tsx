@@ -1,6 +1,17 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api/client";
-import { Alert, Loading } from "../components/Ui";
+import { Modal, ModalActions } from "../components/Modal";
+import { Alert, Empty, Loading, Status } from "../components/Ui";
+
+const emptyAccount = {
+  id: 0,
+  bankName: "",
+  accountName: "",
+  accountNumber: "",
+  branch: "",
+  instructions: "",
+  active: true,
+};
 
 export function SettingsPage() {
   const [form, setForm] = useState({
@@ -16,13 +27,59 @@ export function SettingsPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [accountModal, setAccountModal] = useState<any>(null);
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountError, setAccountError] = useState("");
+
+  const loadAccounts = useCallback(async () => {
+    try {
+      setAccounts((await api.get("/bank-accounts")).data.data);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
+  }, []);
+
   useEffect(() => {
-    api
-      .get("/settings/operations")
-      .then((response) => setForm(response.data.data))
+    Promise.all([api.get("/settings/operations"), loadAccounts()])
+      .then(([settings]) => setForm(settings.data.data))
       .catch((caught) => setError(errorMessage(caught)))
       .finally(() => setLoading(false));
-  }, []);
+  }, [loadAccounts]);
+
+  const saveAccount = async (event: FormEvent) => {
+    event.preventDefault();
+    setAccountBusy(true);
+    setAccountError("");
+    try {
+      const payload = {
+        bankName: accountModal.bankName,
+        accountName: accountModal.accountName,
+        accountNumber: accountModal.accountNumber,
+        branch: accountModal.branch || null,
+        instructions: accountModal.instructions || null,
+        active: accountModal.active,
+      };
+      if (accountModal.id) await api.put(`/bank-accounts/${accountModal.id}`, payload);
+      else await api.post("/bank-accounts", payload);
+      setAccountModal(null);
+      await loadAccounts();
+    } catch (caught) {
+      setAccountError(errorMessage(caught));
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const toggleAccount = async (account: any) => {
+    setError("");
+    try {
+      await api.patch(`/bank-accounts/${account.id}/active`, { active: !account.active });
+      await loadAccounts();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
+  };
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -258,6 +315,181 @@ export function SettingsPage() {
           </button>
         </div>
       </form>
+
+      <div className="panel operation-settings">
+        <div className="panel-header">
+          <div>
+            <h3>Bank accounts for online payment</h3>
+            <small className="text-secondary">
+              Customers paying by transfer see these details and upload their
+              slip against the account they used.
+            </small>
+          </div>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              setAccountError("");
+              setAccountModal({ ...emptyAccount });
+            }}
+          >
+            <i className="bi bi-plus-lg me-2" />
+            Add account
+          </button>
+        </div>
+
+        {accounts.length ? (
+          <div className="table-responsive">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Bank</th>
+                  <th>Account name</th>
+                  <th>Account number</th>
+                  <th>Branch</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {accounts.map((account) => (
+                  <tr key={account.id}>
+                    <td>
+                      <strong>{account.bankName}</strong>
+                      {account.instructions && (
+                        <small className="d-block text-secondary">
+                          {account.instructions}
+                        </small>
+                      )}
+                    </td>
+                    <td>{account.accountName}</td>
+                    <td>{account.accountNumber}</td>
+                    <td>{account.branch || "—"}</td>
+                    <td>
+                      <Status value={account.active ? "ACTIVE" : "INACTIVE"} />
+                    </td>
+                    <td>
+                      <div className="d-flex flex-wrap gap-1">
+                        <button
+                          className="btn btn-sm btn-outline-secondary"
+                          onClick={() => {
+                            setAccountError("");
+                            setAccountModal({
+                              ...account,
+                              branch: account.branch || "",
+                              instructions: account.instructions || "",
+                            });
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className={`btn btn-sm ${account.active ? "btn-outline-danger" : "btn-outline-primary"}`}
+                          onClick={() => toggleAccount(account)}
+                        >
+                          {account.active ? "Stop using" : "Use again"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <Empty text="No bank accounts yet. Add one so customers can pay online." />
+        )}
+      </div>
+
+      {accountModal && (
+        <Modal
+          title={accountModal.id ? "Edit bank account" : "Add bank account"}
+          onClose={() => setAccountModal(null)}
+        >
+          <form onSubmit={saveAccount}>
+            <div className="form-grid">
+              <div>
+                <label className="form-label">Bank name</label>
+                <input
+                  className="form-control"
+                  value={accountModal.bankName}
+                  onChange={(event) =>
+                    setAccountModal({ ...accountModal, bankName: event.target.value })
+                  }
+                  required
+                />
+              </div>
+              <div>
+                <label className="form-label">Branch</label>
+                <input
+                  className="form-control"
+                  value={accountModal.branch}
+                  onChange={(event) =>
+                    setAccountModal({ ...accountModal, branch: event.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="form-label">Account name</label>
+                <input
+                  className="form-control"
+                  value={accountModal.accountName}
+                  onChange={(event) =>
+                    setAccountModal({ ...accountModal, accountName: event.target.value })
+                  }
+                  required
+                />
+              </div>
+              <div>
+                <label className="form-label">Account number</label>
+                <input
+                  className="form-control"
+                  value={accountModal.accountNumber}
+                  onChange={(event) =>
+                    setAccountModal({ ...accountModal, accountNumber: event.target.value })
+                  }
+                  required
+                />
+              </div>
+              <div className="full">
+                <label className="form-label">
+                  Instructions shown to the customer
+                </label>
+                <input
+                  className="form-control"
+                  value={accountModal.instructions}
+                  onChange={(event) =>
+                    setAccountModal({ ...accountModal, instructions: event.target.value })
+                  }
+                  placeholder="For example: use your invoice number as the payment reference."
+                />
+              </div>
+              <div className="full">
+                <div className="form-check form-switch">
+                  <input
+                    className="form-check-input"
+                    type="checkbox"
+                    role="switch"
+                    id="bankAccountActive"
+                    checked={accountModal.active}
+                    onChange={(event) =>
+                      setAccountModal({ ...accountModal, active: event.target.checked })
+                    }
+                  />
+                  <label className="form-check-label" htmlFor="bankAccountActive">
+                    Show this account to customers
+                  </label>
+                </div>
+              </div>
+            </div>
+            <Alert message={accountError} />
+            <ModalActions
+              onClose={() => setAccountModal(null)}
+              submitLabel={accountModal.id ? "Save account" : "Add account"}
+              busy={accountBusy}
+            />
+          </form>
+        </Modal>
+      )}
     </>
   );
 }

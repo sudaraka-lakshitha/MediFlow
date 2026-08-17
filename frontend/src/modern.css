@@ -699,6 +699,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 /* Blue — info states */
 .status-retail,
 .status-information,
+.status-slip-submitted,
 .status-dispensed-awaiting {
   background: #E4EFF8;
   color: #1A5A82;

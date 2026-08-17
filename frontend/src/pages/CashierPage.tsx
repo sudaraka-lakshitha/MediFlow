@@ -35,6 +35,8 @@ export function CashierPage() {
   const [paid, setPaid] = useState<any>(null);
   const [retail, setRetail] = useState<any>(null);
   const [revoke, setRevoke] = useState<any>(null);
+  const [slipReview, setSlipReview] = useState<any>(null);
+  const [slipUrl, setSlipUrl] = useState("");
   const [toast, setToast] = useState<{ message: string; title: string; type: 'success' | 'danger' } | null>(null);
   const [retailOptions, setRetailOptions] = useState<{
     products: any[];
@@ -162,6 +164,59 @@ export function CashierPage() {
       setBusy(false);
     }
   };
+  // The slip image is fetched as a blob so it inherits the request's auth header rather
+  // than needing a public URL.
+  useEffect(() => {
+    if (!slipReview?.slip) {
+      setSlipUrl("");
+      return undefined;
+    }
+    let objectUrl = "";
+    let cancelled = false;
+    api
+      .get(
+        `/payment-requests/${slipReview.row.id}/slips/${slipReview.slip.id}/file`,
+        { responseType: "blob" },
+      )
+      .then((response) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(response.data);
+        setSlipUrl(objectUrl);
+      })
+      .catch((caught) => !cancelled && setError(errorMessage(caught)));
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [slipReview?.row?.id, slipReview?.slip?.id]);
+
+  const submitSlipReview = async (approved: boolean) => {
+    setBusy(true);
+    setError("");
+    try {
+      const response = await api.post(
+        `/payment-requests/${slipReview.row.id}/slips/${slipReview.slip.id}/review`,
+        { approved, reason: approved ? undefined : slipReview.reason },
+      );
+      const reqNum = slipReview.row.requestNumber;
+      setSlipReview(null);
+      if (approved) setPaid(response.data);
+      await load();
+      setToast({
+        title: approved ? "Bank Transfer Verified" : "Slip Rejected",
+        message: approved
+          ? `${reqNum} is paid and ready for the pharmacist.`
+          : `${reqNum} has been sent back to the customer for a corrected slip.`,
+        type: approved ? "success" : "danger",
+      });
+      setTimeout(() => setToast(null), 5000);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const openRetail = async () => {
     setError("");
     try {
@@ -302,6 +357,7 @@ export function CashierPage() {
           >
             <option value="">All statuses</option>
             <option value="AWAITING_PAYMENT">Awaiting payment</option>
+            <option value="SLIP_SUBMITTED">Bank slip to check</option>
             <option value="PAID">Paid—awaiting dispensing</option>
             <option value="FULFILLED">Dispensed</option>
             <option value="CANCELLED">Cancelled</option>
@@ -369,6 +425,21 @@ export function CashierPage() {
                           }}
                         >
                           Receive payment
+                        </button>
+                      )}
+                      {row.status === "SLIP_SUBMITTED" && (
+                        <button
+                          className="btn btn-sm btn-primary"
+                          onClick={() => {
+                            setError("");
+                            const slip = (row.slips || []).find(
+                              (s: any) => s.status === "PENDING",
+                            );
+                            setSlipReview({ row, slip, reason: "" });
+                          }}
+                        >
+                          <i className="bi bi-receipt-cutoff me-1" />
+                          Check bank slip
                         </button>
                       )}
                       {["PAID", "FULFILLED"].includes(row.status) && (
@@ -495,6 +566,151 @@ export function CashierPage() {
               busy={busy}
             />
           </form>
+        </Modal>
+      )}
+      {slipReview && (
+        <Modal
+          title={`Bank transfer slip — ${slipReview.row.requestNumber}`}
+          onClose={() => setSlipReview(null)}
+          size="lg"
+        >
+          {!slipReview.slip ? (
+            <Alert message="No slip is waiting for review on this bill." />
+          ) : (
+            <>
+              <div className="alert alert-info">
+                <strong>Check this against the bank before accepting.</strong>
+                <br />
+                <small>
+                  The customer states they transferred{" "}
+                  {money(slipReview.slip.declaredAmount)}. This bill is for{" "}
+                  {money(slipReview.row.total)}.
+                </small>
+              </div>
+
+              <div className="form-grid">
+                <div>
+                  <label className="form-label">Amount stated</label>
+                  <div className="form-control bg-light">
+                    <strong>{money(slipReview.slip.declaredAmount)}</strong>
+                  </div>
+                  {Number(slipReview.slip.declaredAmount) !==
+                    Number(slipReview.row.total) && (
+                    <small className="text-danger">
+                      This does not match the invoice total.
+                    </small>
+                  )}
+                </div>
+                <div>
+                  <label className="form-label">Invoice total</label>
+                  <div className="form-control bg-light">
+                    <strong>{money(slipReview.row.total)}</strong>
+                  </div>
+                </div>
+                <div>
+                  <label className="form-label">Bank reference</label>
+                  <div className="form-control bg-light">
+                    {slipReview.slip.reference || "Not given"}
+                  </div>
+                </div>
+                <div>
+                  <label className="form-label">Paid on</label>
+                  <div className="form-control bg-light">
+                    {slipReview.slip.paidOn
+                      ? new Date(slipReview.slip.paidOn).toLocaleDateString()
+                      : "Not given"}
+                  </div>
+                </div>
+                <div className="full">
+                  <label className="form-label">Paid into</label>
+                  <div className="form-control bg-light">
+                    {slipReview.slip.bankAccount
+                      ? `${slipReview.slip.bankAccount.bankName} · ${slipReview.slip.bankAccount.accountNumber}`
+                      : "Account not stated"}
+                  </div>
+                </div>
+                {slipReview.slip.note && (
+                  <div className="full">
+                    <label className="form-label">Customer note</label>
+                    <div className="form-control bg-light">
+                      {slipReview.slip.note}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <label className="form-label mt-3">Uploaded slip</label>
+              {slipUrl ? (
+                slipReview.slip.mimeType === "application/pdf" ? (
+                  <iframe
+                    title="Payment slip"
+                    src={slipUrl}
+                    style={{
+                      width: "100%",
+                      height: 340,
+                      border: "1px solid var(--line)",
+                      borderRadius: 10,
+                    }}
+                  />
+                ) : (
+                  <a href={slipUrl} target="_blank" rel="noopener noreferrer">
+                    <img
+                      src={slipUrl}
+                      alt="Payment slip"
+                      style={{
+                        maxWidth: "100%",
+                        maxHeight: 340,
+                        border: "1px solid var(--line)",
+                        borderRadius: 10,
+                      }}
+                    />
+                  </a>
+                )
+              ) : (
+                <div className="text-secondary small">Loading the slip…</div>
+              )}
+
+              <label className="form-label mt-3">
+                Reason (required only if you are rejecting)
+              </label>
+              <textarea
+                className="form-control"
+                value={slipReview.reason}
+                onChange={(event) =>
+                  setSlipReview({ ...slipReview, reason: event.target.value })
+                }
+                placeholder="For example: no matching credit found in the bank statement."
+              />
+
+              <Alert message={error} />
+              <div className="d-flex justify-content-end gap-2 mt-3">
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary"
+                  onClick={() => setSlipReview(null)}
+                  disabled={busy}
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline-danger"
+                  onClick={() => submitSlipReview(false)}
+                  disabled={busy || slipReview.reason.trim().length < 3}
+                >
+                  Reject slip
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => submitSlipReview(true)}
+                  disabled={busy}
+                >
+                  {busy ? "Working…" : "Verify and mark paid"}
+                </button>
+              </div>
+            </>
+          )}
         </Modal>
       )}
       {revoke && (
