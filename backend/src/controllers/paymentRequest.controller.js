@@ -11,6 +11,26 @@ export const retailPaymentRequestSchema = z.object({
   items: z.array(z.object({ productId: z.coerce.number().int().positive(), quantity: z.coerce.number().positive() })).min(1).max(100),
 });
 export const retailFulfillSchema = z.object({ pickupPin: z.string().regex(/^\d{6}$/).optional() });
+
+export const paymentSlipSchema = z.object({
+  originalName: z.string().trim().min(1).max(180),
+  mimeType: z.enum(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']),
+  fileBase64: z.string().min(8).max(3_600_000).regex(/^[A-Za-z0-9+/]+={0,2}$/, 'The uploaded slip is not valid base64 data.'),
+  declaredAmount: z.coerce.number().positive().max(100_000_000),
+  bankAccountId: z.coerce.number().int().positive().optional().nullable(),
+  reference: z.string().trim().max(120).optional().nullable(),
+  paidOn: z.coerce.date().refine((d) => d <= new Date(), 'The payment date cannot be in the future.').optional().nullable(),
+  note: z.string().trim().max(500).optional().nullable(),
+});
+export const slipReviewSchema = z.object({
+  approved: z.boolean(),
+  reason: z.string().trim().max(500).optional().nullable(),
+}).superRefine((data, context) => {
+  if (!data.approved && (!data.reason || data.reason.trim().length < 3)) {
+    context.addIssue({ code: 'custom', path: ['reason'], message: 'Tell the customer why the slip was not accepted.' });
+  }
+});
+export const declineInvoiceSchema = z.object({ reason: z.string().trim().min(3).max(500) });
 export const paymentRequestController = {
   list: async (req, res) => res.json({ data: await paymentRequestService.list(req.user) }),
   create: async (req, res) => {
@@ -54,6 +74,39 @@ export const paymentRequestController = {
     const data = await paymentRequestService.fulfillRetail(Number(req.params.id), req.body.pickupPin, req.user.id);
     await recordAudit({ userId: req.user.id, action: 'RETAIL_PIN_VERIFIED_AND_HANDED_OVER', entityType: 'PAYMENT_REQUEST', entityId: Number(req.params.id), details: { saleId: data.id, invoiceNumber: data.invoiceNumber }, ipAddress: req.ip });
     res.status(201).json({ data });
+  },
+  submitSlip: async (req, res) => {
+    const data = await paymentRequestService.submitSlip(Number(req.params.id), req.body, req.user);
+    await recordAudit({
+      userId: req.user.id, action: 'PAYMENT_SLIP_SUBMITTED', entityType: 'PAYMENT_REQUEST', entityId: data.id,
+      details: { requestNumber: data.requestNumber, declaredAmount: req.body.declaredAmount, reference: req.body.reference || null },
+      ipAddress: req.ip,
+    });
+    res.status(201).json({ data });
+  },
+  reviewSlip: async (req, res) => {
+    const result = await paymentRequestService.reviewSlip(Number(req.params.id), Number(req.params.slipId), req.body, req.user);
+    await recordAudit({
+      userId: req.user.id, action: req.body.approved ? 'PAYMENT_SLIP_VERIFIED' : 'PAYMENT_SLIP_REJECTED',
+      entityType: 'PAYMENT_REQUEST', entityId: result.data.id,
+      details: { requestNumber: result.data.requestNumber, slipId: Number(req.params.slipId), reason: req.body.reason || null },
+      ipAddress: req.ip,
+    });
+    res.json(result);
+  },
+  slipFile: async (req, res) => {
+    const slip = await paymentRequestService.slipFile(Number(req.params.id), Number(req.params.slipId), req.user);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', `inline; filename="${slip.originalName}"`);
+    res.type(slip.mimeType).send(slip.fileData);
+  },
+  decline: async (req, res) => {
+    const data = await paymentRequestService.declineByPatient(Number(req.params.id), req.body.reason, req.user);
+    await recordAudit({
+      userId: req.user.id, action: 'INVOICE_DECLINED_BY_PATIENT', entityType: 'PAYMENT_REQUEST', entityId: data.id,
+      details: { requestNumber: data.requestNumber, reason: req.body.reason }, ipAddress: req.ip,
+    });
+    res.json({ data });
   },
   handoff: async (req, res) => {
     const data = await paymentRequestService.documentData(Number(req.params.id), req.user);

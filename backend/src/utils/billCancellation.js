@@ -14,10 +14,13 @@ export const billCancellationPolicy = (bill, user, now = new Date()) => {
   if (bill.status === 'CANCELLED') {
     return { allowed: false, statusCode: 409, message: 'This bill has already been cancelled.' };
   }
-  if (!['AWAITING_PAYMENT', 'PAID'].includes(bill.status)) {
+  if (!['AWAITING_PAYMENT', 'SLIP_SUBMITTED', 'PAID'].includes(bill.status)) {
     return { allowed: false, statusCode: 409, message: 'This bill has already been dispensed or handed over, so it can no longer be cancelled.' };
   }
 
+  // A slip is only a claim of payment until the cashier checks it against the bank, so
+  // withdrawing is still safe - but whoever does it should know money may be in flight.
+  if (bill.status === 'SLIP_SUBMITTED') return { allowed: true, mode: 'WITHDRAW', slipPending: true };
   if (bill.status === 'AWAITING_PAYMENT') return { allowed: true, mode: 'WITHDRAW' };
 
   const canRevokePayment = user.role === 'ADMIN'

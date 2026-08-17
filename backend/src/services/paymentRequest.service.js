@@ -14,6 +14,16 @@ import { assertRetailAgeSuitability } from '../utils/ageSuitability.js';
 import { consumePaymentRequestStock, releaseReservations, reserveStock, usableStockTotal } from '../utils/stock.js';
 import { performPrescriptionDispense } from '../utils/prescriptionDispense.js';
 
+// The slip blob itself is deliberately left out - it is fetched through its own endpoint
+// so bill listings stay small.
+const slipSelect = {
+  id: true, status: true, declaredAmount: true, reference: true, paidOn: true, note: true,
+  originalName: true, mimeType: true, rejectionReason: true, reviewedAt: true, createdAt: true,
+  uploadedBy: { select: { id: true, fullName: true } },
+  reviewedBy: { select: { id: true, fullName: true } },
+  bankAccount: { select: { id: true, bankName: true, accountNumber: true } },
+};
+
 const include = {
   patient: { select: { id: true, fullName: true, email: true, phone: true } },
   pharmacist: { select: { id: true, fullName: true } },
@@ -21,11 +31,34 @@ const include = {
   cancelledBy: { select: { id: true, fullName: true } },
   prescription: { select: { id: true, prescriptionNumber: true, status: true, sourceUploadId: true } },
   items: { include: { product: { select: { id: true, genericName: true, strength: true, unit: true, productType: true, prescriptionRequired: true } } } },
+  slips: { select: slipSelect, orderBy: { createdAt: 'desc' } },
   sale: { select: { id: true, invoiceNumber: true } },
 };
 
 const canView = (record, user) => user.role !== 'PATIENT' || record.patientId === user.id;
 const safeRecord = ({ pickupPinHash, pickupPinEncrypted, ...record }) => record;
+
+// Both ways of paying a bill - cash at the counter, or a verified bank transfer - have to
+// end in exactly the same state: a PIN issued and the stock held in reserve. Keeping that
+// in one place stops the two routes drifting apart.
+const settleAsPaid = async (tx, { id, fromStatus, paymentMethod, paymentReference, cashierId, amountPaid }) => {
+  const pin = generatePickupPin();
+  const claimed = await tx.paymentRequest.updateMany({
+    where: { id, status: fromStatus },
+    data: {
+      amountPaid, paymentMethod, paymentReference: paymentReference || null, cashierId,
+      paidAt: new Date(), status: 'PAID',
+      pickupPinHash: hashPickupPin(id, pin), pickupPinEncrypted: encryptPickupPin(pin), pinAttempts: 0,
+    },
+  });
+  if (claimed.count !== 1) throw new AppError(409, 'This bill was just processed by another staff member. Refresh to see its latest status.');
+
+  const operationSettings = await operationSettingsService.get(tx);
+  const allocationOrder = batchAllocationOrder(operationSettings.allocationMethod);
+  const items = await tx.paymentRequestItem.findMany({ where: { paymentRequestId: id } });
+  await reserveStock(tx, id, items, allocationOrder);
+  return { pin, operationSettings };
+};
 
 export const paymentRequestService = {
   async list(user) {
@@ -181,21 +214,16 @@ export const paymentRequestService = {
   },
   async pay(id, paymentMethod, cashierId, paymentReference) {
     return serializable(async (tx) => {
-      const current = await tx.paymentRequest.findUnique({ where: { id }, include: { items: true } });
+      const current = await tx.paymentRequest.findUnique({ where: { id } });
       if (!current) throw new AppError(404, 'Payment request not found.');
+      if (current.status === 'SLIP_SUBMITTED') {
+        throw new AppError(409, 'A bank transfer slip is waiting to be checked for this bill. Verify or reject the slip instead of taking payment again.');
+      }
       if (current.status !== 'AWAITING_PAYMENT') throw new AppError(409, 'This payment request is not awaiting payment.');
-      const pin = generatePickupPin();
-      const claimed = await tx.paymentRequest.updateMany({
-        where: { id, status: 'AWAITING_PAYMENT' },
-        data: {
-          amountPaid: current.total, paymentMethod, paymentReference: paymentReference || null, cashierId, paidAt: new Date(), status: 'PAID',
-          pickupPinHash: hashPickupPin(id, pin), pickupPinEncrypted: encryptPickupPin(pin), pinAttempts: 0,
-        },
+
+      const { pin, operationSettings } = await settleAsPaid(tx, {
+        id, fromStatus: 'AWAITING_PAYMENT', paymentMethod, paymentReference, cashierId, amountPaid: current.total,
       });
-      if (claimed.count !== 1) throw new AppError(409, 'This bill was just processed by another cashier. Refresh to see its latest status.');
-      const operationSettings = await operationSettingsService.get(tx);
-      const allocationOrder = batchAllocationOrder(operationSettings.allocationMethod);
-      await reserveStock(tx, id, current.items, allocationOrder);
 
       let dispensed = null;
       if (operationSettings.cashierCanDispenseAtPayment && current.prescriptionId) {
@@ -206,6 +234,117 @@ export const paymentRequestService = {
       }
       const data = await tx.paymentRequest.findUnique({ where: { id }, include });
       return { data: safeRecord(data), pickupPin: dispensed ? null : pin, dispensed };
+    });
+  },
+
+  // ---------------------------------------------------------------- online bank transfer
+  async submitSlip(id, input, user) {
+    const record = await prisma.paymentRequest.findUnique({ where: { id }, select: { id: true, patientId: true, status: true, total: true } });
+    if (!record) throw new AppError(404, 'Invoice not found.');
+    if (user.role === 'PATIENT' && record.patientId !== user.id) throw new AppError(403, 'This invoice does not belong to you.');
+    if (record.status === 'SLIP_SUBMITTED') throw new AppError(409, 'A slip for this invoice is already waiting to be checked.');
+    if (record.status !== 'AWAITING_PAYMENT') {
+      throw new AppError(409, record.status === 'CANCELLED'
+        ? 'This invoice has been cancelled, so it can no longer be paid.'
+        : 'This invoice has already been paid.');
+    }
+    if (input.bankAccountId) {
+      const account = await prisma.bankAccount.findFirst({ where: { id: input.bankAccountId, active: true }, select: { id: true } });
+      if (!account) throw new AppError(400, 'Choose one of the pharmacy bank accounts currently listed.');
+    }
+
+    return prisma.$transaction(async (tx) => {
+      const claimed = await tx.paymentRequest.updateMany({ where: { id, status: 'AWAITING_PAYMENT' }, data: { status: 'SLIP_SUBMITTED' } });
+      if (claimed.count !== 1) throw new AppError(409, 'This invoice was just updated. Refresh to see its latest status.');
+      await tx.paymentSlip.create({
+        data: {
+          paymentRequestId: id, uploadedById: user.id, bankAccountId: input.bankAccountId || null,
+          originalName: input.originalName, mimeType: input.mimeType,
+          fileData: Buffer.from(input.fileBase64, 'base64'),
+          declaredAmount: input.declaredAmount, reference: input.reference || null,
+          paidOn: input.paidOn || null, note: input.note || null,
+        },
+      });
+      const data = await tx.paymentRequest.findUnique({ where: { id }, include });
+      return safeRecord(data);
+    });
+  },
+
+  async reviewSlip(id, slipId, decision, user) {
+    const slip = await prisma.paymentSlip.findFirst({
+      where: { id: slipId, paymentRequestId: id },
+      include: { paymentRequest: { select: { id: true, status: true, total: true, prescriptionId: true } } },
+    });
+    if (!slip) throw new AppError(404, 'Payment slip not found.');
+    if (slip.status !== 'PENDING') throw new AppError(409, 'This slip has already been reviewed.');
+    if (slip.paymentRequest.status !== 'SLIP_SUBMITTED') throw new AppError(409, 'This invoice is no longer waiting on a slip.');
+
+    if (decision.approved) {
+      return serializable(async (tx) => {
+        await tx.paymentSlip.update({
+          where: { id: slipId },
+          data: { status: 'VERIFIED', reviewedById: user.id, reviewedAt: new Date() },
+        });
+        const { pin, operationSettings } = await settleAsPaid(tx, {
+          id, fromStatus: 'SLIP_SUBMITTED', paymentMethod: 'BANK_TRANSFER',
+          paymentReference: slip.reference, cashierId: user.id, amountPaid: slip.paymentRequest.total,
+        });
+        let dispensed = null;
+        if (operationSettings.cashierCanDispenseAtPayment && slip.paymentRequest.prescriptionId) {
+          dispensed = await performPrescriptionDispense(tx, {
+            prescriptionId: slip.paymentRequest.prescriptionId, paymentRequestId: id, performedById: user.id,
+            notes: 'Dispensed on bank transfer verification (cashier dispense-at-payment enabled).',
+          });
+        }
+        const data = await tx.paymentRequest.findUnique({ where: { id }, include });
+        return { data: safeRecord(data), pickupPin: dispensed ? null : pin, dispensed };
+      });
+    }
+
+    // Rejected: the invoice goes back to awaiting payment so the customer can send a
+    // corrected slip. Nothing was reserved, so there is nothing to release.
+    return prisma.$transaction(async (tx) => {
+      await tx.paymentSlip.update({
+        where: { id: slipId },
+        data: { status: 'REJECTED', reviewedById: user.id, reviewedAt: new Date(), rejectionReason: decision.reason },
+      });
+      const claimed = await tx.paymentRequest.updateMany({ where: { id, status: 'SLIP_SUBMITTED' }, data: { status: 'AWAITING_PAYMENT' } });
+      if (claimed.count !== 1) throw new AppError(409, 'This invoice was just updated. Refresh to see its latest status.');
+      const data = await tx.paymentRequest.findUnique({ where: { id }, include });
+      return { data: safeRecord(data), pickupPin: null, dispensed: null };
+    });
+  },
+
+  async slipFile(id, slipId, user) {
+    const slip = await prisma.paymentSlip.findFirst({
+      where: { id: slipId, paymentRequestId: id },
+      select: { originalName: true, mimeType: true, fileData: true, paymentRequest: { select: { patientId: true } } },
+    });
+    if (!slip) throw new AppError(404, 'Payment slip not found.');
+    if (user.role === 'PATIENT' && slip.paymentRequest.patientId !== user.id) throw new AppError(403, 'This payment slip does not belong to you.');
+    return slip;
+  },
+
+  // A customer who is not happy with what they have been quoted can turn the invoice down
+  // instead of leaving it sitting in the cashier's queue.
+  async declineByPatient(id, reason, user) {
+    const record = await prisma.paymentRequest.findUnique({ where: { id }, select: { id: true, patientId: true, status: true } });
+    if (!record) throw new AppError(404, 'Invoice not found.');
+    if (record.patientId !== user.id) throw new AppError(403, 'This invoice does not belong to you.');
+    if (record.status !== 'AWAITING_PAYMENT') {
+      throw new AppError(409, record.status === 'SLIP_SUBMITTED'
+        ? 'You have already sent a payment slip for this invoice. Ask the pharmacy to cancel it instead.'
+        : 'This invoice can no longer be declined.');
+    }
+    return prisma.$transaction(async (tx) => {
+      const claimed = await tx.paymentRequest.updateMany({
+        where: { id, status: 'AWAITING_PAYMENT' },
+        data: { status: 'CANCELLED', cancellationReason: `Declined by the customer: ${reason}`, cancelledById: user.id, cancelledAt: new Date() },
+      });
+      if (claimed.count !== 1) throw new AppError(409, 'This invoice was just updated. Refresh to see its latest status.');
+      await releaseReservations(tx, id);
+      const data = await tx.paymentRequest.findUnique({ where: { id }, include });
+      return safeRecord(data);
     });
   },
   async documentData(id, user, requirePaid = false) {

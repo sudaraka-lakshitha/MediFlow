@@ -14,12 +14,13 @@ import { dashboardController } from '../controllers/dashboard.controller.js';
 import { auditController } from '../controllers/audit.controller.js';
 import { patientRoutes } from './patient.routes.js';
 import { reportController } from '../controllers/report.controller.js';
-import { idParams } from '../validators/common.validator.js';
+import { idParams, slipParams } from '../validators/common.validator.js';
 import { discountRoutes } from './discount.routes.js';
 import { drugInformationRoutes } from './drugInformation.routes.js';
 import { prescriptionUploadRoutes } from './prescriptionUpload.routes.js';
 import { adminExportController } from '../controllers/adminExport.controller.js';
-import { paymentRequestController, cashierPaymentSchema, retailFulfillSchema, retailPaymentRequestSchema } from '../controllers/paymentRequest.controller.js';
+import { paymentRequestController, cashierPaymentSchema, retailFulfillSchema, retailPaymentRequestSchema, paymentSlipSchema, slipReviewSchema, declineInvoiceSchema } from '../controllers/paymentRequest.controller.js';
+import { bankAccountController, bankAccountSchema, bankAccountActiveSchema } from '../controllers/bankAccount.controller.js';
 import { authorizeCashier } from '../middleware/authorizeCashier.js';
 import { auditQuerySchema, myActivityQuerySchema, staffAuditSummaryQuerySchema } from '../validators/audit.validator.js';
 import { operationSettingsController } from '../controllers/operationSettings.controller.js';
@@ -49,6 +50,18 @@ apiRoutes.post('/payment-requests/retail', authenticate, authorize('ADMIN', 'PHA
 apiRoutes.post('/payment-requests/:id/pay', authenticate, authorizeCashier, validate({ params: idParams, body: cashierPaymentSchema }), asyncHandler(paymentRequestController.pay));
 apiRoutes.post('/payment-requests/:id/cancel', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER'), validate({ params: idParams, body: z.object({ reason: z.string().trim().min(3).max(500) }) }), asyncHandler(paymentRequestController.cancel));
 apiRoutes.post('/payment-requests/:id/fulfill-retail', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: retailFulfillSchema }), asyncHandler(paymentRequestController.fulfillRetail));
+// Online bank-transfer path: the customer pays into a pharmacy account and uploads proof,
+// the cashier checks it against the bank, and only then does the bill become PAID.
+apiRoutes.post('/payment-requests/:id/slip', authenticate, authorize('PATIENT', 'ADMIN', 'PHARMACIST'), validate({ params: idParams, body: paymentSlipSchema }), asyncHandler(paymentRequestController.submitSlip));
+apiRoutes.post('/payment-requests/:id/slips/:slipId/review', authenticate, authorizeCashier, validate({ params: slipParams, body: slipReviewSchema }), asyncHandler(paymentRequestController.reviewSlip));
+apiRoutes.get('/payment-requests/:id/slips/:slipId/file', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: slipParams }), asyncHandler(paymentRequestController.slipFile));
+apiRoutes.post('/payment-requests/:id/decline', authenticate, authorize('PATIENT'), validate({ params: idParams, body: declineInvoiceSchema }), asyncHandler(paymentRequestController.decline));
+
+apiRoutes.get('/bank-accounts', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), asyncHandler(bankAccountController.list));
+apiRoutes.post('/bank-accounts', authenticate, authorize('ADMIN'), validate({ body: bankAccountSchema }), asyncHandler(bankAccountController.create));
+apiRoutes.put('/bank-accounts/:id', authenticate, authorize('ADMIN'), validate({ params: idParams, body: bankAccountSchema }), asyncHandler(bankAccountController.update));
+apiRoutes.patch('/bank-accounts/:id/active', authenticate, authorize('ADMIN'), validate({ params: idParams, body: bankAccountActiveSchema }), asyncHandler(bankAccountController.setActive));
+
 apiRoutes.get('/payment-requests/:id/handoff.pdf', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER'), validate({ params: idParams }), asyncHandler(paymentRequestController.handoff));
 apiRoutes.get('/payment-requests/:id/receipt.pdf', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams }), asyncHandler(paymentRequestController.receipt));
 apiRoutes.get('/audit-logs/me', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER'), validate({ query: myActivityQuerySchema }), asyncHandler(auditController.myActivity));

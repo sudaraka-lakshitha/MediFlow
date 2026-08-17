@@ -49,6 +49,18 @@ describe('revoking a bill the customer already paid', () => {
   });
 });
 
+describe('a bill whose customer says they have paid by bank transfer', () => {
+  const slipPending = { status: 'SLIP_SUBMITTED' };
+
+  it('can still be withdrawn, because a slip is only a claim until it is checked', () => {
+    expect(billCancellationPolicy(slipPending, pharmacist, now)).toMatchObject({ allowed: true, mode: 'WITHDRAW' });
+  });
+
+  it('flags that money may already be in flight', () => {
+    expect(billCancellationPolicy(slipPending, cashier, now).slipPending).toBe(true);
+  });
+});
+
 describe('bills that are past the point of cancelling', () => {
   it('refuses a second cancellation', () => {
     expect(billCancellationPolicy({ status: 'CANCELLED' }, admin, now)).toMatchObject({ allowed: false, statusCode: 409 });

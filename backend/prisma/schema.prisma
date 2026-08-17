@@ -16,9 +16,18 @@ enum Role {
 
 enum PaymentRequestStatus {
   AWAITING_PAYMENT
+  // The customer says they have paid by bank transfer and has uploaded a slip; the
+  // cashier still has to check it against the bank before any stock is committed.
+  SLIP_SUBMITTED
   PAID
   FULFILLED
   CANCELLED
+}
+
+enum PaymentSlipStatus {
+  PENDING
+  VERIFIED
+  REJECTED
 }
 
 enum PaymentRequestType {
@@ -150,6 +159,9 @@ model User {
   reviewedUploads             PrescriptionUpload[]      @relation("UploadReviewer")
   patientNotices              PatientNotice[]            @relation("NoticePatient")
   noticesCreated              PatientNotice[]            @relation("NoticeCreator")
+  bankAccountsCreated         BankAccount[]              @relation("BankAccountCreator")
+  paymentSlipsUploaded        PaymentSlip[]              @relation("SlipUploader")
+  paymentSlipsReviewed        PaymentSlip[]              @relation("SlipReviewer")
   passwordResetOtp            PasswordResetOtp?
   createdAt                   DateTime                  @default(now()) @map("created_at")
   updatedAt                   DateTime                  @updatedAt @map("updated_at")
@@ -618,6 +630,7 @@ model PaymentRequest {
   prescription       Prescription?        @relation(fields: [prescriptionId], references: [id])
   items              PaymentRequestItem[]
   reservations       StockReservation[]
+  slips              PaymentSlip[]
   sale               Sale?
   createdAt          DateTime             @default(now()) @map("created_at")
   updatedAt          DateTime             @updatedAt @map("updated_at")
@@ -625,6 +638,58 @@ model PaymentRequest {
   @@index([status, createdAt])
   @@index([patientId, createdAt])
   @@map("payment_requests")
+}
+
+// The pharmacy's own bank accounts, shown to a customer who wants to pay by transfer
+// rather than at the counter. Administrator-maintained so account details can change
+// without a code release.
+model BankAccount {
+  id            Int           @id @default(autoincrement())
+  bankName      String        @map("bank_name") @db.VarChar(120)
+  accountName   String        @map("account_name") @db.VarChar(150)
+  accountNumber String        @map("account_number") @db.VarChar(60)
+  branch        String?       @db.VarChar(120)
+  instructions  String?       @db.VarChar(500)
+  active        Boolean       @default(true)
+  createdById   Int?          @map("created_by_id")
+  createdBy     User?         @relation("BankAccountCreator", fields: [createdById], references: [id])
+  slips         PaymentSlip[]
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  @@index([active])
+  @@map("bank_accounts")
+}
+
+// Proof-of-payment a customer uploads after a bank transfer. Kept as a list rather than a
+// single field so a rejected slip stays on record and the customer can submit a corrected
+// one against the same bill.
+model PaymentSlip {
+  id               Int               @id @default(autoincrement())
+  paymentRequestId Int               @map("payment_request_id")
+  uploadedById     Int               @map("uploaded_by_id")
+  bankAccountId    Int?              @map("bank_account_id")
+  originalName     String            @map("original_name") @db.VarChar(180)
+  mimeType         String            @map("mime_type") @db.VarChar(80)
+  fileData         Bytes             @map("file_data") @db.LongBlob
+  declaredAmount   Decimal           @map("declared_amount") @db.Decimal(12, 2)
+  reference        String?           @db.VarChar(120)
+  paidOn           DateTime?         @map("paid_on") @db.Date
+  note             String?           @db.VarChar(500)
+  status           PaymentSlipStatus @default(PENDING)
+  reviewedById     Int?              @map("reviewed_by_id")
+  reviewedAt       DateTime?         @map("reviewed_at")
+  rejectionReason  String?           @map("rejection_reason") @db.VarChar(500)
+  paymentRequest   PaymentRequest    @relation(fields: [paymentRequestId], references: [id], onDelete: Cascade)
+  uploadedBy       User              @relation("SlipUploader", fields: [uploadedById], references: [id])
+  reviewedBy       User?             @relation("SlipReviewer", fields: [reviewedById], references: [id])
+  bankAccount      BankAccount?      @relation(fields: [bankAccountId], references: [id])
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  @@index([paymentRequestId, createdAt])
+  @@index([status, createdAt])
+  @@map("payment_slips")
 }
 
 model PaymentRequestItem {

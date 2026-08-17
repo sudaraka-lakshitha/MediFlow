@@ -163,6 +163,11 @@ export const prescriptionService = {
           ? 'This prescription has already been paid for. Revoke and refund the cashier bill before rejecting it.'
           : 'This prescription has already been dispensed, so it can no longer be rejected.');
       }
+      // The customer may genuinely have transferred the money already, so the slip has to be
+      // settled one way or the other before the prescription can be written off.
+      if (current.paymentRequest && current.paymentRequest.status === 'SLIP_SUBMITTED') {
+        throw new AppError(409, 'A bank transfer slip for this prescription is still being checked. Verify or reject the slip before rejecting the prescription.');
+      }
       const rejected = await tx.prescription.updateMany({ where: { id, status: { in: ['PENDING', 'VERIFIED'] } }, data: { status: 'REJECTED', rejectionReason: reason } });
       if (rejected.count !== 1) throw new AppError(409, 'This prescription was just processed by another staff member. Refresh to see its latest status.');
       // A rejected prescription must never leave a payable bill behind for the cashier to collect on.
