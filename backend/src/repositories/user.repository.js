@@ -5,14 +5,14 @@ export const userRepository = {
   findSafeById: (id) => prisma.user.findUnique({
     where: { id },
     select: {
-      id: true, email: true, fullName: true, phone: true, role: true, cashierAccess: true, active: true,
+      id: true, email: true, fullName: true, phone: true, role: true, cashierAccess: true, pharmacyReconciliationAccess: true, active: true,
       mustChangePassword: true, lastLoginAt: true, passwordChangedAt: true, patientProfile: true, createdAt: true,
     },
   }),
   list: (search = '') => prisma.user.findMany({
     where: { role: { not: 'PATIENT' }, OR: [{ email: { contains: search } }, { fullName: { contains: search } }] },
     select: {
-      id: true, email: true, fullName: true, phone: true, role: true, cashierAccess: true, active: true,
+      id: true, email: true, fullName: true, phone: true, role: true, cashierAccess: true, pharmacyReconciliationAccess: true, active: true,
       mustChangePassword: true, lastLoginAt: true, passwordChangedAt: true, createdAt: true,
     },
     orderBy: { createdAt: 'desc' },

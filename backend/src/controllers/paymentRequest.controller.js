@@ -1,9 +1,26 @@
 import { z } from 'zod';
+import { billingPreview } from '../utils/billingPreview.js';
 import { paymentRequestService } from '../services/paymentRequest.service.js';
 import { createPaymentRequestPdf } from '../utils/paymentRequestPdf.js';
 import { recordAudit } from '../services/audit.service.js';
+import { listPagination } from '../utils/listPagination.js';
 
-export const cashierPaymentSchema = z.object({ paymentMethod: z.enum(['CASH', 'CARD', 'BANK_TRANSFER', 'OTHER']), paymentReference: z.string().trim().max(120).optional().nullable() });
+export const cashierPaymentSchema = z.object({
+  confirmHandover: z.boolean().default(false),
+  paymentMethod: z.enum(['CASH', 'CARD', 'BANK_TRANSFER', 'OTHER']),
+  paymentReference: z.string().trim().max(120).optional().nullable(),
+  tenderedAmount: z.coerce.number().nonnegative().optional().nullable(),
+  changeAmount: z.coerce.number().nonnegative().optional().nullable(),
+  splitDetails: z.object({
+    isSplit: z.boolean(),
+    cashAmount: z.coerce.number().nonnegative(),
+    nonCashMethod: z.enum(['CARD', 'BANK_TRANSFER']),
+    nonCashAmount: z.coerce.number().nonnegative(),
+    nonCashReference: z.string().trim().max(120).optional().nullable(),
+    cashTendered: z.coerce.number().nonnegative().optional().nullable(),
+    change: z.coerce.number().nonnegative().optional().nullable(),
+  }).optional().nullable(),
+});
 export const retailPaymentRequestSchema = z.object({
   patientId: z.coerce.number().int().positive().optional().nullable(),
   couponCode: z.string().trim().max(40).optional().nullable(),
@@ -24,15 +41,47 @@ export const paymentSlipSchema = z.object({
 });
 export const slipReviewSchema = z.object({
   approved: z.boolean(),
+  verifiedAmount: z.coerce.number().positive().max(100_000_000).optional(),
+  verifiedReference: z.string().trim().min(3).max(120).optional(),
   reason: z.string().trim().max(500).optional().nullable(),
 }).superRefine((data, context) => {
+  if (data.approved && (data.verifiedAmount == null || !data.verifiedReference)) context.addIssue({ code: 'custom', message: 'Record the amount and transaction reference verified against the bank.' });
   if (!data.approved && (!data.reason || data.reason.trim().length < 3)) {
     context.addIssue({ code: 'custom', path: ['reason'], message: 'Tell the customer why the slip was not accepted.' });
   }
 });
-export const declineInvoiceSchema = z.object({ reason: z.string().trim().min(3).max(500) });
+export const declineInvoiceSchema = z.object({ revision: z.coerce.number().int().positive(), reason: z.string().trim().min(3).max(500) });
+export const partialCancelSchema = z.object({
+  quantities: z.record(z.string(), z.coerce.number().positive()).optional(),
+  revision: z.coerce.number().int().positive(),
+  itemIds: z.array(z.coerce.number().int().positive()).min(1),
+  reason: z.string().trim().min(3).max(500),
+  skipCustomerReconfirmation: z.boolean().optional().default(false),
+});
+export const requestCancellationSchema = z.object({ reason: z.string().trim().min(3).max(500) });
+export const invoiceAcknowledgementSchema = z.object({
+  revision: z.coerce.number().int().positive(),
+  paymentChoice: z.enum(['CASH', 'BANK_TRANSFER']),
+  customerNote: z.string().trim().max(500).optional().nullable(),
+});
 export const paymentRequestController = {
-  list: async (req, res) => res.json({ data: await paymentRequestService.list(req.user) }),
+  preview: async (req,res) => {
+    const bill = await paymentRequestService.get(Number(req.params.id),req.user);
+    res.setHeader('Cache-Control','no-store');
+    res.json({data:billingPreview(bill)});
+  },
+  collectionSlip: async (req, res) => {
+    const data = await paymentRequestService.documentData(Number(req.params.id), req.user, true);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ data: { customerName: data.patient?.fullName || 'Walk-in customer', referenceNumber: data.requestNumber, pin: data.pickupPin, status: data.status, saleId: data.sale?.id || null } });
+  },
+  resolveCancellation: async (req, res) => res.json({ data: await paymentRequestService.resolveCancellation(Number(req.params.id), req.body, req.user) }),
+  changePaymentChoice: async (req, res) => res.json({ data: await paymentRequestService.acknowledge(Number(req.params.id), req.body, req.user, true) }),
+  list: async (req, res) => {
+    const pagination = listPagination(req.query, ['AWAITING_PAYMENT', 'SLIP_SUBMITTED', 'PAID', 'FULFILLED', 'CANCELLED']);
+    const data = await paymentRequestService.list(req.user, pagination);
+    res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } });
+  },
   create: async (req, res) => {
     const data = await paymentRequestService.create(Number(req.params.id), req.body, req.user.id);
     await recordAudit({
@@ -46,7 +95,7 @@ export const paymentRequestController = {
     res.status(201).json({ data });
   },
   update: async (req, res) => {
-    const data = await paymentRequestService.update(Number(req.params.id), req.body);
+      const data = await paymentRequestService.update(Number(req.params.id), req.body, req.user.id);
     await recordAudit({
       userId: req.user.id, action: 'PAYMENT_REQUEST_UPDATED', entityType: 'PAYMENT_REQUEST', entityId: data.id,
       details: { requestNumber: data.requestNumber, prescriptionId: data.prescriptionId, total: data.total },
@@ -60,9 +109,47 @@ export const paymentRequestController = {
     res.json({ data });
   },
   pay: async (req, res) => {
-    const result = await paymentRequestService.pay(Number(req.params.id), req.body.paymentMethod, req.user.id, req.body.paymentReference);
-    await recordAudit({ userId: req.user.id, action: 'CASHIER_PAYMENT_RECEIVED', entityType: 'PAYMENT_REQUEST', entityId: result.data.id, details: { requestNumber: result.data.requestNumber, total: result.data.total, paymentMethod: req.body.paymentMethod }, ipAddress: req.ip });
+    const result = await paymentRequestService.pay(
+      Number(req.params.id),
+      req.body.paymentMethod,
+      req.user.id,
+      req.body.paymentReference,
+      {
+        confirmHandover: req.body.confirmHandover,
+        tenderedAmount: req.body.tenderedAmount,
+        changeAmount: req.body.changeAmount,
+        splitDetails: req.body.splitDetails,
+      }
+    );
+    await recordAudit({
+      userId: req.user.id,
+      action: 'CASHIER_PAYMENT_RECEIVED',
+      entityType: 'PAYMENT_REQUEST',
+      entityId: result.data.id,
+      details: {
+        requestNumber: result.data.requestNumber,
+        total: result.data.total,
+        paymentMethod: req.body.paymentMethod,
+        paymentReference: req.body.paymentReference,
+        tenderedAmount: req.body.tenderedAmount,
+        changeAmount: req.body.changeAmount,
+        splitDetails: req.body.splitDetails,
+      },
+      ipAddress: req.ip,
+    });
     res.json(result);
+  },
+  acknowledge: async (req, res) => {
+    const data = await paymentRequestService.acknowledge(Number(req.params.id), req.body, req.user);
+    await recordAudit({
+      userId: req.user.id, action: 'INVOICE_ACKNOWLEDGED', entityType: 'PAYMENT_REQUEST', entityId: data.id,
+      details: { revision: req.body.revision, paymentChoice: req.body.paymentChoice, reservationExpiresAt: data.reservationExpiresAt },
+      ipAddress: req.ip,
+    });
+    res.json({ data });
+  },
+  resetPickupPin: async (req, res) => {
+    res.json(await paymentRequestService.resetPickupPin(Number(req.params.id), req.body.reason, req.user));
   },
   retailOptions: async (_req, res) => res.json({ data: await paymentRequestService.retailOptions() }),
   createRetail: async (req, res) => {
@@ -101,10 +188,41 @@ export const paymentRequestController = {
     res.type(slip.mimeType).send(slip.fileData);
   },
   decline: async (req, res) => {
-    const data = await paymentRequestService.declineByPatient(Number(req.params.id), req.body.reason, req.user);
+    const data = await paymentRequestService.declineByPatient(Number(req.params.id), req.body.reason, req.user, req.body.revision);
     await recordAudit({
       userId: req.user.id, action: 'INVOICE_DECLINED_BY_PATIENT', entityType: 'PAYMENT_REQUEST', entityId: data.id,
       details: { requestNumber: data.requestNumber, reason: req.body.reason }, ipAddress: req.ip,
+    });
+    res.json({ data });
+  },
+  partialCancel: async (req, res) => {
+    const data = await paymentRequestService.partialCancel(Number(req.params.id), req.body, req.user);
+    await recordAudit({
+      userId: req.user.id,
+      action: 'PAYMENT_REQUEST_PARTIALLY_CANCELLED',
+      entityType: 'PAYMENT_REQUEST',
+      entityId: data.id,
+      details: {
+        cancelledItemIds: req.body.itemIds,
+        reason: req.body.reason,
+        refundAmount: data.refundAmount,
+        customerReconfirmationSkipped: req.body.skipCustomerReconfirmation,
+      },
+      ipAddress: req.ip,
+    });
+    res.json({ data });
+  },
+  cancellationPreview: async (req, res) => res.json({ data: await paymentRequestService.cancellationPreview(Number(req.params.id), req.body, req.user) }),
+  collectionsToday: async (_req, res) => res.json({ data: await paymentRequestService.collectionsToday() }),
+  requestCancellation: async (req, res) => {
+    const data = await paymentRequestService.requestCancellation(Number(req.params.id), req.body.reason, req.user);
+    await recordAudit({
+      userId: req.user.id,
+      action: 'PAYMENT_REQUEST_CANCELLATION_REQUESTED',
+      entityType: 'PAYMENT_REQUEST',
+      entityId: data.id,
+      details: { reason: req.body.reason },
+      ipAddress: req.ip,
     });
     res.json({ data });
   },
@@ -116,6 +234,7 @@ export const paymentRequestController = {
   receipt: async (req, res) => {
     const data = await paymentRequestService.documentData(Number(req.params.id), req.user, true);
     res.setHeader('Content-Disposition', `inline; filename="${data.requestNumber}-receipt.pdf"`);
-    res.type('application/pdf').send(await createPaymentRequestPdf(data, true));
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('application/pdf').send(await createPaymentRequestPdf(data, true, Number(req.query.width) === 58 ? 58 : 80));
   },
 };

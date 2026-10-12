@@ -16,6 +16,8 @@ catalogRoutes.patch('/categories/:id/active', authorize('ADMIN'), validate({ par
 catalogRoutes.delete('/categories/:id', authorize('ADMIN'), validate({ params: idParams }), asyncHandler(catalogController.deleteCategory));
 catalogRoutes.get('/products', asyncHandler(catalogController.products));
 catalogRoutes.get('/products/bulk-template.csv', authorize('ADMIN'), asyncHandler(catalogController.productTemplate));
+catalogRoutes.get('/products/bulk-format', authorize('ADMIN'), catalogController.bulkFormat);
+catalogRoutes.get('/products/export-for-update.csv', authorize('ADMIN'), asyncHandler(catalogController.exportForUpdate));
 catalogRoutes.post('/products/bulk', authorize('ADMIN'), validate({ body: bulkProductsSchema }), asyncHandler(catalogController.bulkProducts));
 catalogRoutes.post('/products', authorize('ADMIN'), validate({ body: productSchema }), asyncHandler(catalogController.createProduct));
 catalogRoutes.put('/products/:id', authorize('ADMIN'), validate({ params: idParams, body: productSchema }), asyncHandler(catalogController.updateProduct));

@@ -14,6 +14,8 @@ export const isDivisibleUnit = (unit?: string | null) =>
 // be a discrete item, and rounding up is the safe direction.
 export const isCountableUnit = (unit?: string | null) => !isDivisibleUnit(unit);
 
+export const stockQuantityStep = (unit?: string | null) => isCountableUnit(unit) ? 1 : 0.001;
+
 // Course total for a medicine line, rounded the way the pharmacy will actually issue it.
 export const issuableTotal = (rawTotal: number, unit?: string | null) =>
   isCountableUnit(unit) ? Math.ceil(rawTotal) : Number(rawTotal.toFixed(3));

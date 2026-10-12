@@ -15,7 +15,7 @@ export const navigationAttentionService = {
         where: { userId: user.id },
         select: { id: true },
       });
-      const [prescriptions, uploads, sales] = await Promise.all([
+      const [prescriptions, uploads, quotationsAwaitingDecision, invoicesAwaitingAction, sales] = await Promise.all([
         prisma.prescription.count({
           where: {
             patientId: profile?.id || -1,
@@ -25,23 +25,32 @@ export const navigationAttentionService = {
         prisma.prescriptionUpload.count({
           where: { patientId: user.id, status: 'PENDING' },
         }),
+        prisma.prescriptionUpload.count({
+          where: { patientId: user.id, status: 'QUOTE_SENT' },
+        }),
+        prisma.paymentRequest.count({
+          where: { patientId: user.id, status: { in: ['AWAITING_PAYMENT', 'SLIP_SUBMITTED'] } },
+        }),
         prisma.sale.count({
           where: { patientId: user.id, status: 'PENDING' },
         }),
       ]);
+      const uploadTotal = uploads + quotationsAwaitingDecision;
       return {
         prescriptions: badge(prescriptions, 'Active prescriptions', 'info'),
-        prescriptionUploads: badge(uploads, 'Uploads awaiting pharmacy review', 'warning'),
-        sales: badge(sales, 'Invoices with a remaining balance', 'danger'),
+        prescriptionUploads: badge(uploadTotal, quotationsAwaitingDecision ? 'Quotation received — your decision is required' : 'Uploads awaiting pharmacy review', quotationsAwaitingDecision ? 'danger' : 'warning'),
+        sales: badge(sales + invoicesAwaitingAction, invoicesAwaitingAction ? 'Final invoice requires payment action' : 'Invoices with a remaining balance', 'danger'),
       };
     }
 
     if (user.role === 'CASHIER') {
-      const awaitingPayment = await prisma.paymentRequest.count({
-        where: { status: 'AWAITING_PAYMENT' },
-      });
+      const [awaitingPayment, slipsToReview] = await Promise.all([
+        prisma.paymentRequest.count({ where: { status: { in: ['AWAITING_PAYMENT', 'SLIP_SUBMITTED'] } } }),
+        prisma.uploadPaymentSlip.count({ where: { status: 'PENDING' } }),
+      ]);
       return {
-        cashier: badge(awaitingPayment, 'Payments awaiting cashier action', 'danger'),
+        cashier: badge(awaitingPayment, 'Payments awaiting cashier action', awaitingPayment ? 'danger' : 'neutral'),
+        prescriptionUploads: badge(slipsToReview, 'Bank transfer receipts awaiting verification', slipsToReview ? 'warning' : 'neutral'),
       };
     }
 
@@ -66,9 +75,30 @@ export const navigationAttentionService = {
           status: { in: ['PENDING', 'VERIFIED', 'PARTIALLY_DISPENSED'] },
         },
       }),
-      prisma.prescriptionUpload.count({ where: { status: 'PENDING' } }),
+      prisma.prescriptionUpload.count({
+        where: {
+          prescription: null,
+          OR: [
+            { status: 'PENDING' },
+            {
+              prepareRequested: true,
+              status: {
+                in: [
+                  'AVAILABLE',
+                  'PARTIALLY_AVAILABLE',
+                  'QUOTE_SENT',
+                  'QUOTE_ACCEPTED',
+                  'PAYMENT_PENDING',
+                  'PAYMENT_SUBMITTED',
+                  'READY_TO_PREPARE',
+                ],
+              },
+            },
+          ],
+        },
+      }),
       user.role === 'ADMIN' || user.cashierAccess
-        ? prisma.paymentRequest.count({ where: { status: 'AWAITING_PAYMENT' } })
+        ? prisma.paymentRequest.count({ where: { status: { in: ['AWAITING_PAYMENT', 'SLIP_SUBMITTED'] } } })
         : Promise.resolve(0),
       prisma.sale.count({ where: { status: 'PENDING' } }),
       prisma.inventoryBatch.count({
@@ -117,7 +147,7 @@ export const navigationAttentionService = {
       ),
       prescriptionUploads: badge(
         uploads,
-        'New uploaded prescriptions awaiting review',
+        'Customer preparation requests or new uploads requiring attention',
         uploads ? 'danger' : 'neutral',
       ),
       cashier: badge(

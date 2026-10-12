@@ -4,6 +4,8 @@ import { AuthProvider } from "./auth/AuthContext";
 import { Layout } from "./components/Layout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { Loading } from "./components/Ui";
+import { FormAccessibilityBridge } from "./components/FormAccessibilityBridge";
+import { NotFoundPage } from "./pages/NotFoundPage";
 
 const LoginPage = lazy(() =>
   import("./pages/LoginPage").then((module) => ({
@@ -115,6 +117,7 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <FormAccessibilityBridge />
         <Suspense fallback={<Loading />}>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
@@ -127,7 +130,7 @@ export default function App() {
             </Route>
             <Route
               element={
-                <ProtectedRoute roles={["ADMIN", "PHARMACIST", "PATIENT"]} />
+                <ProtectedRoute roles={["ADMIN", "PHARMACIST", "PATIENT", "CASHIER"]} />
               }
             >
               <Route element={<Layout />}>
@@ -139,6 +142,7 @@ export default function App() {
                 <Route path="sales" element={<SalesPage />} />
               </Route>
             </Route>
+
             <Route
               element={
                 <ProtectedRoute roles={["PATIENT"]} />
@@ -188,6 +192,7 @@ export default function App() {
                 <Route path="settings" element={<SettingsPage />} />
               </Route>
             </Route>
+            <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </Suspense>
       </BrowserRouter>

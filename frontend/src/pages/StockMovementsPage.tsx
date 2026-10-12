@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, errorMessage } from "../api/client";
+import { errorMessage } from "../api/client";
+import { pagedList } from "../api/pagedList";
 import { Alert, Empty, Loading, Status } from "../components/Ui";
+import { Pagination } from "../components/Pagination";
+import { useClientPagination } from "../utils/useClientPagination";
 
 const movementTypes = [
   "RECEIPT",
@@ -23,7 +26,7 @@ export function StockMovementsPage() {
   const load = useCallback(async () => {
     try {
       setError("");
-      const response = await api.get("/inventory/movements");
+      const response = await pagedList("/inventory/movements");
       setRows(response.data.data);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -46,6 +49,7 @@ export function StockMovementsPage() {
       ),
     [rows, search, type],
   );
+  const pagination = useClientPagination(filtered, 25);
 
   if (loading) return <Loading />;
   return (
@@ -105,7 +109,7 @@ export function StockMovementsPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((row) => (
+              {pagination.visibleRows.map((row) => (
                 <tr key={row.id}>
                   <td>
                     <small>{new Date(row.createdAt).toLocaleString()}</small>
@@ -153,6 +157,7 @@ export function StockMovementsPage() {
           </table>
           {!filtered.length && <Empty text="No stock movements match the selected filters." />}
         </div>
+        <Pagination page={pagination.page} pageCount={pagination.pageCount} total={filtered.length} pageSize={pagination.pageSize} onPageChange={pagination.setPage} />
       </div>
     </>
   );

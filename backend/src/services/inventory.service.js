@@ -1,12 +1,13 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
+import { stockQuantity } from '../utils/stockQuantity.js';
 import { operationSettingsService } from './operationSettings.service.js';
 import { lowStockState } from '../utils/lowStock.js';
 import { usableStockTotal } from '../utils/stock.js';
 
 export const inventoryService = {
-  listBatches: () => prisma.inventoryBatch.findMany({
+  listBatches: ({ page = 1, pageSize = 300 } = {}) => prisma.inventoryBatch.findMany({
     include: {
       product: { include: { category: true, manufacturer: true } },
       supplier: true,
@@ -17,10 +18,10 @@ export const inventoryService = {
         take: 1,
       },
     },
-    orderBy: [{ expiryDate: 'asc' }, { receivedAt: 'asc' }],
-    take: 500,
+    orderBy: [{ expiryDate: 'asc' }, { receivedAt: 'asc' }, { id: 'asc' }],
+    skip: (page - 1) * pageSize, take: pageSize,
   }),
-  listMovements: () => prisma.stockMovement.findMany({ include: { product: true, batch: true, performedBy: { select: { fullName: true } } }, orderBy: { createdAt: 'desc' }, take: 300 }),
+  listMovements: ({ page = 1, pageSize = 300 } = {}) => prisma.stockMovement.findMany({ include: { product: true, batch: true, performedBy: { select: { fullName: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
   async alerts() {
     const today = new Date();
     const settings = await operationSettingsService.get();
@@ -75,7 +76,9 @@ export const inventoryService = {
   },
   receive(data, userId) {
     return prisma.$transaction(async (tx) => {
-      const quantity = new Prisma.Decimal(data.quantity);
+      const product = await tx.product.findUnique({ where: { id: data.productId }, select: { unit: true } });
+      if (!product) throw new AppError(404, 'Product not found.');
+      const quantity = stockQuantity(data.quantity, product.unit);
       const batch = await tx.inventoryBatch.create({ data: { productId: data.productId, supplierId: data.supplierId, batchNumber: data.batchNumber, quantityReceived: quantity, quantityAvailable: quantity, purchasePrice: data.purchasePrice, expiryDate: data.expiryDate } });
       await tx.lowStockAcknowledgement.deleteMany({ where: { productId: data.productId } });
       await tx.stockMovement.create({ data: { productId: data.productId, batchId: batch.id, type: 'RECEIPT', quantityChange: quantity, quantityBefore: 0, quantityAfter: quantity, reason: data.note, performedById: userId } });
@@ -110,9 +113,10 @@ export const inventoryService = {
   },
   adjust(batchId, data, userId) {
     return prisma.$transaction(async (tx) => {
-      const batch = await tx.inventoryBatch.findUnique({ where: { id: batchId } });
+      const batch = await tx.inventoryBatch.findUnique({ where: { id: batchId }, include: { product: true } });
       if (!batch) throw new AppError(404, 'Inventory batch not found.');
-      const quantityAfter = batch.quantityAvailable.add(data.quantityChange);
+      const change = stockQuantity(data.quantityChange, batch.product.unit, { signed: true });
+      const quantityAfter = batch.quantityAvailable.add(change);
       if (quantityAfter.isNegative()) throw new AppError(409, 'The adjustment would make stock negative.');
       if (quantityAfter.lessThan(batch.quantityReserved)) throw new AppError(409, `This batch has ${batch.quantityReserved} unit(s) already reserved against paid bills — the adjustment cannot bring available stock below that.`);
       const updated = await tx.inventoryBatch.update({ where: { id: batchId }, data: { quantityAvailable: quantityAfter } });
@@ -129,7 +133,7 @@ export const inventoryService = {
       });
       if (!batch) throw new AppError(404, 'Inventory batch not found.');
       if (batch.expiryDate >= new Date()) throw new AppError(409, 'Only expired stock can use the expiry disposition workflow.');
-      const quantity = new Prisma.Decimal(data.quantity);
+      const quantity = stockQuantity(data.quantity, batch.product.unit);
       if (quantity.greaterThan(batch.quantityAvailable)) throw new AppError(409, 'Disposition quantity exceeds the remaining batch stock.');
       if (batch.quantityAvailable.sub(quantity).lessThan(batch.quantityReserved)) throw new AppError(409, `This batch has ${batch.quantityReserved} unit(s) already reserved against paid bills — release or fulfill those first.`);
 

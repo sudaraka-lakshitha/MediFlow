@@ -1,10 +1,13 @@
 import { inventoryService } from '../services/inventory.service.js';
 import { recordAudit } from '../services/audit.service.js';
+import { listPagination } from '../utils/listPagination.js';
 
 export const inventoryController = {
-  batches: async (_req, res) => {
-    const batches = await inventoryService.listBatches();
+  batches: async (req, res) => {
+    const pagination = listPagination(req.query);
+    const batches = await inventoryService.listBatches(pagination);
     res.json({
+      pagination: { ...pagination, hasMore: batches.length === pagination.pageSize },
       data: batches.map(({ stockMovements, ...batch }) => {
         const disposition = stockMovements[0];
         return {
@@ -22,7 +25,7 @@ export const inventoryController = {
       }),
     });
   },
-  movements: async (_req, res) => res.json({ data: await inventoryService.listMovements() }),
+  movements: async (req, res) => { const pagination = listPagination(req.query); const data = await inventoryService.listMovements(pagination); res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } }); },
   alerts: async (_req, res) => res.json({ data: await inventoryService.alerts() }),
   acknowledgeLowStock: async (req, res) => {
     const data = await inventoryService.acknowledgeLowStock(Number(req.params.id), req.user.id);

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, errorMessage } from "../api/client";
+import { errorMessage } from "../api/client";
+import { pagedList } from "../api/pagedList";
 import { Alert, Empty, Loading, Status } from "../components/Ui";
 
 const prescriberLabel = (rx: { prescriberTitle?: string; prescriberName?: string }) =>
@@ -11,8 +12,7 @@ export function PatientHealthRecordPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api
-      .get("/patients/me/health-record")
+    pagedList("/patients/me/health-record", "prescriptions")
       .then((response) => setRecord(response.data.data))
       .catch((caught) => setError(errorMessage(caught)))
       .finally(() => setLoading(false));

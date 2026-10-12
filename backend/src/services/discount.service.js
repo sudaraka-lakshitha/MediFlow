@@ -37,7 +37,15 @@ export const calculateDiscounts = async (tx, allocations, subtotal, couponCode) 
   const selected = bestSingle && bestSingle.amount.greaterThan(combinedAmount) ? [bestSingle] : combinable;
   const amount = Prisma.Decimal.min(subtotal, selected.reduce((sum, candidate) => sum.add(candidate.amount), new Prisma.Decimal(0))).toDecimalPlaces(2);
   const couponMatched = !normalizedCode || rules.some((rule) => rule.code === normalizedCode);
-  return { amount, couponMatched, applications: selected.map(({ rule, amount: ruleAmount }) => ({ ruleId: rule.id, ruleName: rule.name, ruleType: rule.type, ruleValue: rule.value, amount: ruleAmount })) };
+  // Allocate the actual capped discount in the query's priority/id order.
+  // The application ledger must never record more than the invoice received.
+  let remaining = amount;
+  const applications = selected.flatMap(({ rule, amount: ruleAmount }) => {
+    const applied = Prisma.Decimal.min(ruleAmount, remaining);
+    remaining = remaining.sub(applied);
+    return applied.greaterThan(0) ? [{ ruleId: rule.id, ruleName: rule.name, ruleType: rule.type, ruleValue: rule.value, amount: applied }] : [];
+  });
+  return { amount, couponMatched, applications };
 };
 
 export const assertCouponMatched = (discountResult) => {

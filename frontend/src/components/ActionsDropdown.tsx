@@ -42,7 +42,10 @@ export function ActionsDropdown({ actions }: { actions: ActionItem[] }) {
   }, [actions.length]);
 
   useLayoutEffect(() => {
-    if (open) place();
+    if (open) {
+      place();
+      window.requestAnimationFrame(() => menuRef.current?.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus());
+    }
   }, [open, place]);
 
   useEffect(() => {
@@ -54,7 +57,13 @@ export function ActionsDropdown({ actions }: { actions: ActionItem[] }) {
       setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      const buttons = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('button:not([disabled])') || []);
+      const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      if (event.key === "Escape") { setOpen(false); triggerRef.current?.focus(); }
+      else if (event.key === 'ArrowDown') { event.preventDefault(); buttons[(current + 1 + buttons.length) % buttons.length]?.focus(); }
+      else if (event.key === 'ArrowUp') { event.preventDefault(); buttons[(current - 1 + buttons.length) % buttons.length]?.focus(); }
+      else if (event.key === 'Home') { event.preventDefault(); buttons[0]?.focus(); }
+      else if (event.key === 'End') { event.preventDefault(); buttons.at(-1)?.focus(); }
     };
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
@@ -79,6 +88,9 @@ export function ActionsDropdown({ actions }: { actions: ActionItem[] }) {
         aria-expanded={open}
         aria-label="Record actions"
         onClick={() => setOpen((value) => !value)}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setOpen(true); }
+        }}
       >
         <i className="bi bi-three-dots-vertical" />
       </button>

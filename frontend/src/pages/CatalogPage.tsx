@@ -7,7 +7,7 @@ import { Modal, ModalActions } from '../components/Modal';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { PredictiveSearchInput } from '../components/PredictiveSearchInput';
 import { Alert, Empty, Loading, Status } from '../components/Ui';
-import { parseCsv } from '../utils/csv';
+import { BulkProductModal } from '../components/BulkProductModal';
 
 type Category = { id: number; name: string; description?: string; active: boolean };
 type Supplier = { id: number; name: string; contactPerson?: string; phone?: string; email?: string; address?: string; active: boolean };
@@ -21,7 +21,6 @@ const supplierEmpty = { name: '', contactPerson: '', phone: '', email: '', addre
 const manufacturerEmpty = { name: '', country: '', website: '', phone: '', email: '' };
 const dosageForms = ['Retail item', 'Tablet', 'Capsule', 'Oral suspension', 'Syrup', 'Solution', 'Drops', 'Cream', 'Ointment', 'Gel', 'Inhaler', 'Injection', 'Suppository', 'Powder', 'Patch'];
 const units = ['piece', 'pack', 'bottle', 'can', 'pair', 'box', 'tablet', 'capsule', 'ml', 'drop', 'dose', 'puff', 'gram', 'sachet', 'vial', 'ampoule', 'suppository', 'patch'];
-const bulkColumns = ['sku', 'productType', 'genericName', 'brandName', 'activeIngredient', 'strength', 'dosageForm', 'unit', 'variantGroup', 'barcode', 'manufacturerName', 'categoryName', 'sellingPrice', 'reorderLevel', 'prescriptionRequired', 'storageInstructions', 'rxNormCui', 'pubchemCid', 'smiles', 'active'];
 
 export function CatalogPage() {
   const { user } = useAuth(); const admin = user!.role === 'ADMIN';
@@ -29,7 +28,7 @@ export function CatalogPage() {
   const [error, setError] = useState(''); const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false); const [search, setSearch] = useState(''); const [productTotal, setProductTotal] = useState(0);
   const [modal, setModal] = useState<{ kind: 'product' | 'category' | 'supplier' | 'manufacturer'; mode: 'create' | 'edit'; record?: any } | null>(null);
   const [confirm, setConfirm] = useState<{ kind: Tab; id: number; name: string } | null>(null);
-  const [bulkOpen, setBulkOpen] = useState(false); const [bulkRows, setBulkRows] = useState<Record<string, string>[]>([]); const [bulkFile, setBulkFile] = useState(''); const [bulkResult, setBulkResult] = useState<any>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [productForm, setProductForm] = useState<any>({ ...productEmpty }); const [categoryForm, setCategoryForm] = useState({ ...categoryEmpty }); const [supplierForm, setSupplierForm] = useState({ ...supplierEmpty }); const [manufacturerForm, setManufacturerForm] = useState({ ...manufacturerEmpty });
   const [skuModified, setSkuModified] = useState(false);
 
@@ -76,14 +75,11 @@ export function CatalogPage() {
   const toggleCsm = async (kind: 'categories' | 'suppliers' | 'manufacturers', id: number, active: boolean) => { try { await api.patch(`/catalog/${kind}/${id}/active`, { active }); load(); } catch (caught) { setError(errorMessage(caught)); } };
   const remove = async () => { if (!confirm) return; setBusy(true); try { await api.delete(`/catalog/${confirm.kind}/${confirm.id}`); setConfirm(null); load(); } catch (caught) { setError(errorMessage(caught)); setConfirm(null); } finally { setBusy(false); } };
 
-  const readBulk = async (file?: File) => { if (!file) return; setBulkFile(file.name); setBulkResult(null); try { const rows = parseCsv(await file.text()); setBulkRows(rows); if (!rows.length) setError('The selected CSV contains no product rows.'); } catch (caught) { setError(errorMessage(caught)); } };
-  const runBulk = async (dryRun: boolean) => { setBusy(true); setError(''); try { const response = await api.post('/catalog/products/bulk', { rows: bulkRows, dryRun }); setBulkResult(response.data.data); if (!dryRun) { await load(); setTimeout(() => { setBulkOpen(false); setBulkRows([]); setBulkResult(null); }, 900); } } catch (caught: any) { setError(errorMessage(caught)); setBulkResult(caught?.response?.data?.details || null); } finally { setBusy(false); } };
-  const downloadTemplate = async () => { try { const response = await api.get('/catalog/products/bulk-template.csv', { responseType: 'blob' }); const url = URL.createObjectURL(response.data); const link = document.createElement('a'); link.href = url; link.download = 'mediflow-product-bulk-template.csv'; link.click(); URL.revokeObjectURL(url); } catch (caught) { setError(errorMessage(caught)); } };
   if (loading) return <Loading />;
 
   const addKind = tab === 'products' ? 'product' : tab === 'categories' ? 'category' : tab === 'suppliers' ? 'supplier' : 'manufacturer';
   return <>
-    <div className="page-intro"><div><h2>Product catalogue</h2><p>Medicines, healthcare supplies, general retail items, categories, suppliers, manufacturers, and bulk updates.</p></div>{admin && <div className="d-flex gap-2">{tab === 'products' && <button className="btn btn-outline-primary" onClick={() => { setBulkOpen(true); setBulkResult(null); }}><i className="bi bi-file-earmark-arrow-up me-2" />Bulk upload</button>}<button className="btn btn-primary" onClick={() => open(addKind)}><i className="bi bi-plus-lg me-2" />Add {addKind}</button></div>}</div>
+    <div className="page-intro"><div><h2>Product catalogue</h2><p>Medicines, healthcare supplies, general retail items, categories, suppliers, manufacturers, and bulk updates.</p></div>{admin && <div className="d-flex gap-2">{tab === 'products' && <button className="btn btn-outline-primary" onClick={() => { setBulkOpen(true); }}><i className="bi bi-file-earmark-arrow-up me-2" />Bulk upload</button>}<button className="btn btn-primary" onClick={() => open(addKind)}><i className="bi bi-plus-lg me-2" />Add {addKind}</button></div>}</div>
     <Alert message={error} />
     <div className="panel"><div className="panel-header"><div className="toolbar">{(['products', 'categories', 'suppliers', 'manufacturers'] as Tab[]).map((value) => <button key={value} className={`btn ${tab === value ? 'btn-primary' : 'btn-outline-secondary'}`} onClick={() => setTab(value)}>{value[0].toUpperCase() + value.slice(1)}</button>)}{tab === 'products' && <PredictiveSearchInput placeholder="Search product, brand, SKU or barcode" value={search} onChange={setSearch} suggestions={products.flatMap((product) => [product.genericName, product.brandName || '', product.sku, product.barcode || ''])} />}</div></div>
       {tab === 'products' && <div className="px-3 pb-2 text-secondary small">Showing {products.length} of {productTotal} product{productTotal === 1 ? '' : 's'}{search ? ` matching "${search}"` : ''}</div>}
@@ -167,7 +163,7 @@ export function CatalogPage() {
       <ModalActions onClose={() => setModal(null)} submitLabel={modal.mode === 'create' ? `Add ${modal.kind}` : 'Save changes'} busy={busy} />
     </form></Modal>}
 
-    {bulkOpen && <Modal title="Bulk create or update products" onClose={() => setBulkOpen(false)} size="lg"><p className="text-secondary">Each SKU is an upsert key: a new SKU creates a product; an existing SKU updates that product. Categories and manufacturers are matched by name and created when missing.</p><div className="d-flex flex-wrap gap-2 mb-3"><button className="btn btn-sm btn-outline-primary" onClick={downloadTemplate}><i className="bi bi-filetype-csv me-1" />Download CSV sample</button><a className="btn btn-sm btn-outline-secondary" href="/templates/MediFlow_Product_Bulk_Import_Template.xlsx"><i className="bi bi-file-earmark-excel me-1" />Download Excel sample</a></div><div className="table-responsive mb-3"><table className="table table-sm bulk-sample"><thead><tr>{bulkColumns.slice(0, 10).map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody><tr><td>RET-SYR-5ML</td><td>NON_MEDICINAL</td><td>Sterile syringe 5 mL</td><td>Example Brand</td><td>Paracetamol</td><td>500 mg</td><td>Tablet</td><td>tablet</td><td>Paracetamol oral</td><td>479000000001</td><td>Example Pharma</td></tr></tbody></table></div><label className="bulk-drop d-block"><i className="bi bi-cloud-arrow-up fs-2 d-block text-primary" /><strong>{bulkFile || 'Choose a CSV file'}</strong><small className="d-block text-secondary">Maximum 2,000 rows. Save the Excel template as CSV before upload.</small><input className="d-none" type="file" accept=".csv,text/csv" onChange={(event) => readBulk(event.target.files?.[0])} /></label>{bulkRows.length > 0 && <div className="mt-3"><div className="alert alert-info py-2">Loaded {bulkRows.length} rows. Validate before applying changes.</div><div className="d-flex gap-2"><button className="btn btn-outline-primary" disabled={busy} onClick={() => runBulk(true)}>Validate rows</button><button className="btn btn-primary" disabled={busy || !bulkResult || bulkResult.errors?.length} onClick={() => runBulk(false)}>Apply bulk changes</button></div></div>}{bulkResult && <div className={`alert mt-3 ${bulkResult.errors?.length ? 'alert-danger' : bulkResult.applied ? 'alert-success' : 'alert-success'}`}><strong>{bulkResult.applied ? 'Bulk update completed.' : 'Validation completed.'}</strong><div>{bulkResult.creates} creates · {bulkResult.updates} updates · {bulkResult.errors?.length || 0} invalid rows</div>{bulkResult.errors?.slice(0, 12).map((row: any) => <div className="small mt-1" key={row.row}>Row {row.row} ({row.sku || 'no SKU'}): {row.errors.join('; ')}</div>)}</div>}</Modal>}
+    {bulkOpen && <BulkProductModal onClose={() => setBulkOpen(false)} onApplied={() => { void load(); }} />}
     {confirm && <ConfirmModal title={`Delete ${confirm.name}?`} message="This record will be permanently removed only when it has no related pharmacy history. Referenced records must remain for auditability." onConfirm={remove} onClose={() => setConfirm(null)} busy={busy} />}
   </>;
 }

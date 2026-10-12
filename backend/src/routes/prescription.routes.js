@@ -1,11 +1,12 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { prescriptionController } from '../controllers/prescription.controller.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { authorize } from '../middleware/authorize.js';
 import { validate } from '../middleware/validate.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { idParams } from '../validators/common.validator.js';
-import { dispenseQuoteSchema, dispenseSchema, paymentRequestSchema, prescriptionSchema, rejectSchema } from '../validators/prescription.validator.js';
+import { dispenseQuoteSchema, dispenseSchema, paymentRequestSchema, prescriptionSchema, refillSchema, rejectSchema } from '../validators/prescription.validator.js';
 import { paymentRequestController } from '../controllers/paymentRequest.controller.js';
 
 export const prescriptionRoutes = Router();
@@ -22,3 +23,5 @@ prescriptionRoutes.post('/:id/dispense-quote', authorize('ADMIN', 'PHARMACIST'),
 prescriptionRoutes.post('/:id/payment-request', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: paymentRequestSchema }), asyncHandler(paymentRequestController.create));
 prescriptionRoutes.put('/:id/payment-request', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: paymentRequestSchema }), asyncHandler(paymentRequestController.update));
 prescriptionRoutes.post('/:id/dispense', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: dispenseSchema }), asyncHandler(prescriptionController.dispense));
+prescriptionRoutes.post('/:id/send-to-cashier', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: paymentRequestSchema.or(z.object({}).strict()).default({}) }), asyncHandler(prescriptionController.sendToCashier));
+prescriptionRoutes.post('/:id/refill', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: refillSchema }), asyncHandler(prescriptionController.refill));

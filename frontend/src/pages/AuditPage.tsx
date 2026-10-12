@@ -178,6 +178,7 @@ export function AuditPage() {
       const response = await api.get("/audit-logs/export.csv", {
         params: requestParams,
         responseType: "blob",
+        timeout: 130000,
       });
       const url = URL.createObjectURL(response.data);
       const link = document.createElement("a");

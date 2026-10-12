@@ -7,12 +7,16 @@ import {
 } from "react";
 import { Link } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
+import { pagedList } from "../api/pagedList";
+import { stockQuantityStep } from "../utils/unitMeasure";
 import { useAuth } from "../auth/useAuth";
 import { ActionsDropdown } from "../components/ActionsDropdown";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { Modal, ModalActions } from "../components/Modal";
 import { SearchableSelect } from "../components/SearchableSelect";
 import { Alert, Empty, Loading, Metric, Status } from "../components/Ui";
+import { Pagination } from "../components/Pagination";
+import { useClientPagination } from "../utils/useClientPagination";
 
 type DispositionAction =
   | "DISCARDED"
@@ -66,16 +70,16 @@ const emptyForm = {
   productId: 0,
   supplierId: "",
   batchNumber: "",
-  quantity: 1,
+  quantity: 1 as number | string,
   purchasePrice: 0,
   expiryDate: "",
   note: "",
   quantityChange: 0,
   adjustDirection: "INCREASE" as "INCREASE" | "DECREASE",
-  adjustQuantity: 0,
+  adjustQuantity: 0 as number | string,
   reason: "",
   dispositionAction: "DISCARDED" as DispositionAction,
-  dispositionQuantity: 0,
+  dispositionQuantity: 0 as number | string,
   destinationName: "",
 };
 
@@ -125,6 +129,8 @@ export function InventoryPage() {
   const { user } = useAuth();
   const admin = user!.role === "ADMIN";
   const [confirmDelete, setConfirmDelete] = useState<Batch | null>(null);
+  const [restrictionTarget, setRestrictionTarget] = useState<Batch | null>(null);
+  const [restrictionReason, setRestrictionReason] = useState("");
 
   const deleteBatch = async (batchId: number) => {
     setBusy(true);
@@ -141,10 +147,8 @@ export function InventoryPage() {
     }
   };
   const toggleRestriction = async (batch: Batch) => {
-    const reason = batch.restricted
-      ? ""
-      : window.prompt("Why must this batch be stopped from issuing?")?.trim();
-    if (!batch.restricted && !reason) return;
+    const reason = batch.restricted ? "" : restrictionReason.trim();
+    if (!batch.restricted && reason.length < 3) return;
     setBusy(true);
     try {
       await api.patch(`/inventory/batches/${batch.id}/restriction`, {
@@ -152,6 +156,8 @@ export function InventoryPage() {
         reason: reason || null,
       });
       await load();
+      setRestrictionTarget(null);
+      setRestrictionReason("");
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -164,7 +170,7 @@ export function InventoryPage() {
       setError("");
       const [batchResponse, productResponse, supplierResponse, alertResponse] =
         await Promise.all([
-          api.get("/inventory/batches"),
+          pagedList("/inventory/batches"),
           api.get("/catalog/products"),
           api.get("/catalog/suppliers"),
           api.get("/inventory/alerts"),
@@ -396,6 +402,7 @@ export function InventoryPage() {
     nearExpiryDays,
     search,
   ]);
+  const batchPagination = useClientPagination(filteredBatches, 25);
 
   if (loading) return <Loading />;
 
@@ -614,7 +621,7 @@ export function InventoryPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredBatches.map((batch) => {
+              {batchPagination.visibleRows.map((batch) => {
                 const isExpired = expired(batch);
                 const near = nearExpiry(batch, nearExpiryDays);
                 const fullyDisposed =
@@ -729,7 +736,7 @@ export function InventoryPage() {
                             label: batch.restricted ? "Allow issuing again" : "Restrict from issuing",
                             icon: batch.restricted ? "unlock" : "slash-circle",
                             danger: !batch.restricted,
-                            onClick: () => toggleRestriction(batch),
+                            onClick: () => { setRestrictionTarget(batch); setRestrictionReason(""); },
                             disabled: Number(batch.quantityAvailable) <= 0,
                           },
                           {
@@ -768,6 +775,7 @@ export function InventoryPage() {
             <Empty text="No inventory batches match the selected filter." />
           )}
         </div>
+        <Pagination page={batchPagination.page} pageCount={batchPagination.pageCount} total={filteredBatches.length} pageSize={batchPagination.pageSize} onPageChange={batchPagination.setPage} />
       </div>
 
       {modal && (
@@ -907,13 +915,13 @@ export function InventoryPage() {
                       <input
                         className="form-control"
                         type="number"
-                        step="0.001"
-                        min="0.001"
+                        step={stockQuantityStep(products.find((product: any) => product.id === Number(form.productId))?.unit)}
+                        min={stockQuantityStep(products.find((product: any) => product.id === Number(form.productId))?.unit)}
                         value={form.quantity}
                         onChange={(event) =>
                           setForm({
                             ...form,
-                            quantity: Number(event.target.value),
+                            quantity: event.target.value,
                           })
                         }
                         required
@@ -997,13 +1005,13 @@ export function InventoryPage() {
                     <input
                       className="form-control"
                       type="number"
-                      min="0.001"
-                      step="0.001"
+                      min={stockQuantityStep(selected.product.unit)}
+                      step={stockQuantityStep(selected.product.unit)}
                       value={form.adjustQuantity}
                       onChange={(event) =>
                         setForm({
                           ...form,
-                          adjustQuantity: Number(event.target.value),
+                          adjustQuantity: event.target.value,
                         })
                       }
                       required
@@ -1075,14 +1083,14 @@ export function InventoryPage() {
                     <input
                       className="form-control"
                       type="number"
-                      min="0.001"
+                      min={stockQuantityStep(selected.product.unit)}
                       max={selected.quantityAvailable}
-                      step="0.001"
+                      step={stockQuantityStep(selected.product.unit)}
                       value={form.dispositionQuantity}
                       onChange={(event) =>
                         setForm({
                           ...form,
-                          dispositionQuantity: Number(event.target.value),
+                          dispositionQuantity: event.target.value,
                         })
                       }
                       required
@@ -1159,6 +1167,13 @@ export function InventoryPage() {
           onClose={() => setConfirmDelete(null)}
           busy={busy}
         />
+      )}
+      {restrictionTarget && (
+        <Modal title={restrictionTarget.restricted ? `Resume batch ${restrictionTarget.batchNumber}?` : `Stop issuing batch ${restrictionTarget.batchNumber}?`} onClose={() => setRestrictionTarget(null)} size="sm">
+          <p className="text-secondary small">{restrictionTarget.restricted ? "This batch will become available for allocation and dispensing again." : "This immediately prevents the batch from being allocated to new sales or prescriptions."}</p>
+          {!restrictionTarget.restricted && <div><label className="form-label">Reason for restriction</label><textarea className="form-control" value={restrictionReason} onChange={(event) => setRestrictionReason(event.target.value)} minLength={3} maxLength={220} placeholder="Describe the quality, recall, or handling concern." required /></div>}
+          <div className="modal-actions"><button type="button" className="btn btn-light" onClick={() => setRestrictionTarget(null)}>Cancel</button><button type="button" className={`btn ${restrictionTarget.restricted ? 'btn-primary' : 'btn-danger'}`} disabled={busy || (!restrictionTarget.restricted && restrictionReason.trim().length < 3)} onClick={() => toggleRestriction(restrictionTarget)}>{busy ? 'Working…' : restrictionTarget.restricted ? 'Resume issuing' : 'Stop issuing'}</button></div>
+        </Modal>
       )}
     </>
   );

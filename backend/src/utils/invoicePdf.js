@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { billingPreview } from './billingPreview.js';
 
 const money = (value) => `Rs. ${Number(value || 0).toFixed(2)}`;
 const productName = (product) => `${product.genericName}${product.strength && product.strength !== 'N/A' ? ` ${product.strength}` : ''}`;
@@ -11,6 +12,7 @@ const statusStyles = {
 
 export const createInvoicePdf = (sale) => new Promise((resolve, reject) => {
   const doc = new PDFDocument({ size: 'A4', margin: 42 }); const chunks = [];
+  const details = billingPreview(sale);
   const hasSupplementaryRetailItems = Boolean(sale.dispensing && sale.items.some((item) => !item.product.prescriptionRequired));
   doc.on('data', (chunk) => chunks.push(chunk)); doc.on('end', () => resolve(Buffer.concat(chunks))); doc.on('error', reject);
   doc.fontSize(22).fillColor('#174a45').text('MediFlow Pharmacy');
@@ -26,6 +28,8 @@ export const createInvoicePdf = (sale) => new Promise((resolve, reject) => {
   doc.font('Helvetica');
 
   doc.moveDown().fontSize(10).fillColor('#111827').text(`Patient: ${sale.patient?.fullName || 'Walk-in'}`);
+  if (details.preparedBy) doc.text(`Prescription prepared by: ${details.preparedBy}`);
+  if (details.verifiedBy) doc.text(`Verified by: ${details.verifiedBy}`);
   doc.text(`${sale.dispensing ? 'Dispensed by' : 'Sold by'}: ${sale.pharmacist.fullName}`);
   if (sale.cashier) doc.text(`Payment received by: ${sale.cashier.fullName}`);
   if (sale.paymentRequest) doc.text(`Cashier request: ${sale.paymentRequest.requestNumber}`);
@@ -33,15 +37,38 @@ export const createInvoicePdf = (sale) => new Promise((resolve, reject) => {
   doc.moveDown();
   const widths = [235, 60, 85, 90]; const x = [42, 277, 337, 422];
   const row = (values, bold = false) => {
-    if (doc.y > 740) doc.addPage(); const y = doc.y;
+    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.5);
+    const height = Math.max(25, ...values.map((value, index) => doc.heightOfString(String(value), { width: widths[index] - 6 }) + 10));
+    if (doc.y + height > 770) doc.addPage(); const y = doc.y;
     values.forEach((value, index) => doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.5).text(String(value), x[index], y, { width: widths[index] - 6 }));
-    doc.y = y + 25; doc.moveTo(42, doc.y - 4).lineTo(552, doc.y - 4).strokeColor('#dce6e3').stroke();
+    doc.y = y + height; doc.moveTo(42, doc.y - 4).lineTo(552, doc.y - 4).strokeColor('#dce6e3').stroke();
   };
   row(['Item / batch', 'Quantity', 'Unit price', 'Line total'], true);
   sale.items.forEach((item) => row([`${productName(item.product)}\nBatch: ${item.batch.batchNumber}`, item.quantity, money(item.unitPrice), money(item.lineTotal)]));
   doc.moveDown();
-  const summary = [['Subtotal', sale.subtotal], ['Discount', -Number(sale.discount)], ['Bottle / container fee', sale.containerFee], ['Tax', sale.tax], ['Invoice total', sale.total], ['Amount paid', sale.amountPaid], ['Balance due', Math.max(0, Number(sale.total) - Number(sale.amountPaid))]];
+  const summary = [['Subtotal', sale.subtotal], ['Discount', -Number(sale.discount)], ['Bottle / container fee', sale.containerFee], ['Tax', sale.tax], ['Invoice total', sale.total], ['Amount paid', sale.amountPaid], ['Balance due', sale.status === 'VOIDED' ? 0 : Math.max(0, Number(sale.total) - Number(sale.amountPaid))]];
   summary.forEach(([label, value], index) => doc.font(index === 4 ? 'Helvetica-Bold' : 'Helvetica').fontSize(index === 4 ? 11 : 9).text(`${label}: ${money(value)}`, { align: 'right' }));
+  if (details.medicineInstructions.length) {
+    if (doc.y > 650) doc.addPage();
+    doc.moveDown().font('Helvetica-Bold').fontSize(12).fillColor('#174a45').text('Medicine directions', 42, doc.y, { width: 510 });
+    doc.font('Helvetica').fontSize(9).fillColor('#111827').text('Recorded directions for medicines supplied with this invoice. If a medicine was returned or its instructions changed, confirm the current directions with the pharmacist.', { width: 510 });
+    for (const item of details.medicineInstructions) {
+      const body = [item.directions, item.specialInstructions && `Additional instructions: ${item.specialInstructions}`, item.storageInstructions && `Storage: ${item.storageInstructions}`].filter(Boolean).join('\n');
+      const height = doc.heightOfString(body, { width: 510 }) + doc.heightOfString(item.name, { width: 510 }) + 35;
+      if (doc.y + Math.min(height, 650) > 770) doc.addPage();
+      doc.moveDown().font('Helvetica-Bold').fontSize(10).text(item.name, 42, doc.y, { width: 510 });
+      doc.font('Helvetica').fontSize(9).text(`Supplied: ${item.quantity} ${item.unit}`, { width: 510 });
+      doc.text(body, { width: 510 });
+    }
+  }
+  if (sale.refunds?.length) {
+    doc.moveDown().font('Helvetica-Bold').text('Refund / credit history (original invoice retained)');
+    for (const refund of sale.refunds) {
+      if (doc.y > 715) doc.addPage();
+      doc.font('Helvetica').fontSize(9).text(`Refund #${refund.id}: ${money(refund.amount)} - ${refund.status === 'SETTLED' ? `Payout confirmed (${refund.method})` : 'Payout pending'}`);
+      doc.text(refund.reason, { width: 500 });
+    }
+  }
   doc.moveDown(2);
   if (sale.status === 'VOIDED') {
     doc.font('Helvetica-Bold').fontSize(9).fillColor('#9a2f24').text('This invoice has been voided and is not valid for payment, dispensing, or any other transaction.', { align: 'center' });

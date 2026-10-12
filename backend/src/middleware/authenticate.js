@@ -16,6 +16,7 @@ export const authenticate = async (req, _res, next) => {
         fullName: true,
         role: true,
         cashierAccess: true,
+        pharmacyReconciliationAccess: true,
         mustChangePassword: true,
         tokenVersion: true,
         lastLoginAt: true,

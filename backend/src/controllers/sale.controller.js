@@ -2,17 +2,28 @@ import { z } from 'zod';
 import { saleService } from '../services/sale.service.js';
 import { recordAudit } from '../services/audit.service.js';
 import { createInvoicePdf } from '../utils/invoicePdf.js';
+import { listPagination } from '../utils/listPagination.js';
+import { billingPreview } from '../utils/billingPreview.js';
 
-export const paymentSchema = z.object({ amount: z.coerce.number().positive(), paymentMethod: z.enum(['CASH', 'CARD', 'OTHER']) });
+export const paymentSchema = z.object({ amount: z.coerce.number().positive(), paymentMethod: z.enum(['CASH', 'CARD', 'BANK_TRANSFER', 'OTHER']), paymentReference: z.string().trim().max(120).optional().nullable() });
 export const retailSaleSchema = z.object({
   patientId: z.coerce.number().int().positive().optional().nullable(), couponCode: z.string().trim().max(40).optional().nullable(),
-  tax: z.coerce.number().nonnegative().default(0), amountPaid: z.coerce.number().nonnegative().default(0), paymentMethod: z.enum(['CASH', 'CARD', 'OTHER']).default('CASH'),
+  tax: z.coerce.number().nonnegative().default(0), amountPaid: z.coerce.number().nonnegative().default(0), paymentMethod: z.enum(['CASH', 'CARD', 'BANK_TRANSFER', 'OTHER']).default('CASH'), paymentReference: z.string().trim().max(120).optional().nullable(),
   items: z.array(z.object({ productId: z.coerce.number().int().positive(), quantity: z.coerce.number().positive() })).min(1).max(100),
 });
 export const voidSaleSchema = z.object({ reason: z.string().trim().min(3).max(500) });
 
 export const saleController = {
-  list: async (req, res) => res.json({ data: await saleService.list(req.user) }),
+  preview: async (req,res) => {
+    const sale = await saleService.getForUser(Number(req.params.id),req.user);
+    res.setHeader('Cache-Control','no-store');
+    res.json({data:billingPreview(sale)});
+  },
+  list: async (req, res) => {
+    const pagination = listPagination(req.query);
+    const data = await saleService.list(req.user, pagination);
+    res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } });
+  },
   invoice: async (req, res) => {
     const sale = await saleService.getForUser(Number(req.params.id), req.user);
     const body = await createInvoicePdf(sale);
@@ -21,7 +32,7 @@ export const saleController = {
     res.type('application/pdf').send(body);
   },
   pay: async (req, res) => {
-    const data = await saleService.pay(Number(req.params.id), req.body.amount, req.body.paymentMethod);
+    const data = await saleService.pay(Number(req.params.id), req.body.amount, req.body.paymentMethod, req.user.id, req.body.paymentReference);
     await recordAudit({ userId: req.user.id, action: 'SALE_PAYMENT', entityType: 'SALE', entityId: data.id, details: req.body, ipAddress: req.ip });
     res.json({ data });
   },

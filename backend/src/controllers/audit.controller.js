@@ -1,7 +1,7 @@
 import { prisma } from '../config/prisma.js';
 import { readFile, writeFile, stat } from 'node:fs/promises';
 import { auditService } from '../services/audit.service.js';
-import { toCsv } from '../utils/csv.js';
+import { streamCsv } from '../utils/csv.js';
 
 export const auditController = {
   myActivity: async (req, res) => res.json(await auditService.myActivity(req.user.id, req.validatedQuery)),
@@ -28,7 +28,7 @@ export const auditController = {
     res.json({ data, message: `${data.restored} audit record(s) restored.` });
   },
   export: async (req, res) => {
-    const rows = await auditService.exportRows(req.validatedQuery);
+    const pages = auditService.exportRows(req.validatedQuery);
     const columns = [
       { key: 'time', label: 'Time' },
       { key: 'staff', label: 'Staff member' },
@@ -46,7 +46,7 @@ export const auditController = {
       { key: 'requestId', label: 'Request ID' },
       { key: 'details', label: 'Details' },
     ];
-    const data = rows.map((row) => ({
+    async function* mappedPages() { for await (const rows of pages) yield rows.map((row) => ({
       time: row.createdAt.toISOString(),
       staff: row.user?.fullName || 'System',
       email: row.user?.email || '',
@@ -62,9 +62,10 @@ export const auditController = {
       ipAddress: row.ipAddress || '',
       requestId: row.requestId || '',
       details: row.details ? JSON.stringify(row.details) : '',
-    }));
+    })); }
     res.setHeader('Content-Disposition', 'attachment; filename="mediflow-staff-audit.csv"');
-    res.type('text/csv').send(toCsv(columns, data));
+    res.type('text/csv');
+    await streamCsv(res, columns, mappedPages());
   },
   errors: async (_req, res) => {
     let content = '';

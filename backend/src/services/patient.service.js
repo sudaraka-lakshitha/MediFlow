@@ -9,6 +9,9 @@ const include = {
 };
 
 const temporaryPassword = () => `Tmp${crypto.randomBytes(5).toString('hex')}!`;
+const walkInEmail = () => `walkin-${crypto.randomUUID()}@patients.mediflow.invalid`;
+const hasOnlineAccess = (patient) => !patient.user.email.endsWith('@patients.mediflow.invalid');
+const withAccessMode = (patient) => ({ ...patient, onlineAccess: hasOnlineAccess(patient) });
 
 export const patientService = {
   noticesForUser: (userId) => prisma.patientNotice.findMany({ where: { patientId: userId }, include: { createdBy: { select: { fullName: true, role: true } } }, orderBy: { createdAt: 'desc' }, take: 50 }),
@@ -30,7 +33,7 @@ export const patientService = {
       prisma.patientProfile.findMany({ where, include, orderBy: { createdAt: 'desc' }, take }),
       prisma.patientProfile.count({ where }),
     ]);
-    return { rows, total, hasMore: total > rows.length };
+    return { rows: rows.map(withAccessMode), total, hasMore: total > rows.length };
   },
   async create(data, staff) {
     if (data.phone) {
@@ -38,16 +41,18 @@ export const patientService = {
       if (existing) throw new AppError(409, `A patient with this phone number already exists: ${existing.fullName} (${existing.patientProfile?.patientNumber || 'no patient number'}). Search for them instead of creating a duplicate.`);
     }
     return prisma.$transaction(async (tx) => {
-      const generatedPassword = data.password || temporaryPassword();
-      const user = await tx.user.create({ data: { email:data.email.toLowerCase(), fullName:data.fullName, phone:data.phone||null, passwordHash:await bcrypt.hash(generatedPassword,12), mustChangePassword:true, role:'PATIENT' } });
+      const onlineAccess = data.onlineAccess !== false;
+      const generatedPassword = onlineAccess ? (data.password || temporaryPassword()) : temporaryPassword();
+      const email = onlineAccess ? data.email.toLowerCase() : walkInEmail();
+      const user = await tx.user.create({ data: { email, fullName:data.fullName, phone:data.phone||null, passwordHash:await bcrypt.hash(generatedPassword,12), active:onlineAccess, mustChangePassword:onlineAccess, role:'PATIENT' } });
       const patient = await tx.patientProfile.create({ data: { userId:user.id, patientNumber:`PAT-${crypto.randomUUID().slice(0,8).toUpperCase()}`, dateOfBirth:data.dateOfBirth, address:data.address, allergies:data.allergies, chronicConditions:data.chronicConditions||null, registrationSource:staff.role, registeredById:staff.id }, include });
-      return { ...patient, temporaryPassword: generatedPassword };
+      return { ...patient, onlineAccess, temporaryPassword: onlineAccess ? generatedPassword : undefined };
     });
   },
   update(id,data) {
     return prisma.$transaction(async (tx) => {
       const profile=await tx.patientProfile.findUniqueOrThrow({where:{id}});
-      await tx.user.update({where:{id:profile.userId},data:{email:data.email.toLowerCase(),fullName:data.fullName,phone:data.phone||null}});
+      await tx.user.update({where:{id:profile.userId},data:{email:data.email?data.email.toLowerCase():undefined,fullName:data.fullName,phone:data.phone||null}});
       return tx.patientProfile.update({where:{id},data:{dateOfBirth:data.dateOfBirth,address:data.address,allergies:data.allergies,chronicConditions:data.chronicConditions||null},include});
     });
   },
@@ -75,15 +80,15 @@ export const patientService = {
     await prisma.user.update({ where: { id: profile.userId }, data: { active, tokenVersion: { increment: 1 } } });
     return prisma.patientProfile.findUnique({ where: { id }, include });
   },
-  async healthRecord(id) {
+  async healthRecord(id, { page = 1, pageSize = 300 } = {}) {
     const profile = await prisma.patientProfile.findUniqueOrThrow({
       where: { id },
       include: {
         user: { select: { id:true, fullName:true, email:true, phone:true, active:true, createdAt:true } },
         registeredBy: { select: { id:true, fullName:true, role:true } },
         prescriptions: {
-          orderBy: { prescriptionDate: 'desc' },
-          take: 60,
+          orderBy: [{ prescriptionDate: 'desc' }, { id: 'desc' }],
+          skip: (page - 1) * pageSize, take: pageSize,
           include: {
             items: {
               include: {
@@ -97,9 +102,9 @@ export const patientService = {
     });
     return profile;
   },
-  async healthRecordForUser(userId) {
+  async healthRecordForUser(userId, pagination) {
     const profile = await prisma.patientProfile.findUnique({ where: { userId }, select: { id: true } });
     if (!profile) throw new AppError(404, 'Patient profile not found.');
-    return this.healthRecord(profile.id);
+    return this.healthRecord(profile.id, pagination);
   },
 };

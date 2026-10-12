@@ -18,6 +18,7 @@ export const staffSchema = z.object({
   phone: phone.optional().nullable().or(z.literal('')),
   role: z.enum(['ADMIN', 'PHARMACIST', 'CASHIER']),
   cashierAccess: z.boolean().default(false),
+  pharmacyReconciliationAccess: z.boolean().default(false),
 });
 export const staffUpdateSchema = z.object({
   fullName: z.string().trim().min(2).max(150),
@@ -25,6 +26,7 @@ export const staffUpdateSchema = z.object({
   phone: phone.optional().nullable().or(z.literal('')),
   role: z.enum(['ADMIN', 'PHARMACIST', 'CASHIER']),
   cashierAccess: z.boolean().default(false),
+  pharmacyReconciliationAccess: z.boolean().optional(),
 });
 export const resetPasswordSchema = z.object({ password });
 export const changePasswordSchema = z.object({ currentPassword: z.string().min(1), newPassword: password });

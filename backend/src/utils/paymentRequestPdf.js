@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { createCollectionSlipPdf } from './collectionSlipPdf.js';
 
 const money = (value) => `Rs. ${Number(value || 0).toFixed(2)}`;
 const productName = (product) => `${product.genericName}${product.strength && product.strength !== 'N/A' ? ` ${product.strength}` : ''}`;
@@ -27,16 +28,19 @@ const drawHeader = (doc, request, receipt) => {
   doc.roundedRect(left, 108, contentWidth, 24, 5).fillAndStroke(banner.bg, banner.border);
   doc.font('Helvetica-Bold').fontSize(10).fillColor(banner.fg).text(banner.label, left, 114, { width: contentWidth, align: 'center' });
 
+  const isSplit = request.paymentMethod === 'OTHER' && request.paymentReference?.startsWith('Split:');
   const details = [
     ['Customer', request.patient?.fullName || 'Walk-in customer'],
     [retail ? 'Sale type' : 'Prescription', retail ? 'Retail goods' : request.prescription?.prescriptionNumber],
     ['Prepared by', request.pharmacist.fullName],
     ...(request.cashier ? [['Payment received by', request.cashier.fullName]] : []),
+    ...(request.paymentMethod ? [['Payment method', isSplit ? 'SPLIT PAYMENT' : request.paymentMethod.replace('_', ' ')]] : []),
+    ...(request.paymentReference ? [[isSplit ? 'Split breakdown' : 'Payment reference', request.paymentReference]] : []),
   ];
   let y = 144;
   details.forEach(([label, value]) => {
     doc.font('Helvetica-Bold').fontSize(8).fillColor('#64748b').text(label.toUpperCase(), left, y, { width: 108 });
-    doc.font('Helvetica').fontSize(9.5).fillColor('#111827').text(String(value), left + 112, y - 1, { width: 280 });
+    doc.font('Helvetica').fontSize(9.5).fillColor('#111827').text(String(value), left + 112, y - 1, { width: 380 });
     y += 18;
   });
   return Math.max(y + 8, 222);
@@ -82,6 +86,8 @@ const drawTotals = (doc, request, startY) => {
     ['Tax', money(request.tax)],
     ['Total due', money(request.total)],
     ['Amount paid', money(request.amountPaid)],
+    ['Refunded', money(request.refundedAmount || 0)],
+    ['Net paid', money(Number(request.amountPaid) - Number(request.refundedAmount || 0))],
   ];
   rows.forEach(([label, value], index) => {
     const total = index === 4;
@@ -144,7 +150,9 @@ const drawCompactSlip = (doc, request) => {
   doc.font('Helvetica').fontSize(7.5).fillColor('#82918e').text('MediFlow', left, 780, { width: contentWidth, align: 'center', lineBreak: false });
 };
 
-export const createPaymentRequestPdf = (request, receipt = false) => new Promise((resolve, reject) => {
+export const createPaymentRequestPdf = (request, receipt = false, paperWidth = 80) => {
+  if (receipt && request.status === 'PAID') return createCollectionSlipPdf(request, paperWidth);
+  return new Promise((resolve, reject) => {
   const doc = new PDFDocument({ size: 'A4', margin: 44, bufferPages: true });
   const chunks = [];
   doc.on('data', (chunk) => chunks.push(chunk));
@@ -190,4 +198,5 @@ export const createPaymentRequestPdf = (request, receipt = false) => new Promise
     }
   }
   doc.end();
-});
+  });
+};

@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { AppError } from './AppError.js';
 import { isCountableUnit } from './unitMeasure.js';
+import { stockQuantity } from './stockQuantity.js';
 
 export const calculateQuantity = (unit, item) => {
   let calculated = new Prisma.Decimal(item.quantityPerDose).mul(item.timesPerDay).mul(item.daysSupply);
@@ -12,5 +13,6 @@ export const calculateQuantity = (unit, item) => {
   const prescribed = overridden ? new Prisma.Decimal(item.overrideQuantity) : calculated;
   if (overridden && !item.overrideReason?.trim()) throw new AppError(400, 'An override reason is required.');
   if (discrete && !prescribed.isInteger()) throw new AppError(400, `${unit} quantities must be whole numbers.`);
+  stockQuantity(prescribed, unit);
   return { calculated, prescribed, overridden };
 };

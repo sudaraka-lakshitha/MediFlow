@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api/client";
+import { pagedList } from "../api/pagedList";
 import { useAuth } from "../auth/useAuth";
 import { ActionsDropdown } from "../components/ActionsDropdown";
 import { Modal, ModalActions } from "../components/Modal";
 import { PasswordField } from "../components/PasswordField";
 import { Alert, Empty, Loading, Status } from "../components/Ui";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
+import { Pagination } from "../components/Pagination";
+import { useClientPagination } from "../utils/useClientPagination";
 
 type Patient = {
   id: number;
+  onlineAccess?: boolean;
   patientNumber: string;
   dateOfBirth?: string;
   address?: string;
@@ -60,7 +64,7 @@ export function PatientsPage() {
     setBusy(true);
     setError("");
     try {
-      const res = await api.get(`/patients/${p.id}/health-record`);
+      const res = await pagedList(`/patients/${p.id}/health-record`, "prescriptions");
       setHealthRecord(res.data.data);
       setShowHealthRecord(true);
     } catch (caught) {
@@ -84,6 +88,7 @@ export function PatientsPage() {
   useEffect(() => {
     load();
   }, [load]);
+  const pagination = useClientPagination(rows, 25);
   const openCreate = () => {
     setError("");
     setSelected(null);
@@ -95,7 +100,7 @@ export function PatientsPage() {
     setSelected(p);
     setForm({
       fullName: p.user.fullName,
-      email: p.user.email,
+      email: p.onlineAccess === false ? "" : p.user.email,
       phone: p.user.phone || "",
       password: "",
       dateOfBirth: p.dateOfBirth?.slice(0, 10) || "",
@@ -139,7 +144,7 @@ export function PatientsPage() {
       if (modal === "edit" && selected)
         await api.put(`/patients/${selected.id}`, {
           fullName: form.fullName,
-          email: form.email,
+          ...(selected.onlineAccess === false ? {} : { email: form.email }),
           phone: form.phone,
           dateOfBirth: form.dateOfBirth || null,
           address: form.address,
@@ -220,7 +225,7 @@ export function PatientsPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((p) => (
+              {pagination.visibleRows.map((p) => (
                 <tr key={p.id}>
                   <td>
                     <strong>{p.user.fullName}</strong>
@@ -228,7 +233,7 @@ export function PatientsPage() {
                     <small>{p.patientNumber}</small>
                   </td>
                   <td>
-                    {p.user.email}
+                    {p.onlineAccess === false ? <span className="badge bg-secondary-subtle text-secondary">Walk-in · no online login</span> : p.user.email}
                     <br />
                     <small>{p.user.phone || "—"}</small>
                   </td>
@@ -243,7 +248,7 @@ export function PatientsPage() {
                   </td>
                   <td>{p.allergies || "Not recorded"}</td>
                   <td>
-                    <Status value={p.user.active ? "ACTIVE" : "INACTIVE"} />
+                    <Status value={p.onlineAccess === false ? "INTERNAL RECORD" : p.user.active ? "ACTIVE" : "INACTIVE"} />
                   </td>
                   <td>
                     <ActionsDropdown
@@ -258,17 +263,16 @@ export function PatientsPage() {
                           icon: "pencil",
                           onClick: () => openEdit(p),
                         },
-                        {
+                        ...(p.onlineAccess === false ? [] : [{
                           label: "Send notice",
                           icon: "bell",
                           onClick: () => { setError(""); setSelected(p); setNoticeForm({ title: "", message: "" }); setModal("notice"); },
-                        },
-                        {
+                        }, {
                           label: "Reset password",
                           icon: "key",
                           onClick: () => openReset(p),
-                        },
-                        ...(admin
+                        }]),
+                        ...(admin && p.onlineAccess !== false
                           ? [
                               {
                                 label: p.user.active
@@ -291,6 +295,7 @@ export function PatientsPage() {
           </table>
           {!rows.length && <Empty text="No patient accounts found." />}
         </div>
+        <Pagination page={pagination.page} pageCount={pagination.pageCount} total={rows.length} pageSize={pagination.pageSize} onPageChange={pagination.setPage} />
       </div>
       {(modal === "create" || modal === "edit") && (
         <Modal
@@ -306,7 +311,7 @@ export function PatientsPage() {
             <div className="form-grid">
               {[
                 ["fullName", "Full name", "text"],
-                ["email", "Email address", "email"],
+                ...(modal === "edit" && selected?.onlineAccess === false ? [] : [["email", "Email address", "email"]]),
                 ["phone", "Phone number", "tel"],
                 ["dateOfBirth", "Date of birth", "date"],
                 ["address", "Address", "text"],
@@ -465,7 +470,7 @@ export function PatientsPage() {
                 <strong>Contact Phone:</strong> {healthRecord.user.phone || "—"}
               </div>
               <div className="col-md-6">
-                <strong>Email Address:</strong> {healthRecord.user.email}
+                <strong>Email Address:</strong> {String(healthRecord.user.email).endsWith("@patients.mediflow.invalid") ? "No online login (walk-in record)" : healthRecord.user.email}
               </div>
             </div>
             

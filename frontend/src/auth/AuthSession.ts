@@ -9,6 +9,7 @@ export interface User {
   role: Role;
   phone?: string | null;
   cashierAccess?: boolean;
+  pharmacyReconciliationAccess?: boolean;
   mustChangePassword?: boolean;
   lastLoginAt?: string | null;
   passwordChangedAt?: string | null;

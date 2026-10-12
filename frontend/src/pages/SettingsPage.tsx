@@ -21,6 +21,7 @@ export function SettingsPage() {
     auditTrashRetentionDays: 30,
     requirePickupPin: true,
     cashierCanDispenseAtPayment: false,
+    cashReservationHours: 24,
   });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -305,6 +306,30 @@ export function SettingsPage() {
               enabled, prescription bills are marked dispensed the moment the
               cashier takes payment — no separate pharmacist PIN-verification
               step happens at all, since the same transaction covers both.
+            </p>
+          </div>
+        </div>
+
+        <div className="form-section">
+          <div className="form-section-title">Unpaid cash-order reservation</div>
+          <div className="setting-inline">
+            <div>
+              <label className="form-label">Default reservation period</label>
+              <div className="input-group">
+                <input
+                  className="form-control"
+                  type="number"
+                  min={1}
+                  max={168}
+                  value={form.cashReservationHours}
+                  onChange={(event) => setForm({ ...form, cashReservationHours: Number(event.target.value) })}
+                  required
+                />
+                <span className="input-group-text">hours</span>
+              </div>
+            </div>
+            <p>
+              When an online customer chooses cash, invoice stock is held for this period while they travel to the pharmacy. Pharmacists can override it per invoice. Bank-transfer stock is reserved only after cashier verification and remains held until collection or cancellation.
             </p>
           </div>
         </div>

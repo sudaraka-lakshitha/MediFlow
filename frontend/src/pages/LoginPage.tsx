@@ -73,7 +73,7 @@ export function LoginPage() {
           </button>
           <p className="auth-link"><Link to="/forgot-password">Forgot password?</Link></p>
           <p className="auth-link">New patient? <Link to="/register">Create an account</Link></p>
-          <div className="demo-note">
+          {import.meta.env.DEV && <div className="demo-note">
             <div className="demo-note-heading">
               <strong>Test accounts</strong>
               <small>Click an account to use its email</small>
@@ -91,7 +91,7 @@ export function LoginPage() {
                 </button>
               ))}
             </div>
-          </div>
+          </div>}
         </form>
       </section>
     </div>

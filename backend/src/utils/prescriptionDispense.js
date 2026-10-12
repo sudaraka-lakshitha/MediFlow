@@ -3,14 +3,19 @@ import { Prisma } from '@prisma/client';
 import { AppError } from './AppError.js';
 import { withUniqueRetry } from './withUniqueRetry.js';
 import { consumePaymentRequestStock } from './stock.js';
+import { remainingPrescriptionQuantity } from './prescriptionQuantity.js';
 import { batchAllocationOrder, operationSettingsService } from '../services/operationSettings.service.js';
 
 // Shared by the pharmacist's manual "verify PIN and dispense" endpoint and the
 // cashier's "dispense at payment" flow: both end with the exact same stock
 // consumption, Dispensing/Sale creation, and prescription status update.
-export const performPrescriptionDispense = async (tx, { prescriptionId, paymentRequestId, performedById, notes }) => {
+export const performPrescriptionDispense = async (tx, { prescriptionId, paymentRequestId, performedById, notes, expectedPickupPinHash }) => {
   const paidRequest = await tx.paymentRequest.findFirst({ where: { id: paymentRequestId, prescriptionId }, include: { items: { include: { product: true } } } });
   if (!paidRequest || paidRequest.status !== 'PAID') throw new AppError(402, 'Cashier payment has not been completed for this prescription.');
+  if (paidRequest.customerCancellationReason) throw new AppError(409, 'Resolve the customer cancellation request before dispensing this order.');
+  if (expectedPickupPinHash !== undefined && (paidRequest.pickupPinHash !== expectedPickupPinHash || paidRequest.pinAttempts >= 5)) {
+    throw new AppError(409, 'The collection PIN changed or was locked. Use the latest receipt and try again.');
+  }
 
   const prescription = await tx.prescription.findUnique({
     where: { id: prescriptionId },
@@ -28,7 +33,7 @@ export const performPrescriptionDispense = async (tx, { prescriptionId, paymentR
     const item = prescription.items.find((candidate) => candidate.id === paidItem.prescriptionItemId);
     if (!item) throw new AppError(404, `Prescription item ${paidItem.prescriptionItemId} was not found.`);
     const requestedQuantity = new Prisma.Decimal(paidItem.quantity);
-    const remaining = item.prescribedQuantity.sub(item.dispensedQuantity);
+    const remaining = remainingPrescriptionQuantity(item);
     if (requestedQuantity.greaterThan(remaining)) throw new AppError(409, `${item.product.genericName}: quantity exceeds the prescribed remainder.`);
   }
 
@@ -72,18 +77,19 @@ export const performPrescriptionDispense = async (tx, { prescriptionId, paymentR
   const containerFee = paidRequest.containerFee;
   const tax = paidRequest.tax;
   const total = paidRequest.total;
-  const amountPaid = paidRequest.amountPaid;
+  const amountPaid = paidRequest.amountPaid.sub(paidRequest.refundedAmount || 0);
+  if (amountPaid.lessThan(total)) throw new AppError(409, 'The net payment no longer covers this invoice. Resolve its balance before dispensing.');
   const saleSubtotal = paidRequest.subtotal;
   const sale = await withUniqueRetry(() => tx.sale.create({ data: {
     invoiceNumber: `INV-${Date.now()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`,
     dispensingId: dispensing.id, patientId: prescription.patient.userId, pharmacistId: performedById,
     cashierId: paidRequest.cashierId, paymentRequestId: paidRequest.id,
     subtotal: saleSubtotal, discount, containerFee, tax, total, amountPaid, paymentMethod: paidRequest.paymentMethod,
-    status: amountPaid.greaterThanOrEqualTo(total) ? 'PAID' : 'PENDING', items: { create: allocations },
+    status: (paidRequest.status === 'PAID' || amountPaid.greaterThanOrEqualTo(total)) ? 'PAID' : 'PENDING', items: { create: allocations },
   } }));
 
-  const currentItems = await tx.prescriptionItem.findMany({ where: { prescriptionId }, select: { prescribedQuantity: true, dispensedQuantity: true } });
-  const status = currentItems.every((item) => item.dispensedQuantity.greaterThanOrEqualTo(item.prescribedQuantity)) ? 'DISPENSED' : 'PARTIALLY_DISPENSED';
+  const currentItems = await tx.prescriptionItem.findMany({ where: { prescriptionId }, select: { prescribedQuantity: true, dispensedQuantity: true, cancelledQuantity: true } });
+  const status = currentItems.every((item) => remainingPrescriptionQuantity(item).lessThanOrEqualTo(0)) ? 'DISPENSED' : 'PARTIALLY_DISPENSED';
   await tx.prescription.update({ where: { id: prescriptionId }, data: { status } });
   return {
     dispensingId: dispensing.id, saleId: sale.id, invoiceNumber: sale.invoiceNumber,

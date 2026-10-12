@@ -54,17 +54,19 @@ function SalesActivityChart({ series }: { series: any[] }) {
     ...series.map((item) => Number(item.sales) || 0),
     1,
   );
+  const minSales = Math.min(0, ...series.map(item => Number(item.sales) || 0));
+  const zeroY = plotBottom - ((0 - minSales) / (maxSales - minSales)) * plotHeight;
   const points = series.map((item, index) => ({
     ...item,
     x:
       series.length > 1
         ? plotLeft + (index / (series.length - 1)) * plotWidth
         : plotLeft + plotWidth / 2,
-    y: plotBottom - (Number(item.sales) / maxSales) * plotHeight,
+    y: plotBottom - ((Number(item.sales) - minSales) / (maxSales - minSales)) * plotHeight,
   }));
   const linePath = buildSmoothPath(points, [plotTop, plotBottom]);
   const areaPath = points.length
-    ? `${linePath} L ${points[points.length - 1].x},${plotBottom} L ${points[0].x},${plotBottom} Z`
+    ? `${linePath} L ${points[points.length - 1].x},${zeroY} L ${points[0].x},${zeroY} Z`
     : "";
   const dayLabel = (date: string) =>
     new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
@@ -97,6 +99,7 @@ function SalesActivityChart({ series }: { series: any[] }) {
       {points.length > 1 && (
         <path d={areaPath} fill="url(#salesAreaFill)" stroke="none" />
       )}
+      {minSales < 0 && <line x1={plotLeft} x2={plotRight} y1={zeroY} y2={zeroY} stroke="#87979c" strokeDasharray="4 3"><title>Zero net revenue</title></line>}
       {points.length > 1 && (
         <path d={linePath} fill="none" className="sales-scatter-line" />
       )}
@@ -188,6 +191,7 @@ export function DashboardPage() {
           </a>
         </div>
         <Alert message={error} />
+        {!!data?.reconciliationWarnings?.length && <p className="alert alert-warning">Some payment records require reconciliation. Review daily balancing before relying on collection totals.</p>}
         {notices.length > 0 && (
           <div className="panel">
             <div className="panel-header"><h3>Pharmacy notices</h3></div>
@@ -214,7 +218,7 @@ export function DashboardPage() {
             tone="blue"
           />
           <Metric
-            label="Collected today (my shift)"
+            label="Net receipts today (all methods, my shift)"
             value={money(data?.amountToday)}
             icon="cash-stack"
           />
@@ -356,6 +360,7 @@ export function DashboardPage() {
         </span>
       </div>
       <Alert message={error} />
+      {!!data?.reconciliationWarnings?.length && <p className="alert alert-warning">Some payment records require reconciliation. Review daily balancing before relying on collection totals.</p>}
       <div className="metric-grid">
         <Metric
           label="Pending prescriptions"
@@ -375,7 +380,7 @@ export function DashboardPage() {
           tone="teal"
         />
         <Metric
-          label="Cash collected today"
+          label="Net cash received today"
           value={money(data?.cashCollectedToday)}
           icon="wallet2"
           tone="navy"

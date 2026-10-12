@@ -15,6 +15,7 @@ const safeUser = (user) => ({
   phone: user.phone,
   role: user.role,
   cashierAccess: user.cashierAccess,
+  pharmacyReconciliationAccess: user.pharmacyReconciliationAccess,
   mustChangePassword: user.mustChangePassword,
   lastLoginAt: user.lastLoginAt,
   passwordChangedAt: user.passwordChangedAt,
@@ -114,13 +115,14 @@ export const authService = {
     const suppliedHash = crypto.createHmac('sha256', env.JWT_SECRET).update(`${user.id}:${otp}`).digest();
     const storedHash = Buffer.from(record.codeHash, 'hex');
     if (storedHash.length !== suppliedHash.length || !crypto.timingSafeEqual(storedHash, suppliedHash)) {
-      await prisma.passwordResetOtp.update({ where: { id: record.id }, data: { attempts: { increment: 1 } } });
+      await prisma.passwordResetOtp.updateMany({ where: { id: record.id, codeHash: record.codeHash, usedAt: null, attempts: { lt: 5 } }, data: { attempts: { increment: 1 } } });
       throw new AppError(400, 'The reset code is invalid or has expired. Request a new code.');
     }
 
-    await prisma.passwordResetOtp.update({ where: { id: record.id }, data: { usedAt: new Date() } });
+    const claimed = await prisma.passwordResetOtp.updateMany({ where: { id: record.id, codeHash: record.codeHash, usedAt: null, expiresAt: { gt: new Date() }, attempts: { lt: 5 } }, data: { usedAt: new Date() } });
+    if (claimed.count !== 1) throw new AppError(400, 'The reset code has already been used or expired. Request a new code.');
     const passwordKey = crypto.createHash('sha256').update(user.passwordHash).digest('hex').slice(0, 16);
-    const resetToken = jwt.sign({ purpose: 'password-reset', passwordKey }, env.JWT_SECRET, { subject: String(user.id), expiresIn: '10m' });
+    const resetToken = jwt.sign({ purpose: 'password-reset', passwordKey, tokenVersion: user.tokenVersion }, env.JWT_SECRET, { subject: String(user.id), expiresIn: '10m' });
     return { resetToken, expiresInMinutes: 10 };
   },
   async completeSelfReset(resetToken, newPassword) {
@@ -131,19 +133,22 @@ export const authService = {
     if (!user || !user.active) throw new AppError(400, 'Invalid password reset session.');
     const currentPasswordKey = crypto.createHash('sha256').update(user.passwordHash).digest('hex').slice(0, 16);
     if (payload.passwordKey !== currentPasswordKey) throw new AppError(400, 'This password reset session has already been used.');
+    if (payload.tokenVersion !== user.tokenVersion) throw new AppError(400, 'This password reset session has been revoked. Request a new code.');
     if (await bcrypt.compare(newPassword, user.passwordHash)) throw new AppError(400, 'The new password must be different from the current password.');
-    await prisma.$transaction([
-      prisma.user.update({
-        where: { id: user.id },
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await prisma.$transaction(async tx => {
+      const claimed = await tx.user.updateMany({
+        where: { id: user.id, active: true, passwordHash: user.passwordHash, tokenVersion: user.tokenVersion },
         data: {
-          passwordHash: await bcrypt.hash(newPassword, 12),
+          passwordHash,
           mustChangePassword: false,
           passwordChangedAt: new Date(),
           tokenVersion: { increment: 1 },
         },
-      }),
-      prisma.passwordResetOtp.deleteMany({ where: { userId: user.id } }),
-    ]);
+      });
+      if (claimed.count !== 1) throw new AppError(400, 'This password reset session has already been used or revoked.');
+      await tx.passwordResetOtp.deleteMany({ where: { userId: user.id } });
+    });
     return { message: 'Password reset successfully. You can now sign in.', auditUserId: user.id };
   },
   async updateProfile(userId, data) {

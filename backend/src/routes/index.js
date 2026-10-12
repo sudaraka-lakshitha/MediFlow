@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { refundRoutes } from './refund.routes.js';
+import { reconciliationRoutes } from './reconciliation.routes.js';
 import { z } from 'zod';
 import { authRoutes } from './auth.routes.js';
 import { userRoutes } from './user.routes.js';
@@ -12,6 +14,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { saleController, paymentSchema, retailSaleSchema, voidSaleSchema } from '../controllers/sale.controller.js';
 import { dashboardController } from '../controllers/dashboard.controller.js';
 import { auditController } from '../controllers/audit.controller.js';
+import { staffActivityReportRoutes } from './staffActivityReport.routes.js';
 import { patientRoutes } from './patient.routes.js';
 import { reportController } from '../controllers/report.controller.js';
 import { idParams, slipParams } from '../validators/common.validator.js';
@@ -19,16 +22,25 @@ import { discountRoutes } from './discount.routes.js';
 import { drugInformationRoutes } from './drugInformation.routes.js';
 import { prescriptionUploadRoutes } from './prescriptionUpload.routes.js';
 import { adminExportController } from '../controllers/adminExport.controller.js';
-import { paymentRequestController, cashierPaymentSchema, retailFulfillSchema, retailPaymentRequestSchema, paymentSlipSchema, slipReviewSchema, declineInvoiceSchema } from '../controllers/paymentRequest.controller.js';
+import { paymentRequestController, cashierPaymentSchema, retailFulfillSchema, retailPaymentRequestSchema, paymentSlipSchema, slipReviewSchema, declineInvoiceSchema, partialCancelSchema, requestCancellationSchema, invoiceAcknowledgementSchema } from '../controllers/paymentRequest.controller.js';
 import { bankAccountController, bankAccountSchema, bankAccountActiveSchema } from '../controllers/bankAccount.controller.js';
 import { authorizeCashier } from '../middleware/authorizeCashier.js';
 import { auditQuerySchema, myActivityQuerySchema, staffAuditSummaryQuerySchema } from '../validators/audit.validator.js';
 import { operationSettingsController } from '../controllers/operationSettings.controller.js';
 import { operationSettingsSchema } from '../validators/operationSettings.validator.js';
 import { navigationAttentionController } from '../controllers/navigationAttention.controller.js';
+import { cleanupExpiredCashReservations } from '../utils/reservationExpiry.js';
 
 export const apiRoutes = Router();
+apiRoutes.use('/staff-activity-report', staffActivityReportRoutes);
+// Refresh stock holds before any authenticated availability or order operation.
+apiRoutes.use(['/catalog', '/inventory', '/prescriptions', '/prescription-uploads', '/payment-requests', '/sales', '/cashier', '/dashboard', '/reports'], authenticate, asyncHandler(async (_req, _res, next) => {
+  await cleanupExpiredCashReservations();
+  next();
+}));
 apiRoutes.use('/auth', authRoutes);
+apiRoutes.use('/refunds', refundRoutes);
+apiRoutes.use('/cashier/reconciliation', reconciliationRoutes);
 apiRoutes.use('/users', userRoutes);
 apiRoutes.use('/catalog', catalogRoutes);
 apiRoutes.use('/inventory', inventoryRoutes);
@@ -39,15 +51,22 @@ apiRoutes.use('/drug-information', drugInformationRoutes);
 apiRoutes.get('/dashboard', authenticate, asyncHandler(dashboardController.summary));
 apiRoutes.get('/navigation/attention', authenticate, asyncHandler(navigationAttentionController.summary));
 apiRoutes.use('/patients', patientRoutes);
-apiRoutes.get('/sales', authenticate, authorize('ADMIN', 'PHARMACIST', 'PATIENT'), asyncHandler(saleController.list));
+apiRoutes.get('/sales', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), asyncHandler(saleController.list));
 apiRoutes.post('/sales/retail', authenticate, authorizeCashier, validate({ body: retailSaleSchema }), asyncHandler(saleController.createRetail));
 apiRoutes.get('/sales/:id/invoice.pdf', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams }), asyncHandler(saleController.invoice));
-apiRoutes.post('/sales/:id/pay', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: paymentSchema }), asyncHandler(saleController.pay));
+apiRoutes.get('/sales/:id/preview', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams }), asyncHandler(saleController.preview));
+apiRoutes.post('/sales/:id/pay', authenticate, authorizeCashier, validate({ params: idParams, body: paymentSchema }), asyncHandler(saleController.pay));
 apiRoutes.post('/sales/:id/void', authenticate, authorizeCashier, validate({ params: idParams, body: voidSaleSchema }), asyncHandler(saleController.void));
 apiRoutes.get('/payment-requests', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), asyncHandler(paymentRequestController.list));
+apiRoutes.get('/payment-requests/:id/collection-slip', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams }), asyncHandler(paymentRequestController.collectionSlip));
+apiRoutes.get('/payment-requests/:id/preview', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams }), asyncHandler(paymentRequestController.preview));
 apiRoutes.get('/cashier/retail-options', authenticate, authorizeCashier, asyncHandler(paymentRequestController.retailOptions));
+apiRoutes.get('/cashier/collections-today', authenticate, authorizeCashier, asyncHandler(paymentRequestController.collectionsToday));
 apiRoutes.post('/payment-requests/retail', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ body: retailPaymentRequestSchema }), asyncHandler(paymentRequestController.createRetail));
 apiRoutes.post('/payment-requests/:id/pay', authenticate, authorizeCashier, validate({ params: idParams, body: cashierPaymentSchema }), asyncHandler(paymentRequestController.pay));
+apiRoutes.post('/payment-requests/:id/reset-pickup-pin', authenticate, authorize('ADMIN'), validate({ params: idParams, body: z.object({ reason: z.string().trim().min(3).max(500) }) }), asyncHandler(paymentRequestController.resetPickupPin));
+apiRoutes.post('/payment-requests/:id/acknowledge', authenticate, authorize('PATIENT'), validate({ params: idParams, body: invoiceAcknowledgementSchema }), asyncHandler(paymentRequestController.acknowledge));
+apiRoutes.post('/payment-requests/:id/payment-choice', authenticate, authorize('PATIENT'), validate({ params: idParams, body: invoiceAcknowledgementSchema }), asyncHandler(paymentRequestController.changePaymentChoice));
 apiRoutes.post('/payment-requests/:id/cancel', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER'), validate({ params: idParams, body: z.object({ reason: z.string().trim().min(3).max(500) }) }), asyncHandler(paymentRequestController.cancel));
 apiRoutes.post('/payment-requests/:id/fulfill-retail', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: retailFulfillSchema }), asyncHandler(paymentRequestController.fulfillRetail));
 // Online bank-transfer path: the customer pays into a pharmacy account and uploads proof,
@@ -56,6 +75,10 @@ apiRoutes.post('/payment-requests/:id/slip', authenticate, authorize('PATIENT', 
 apiRoutes.post('/payment-requests/:id/slips/:slipId/review', authenticate, authorizeCashier, validate({ params: slipParams, body: slipReviewSchema }), asyncHandler(paymentRequestController.reviewSlip));
 apiRoutes.get('/payment-requests/:id/slips/:slipId/file', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: slipParams }), asyncHandler(paymentRequestController.slipFile));
 apiRoutes.post('/payment-requests/:id/decline', authenticate, authorize('PATIENT'), validate({ params: idParams, body: declineInvoiceSchema }), asyncHandler(paymentRequestController.decline));
+apiRoutes.post('/payment-requests/:id/partial-cancel', authenticate, authorizeCashier, validate({ params: idParams, body: partialCancelSchema }), asyncHandler(paymentRequestController.partialCancel));
+apiRoutes.post('/payment-requests/:id/cancellation-preview', authenticate, authorizeCashier, validate({ params: idParams, body: z.object({ itemIds: z.array(z.coerce.number().int().positive()).min(1), quantities: z.record(z.string(), z.coerce.number().positive()).optional() }) }), asyncHandler(paymentRequestController.cancellationPreview));
+apiRoutes.post('/payment-requests/:id/request-cancellation', authenticate, authorize('PATIENT'), validate({ params: idParams, body: requestCancellationSchema }), asyncHandler(paymentRequestController.requestCancellation));
+apiRoutes.post('/payment-requests/:id/resolve-cancellation', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER'), validate({ params: idParams, body: z.object({ revision: z.coerce.number().int().positive(), requestReason: z.string().min(1).max(500), reason: z.string().trim().min(3).max(500) }) }), asyncHandler(paymentRequestController.resolveCancellation));
 
 apiRoutes.get('/bank-accounts', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), asyncHandler(bankAccountController.list));
 apiRoutes.post('/bank-accounts', authenticate, authorize('ADMIN'), validate({ body: bankAccountSchema }), asyncHandler(bankAccountController.create));
