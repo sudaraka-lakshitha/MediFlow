@@ -1,0 +1,18 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { authenticate } from '../middleware/authenticate.js';
+import { authorize } from '../middleware/authorize.js';
+import { authorizeCashier } from '../middleware/authorizeCashier.js';
+import { validate } from '../middleware/validate.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
+import { idParams } from '../validators/common.validator.js';
+import { refundService } from '../services/refund.service.js';
+const reason = z.string().trim().min(3).max(500);
+const selection = z.object({ expectedRefundCount: z.coerce.number().int().nonnegative(), items: z.array(z.object({ saleItemId: z.coerce.number().int().positive(), quantity: z.coerce.number().positive() })).min(1).max(100), reason });
+export const refundRoutes = Router();
+refundRoutes.use(authenticate);
+refundRoutes.get('/', asyncHandler(async (req,res) => res.json({ data: await refundService.list(req.user) })));
+refundRoutes.post('/sale/:id/preview', authorizeCashier, validate({ params: idParams, body: selection }), asyncHandler(async (req,res) => res.json({ data: await refundService.preview(Number(req.params.id),req.body,req.user) })));
+refundRoutes.post('/sale/:id', authorizeCashier, validate({ params: idParams, body: selection }), asyncHandler(async (req,res) => res.status(201).json({ data: await refundService.create(Number(req.params.id),req.body,req.user) })));
+refundRoutes.post('/:id/settle', authorizeCashier, validate({ params: idParams, body: z.object({ method: z.enum(['CASH','BANK_TRANSFER','CARD']), reference: z.string().trim().min(3).max(120), payoutConfirmed: z.literal(true) }) }), asyncHandler(async (req,res) => res.json({ data: await refundService.settle(Number(req.params.id),req.body,req.user) })));
+refundRoutes.post('/lines/:id/stock-review', authorize('ADMIN','PHARMACIST'), validate({ params: idParams, body: z.object({ decision: z.enum(['RESTOCKED','NOT_RESTOCKED','NOT_RETURNED']), reason }) }), asyncHandler(async (req,res) => res.json({ data: await refundService.reviewStock(Number(req.params.id),req.body,req.user) })));

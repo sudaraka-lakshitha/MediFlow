@@ -1,8 +1,9 @@
 import { prescriptionUploadService } from '../services/prescriptionUpload.service.js';
 import { recordAudit } from '../services/audit.service.js';
+import { listPagination } from '../utils/listPagination.js';
 
 export const prescriptionUploadController = {
-  list: async (req, res) => res.json({ data: await prescriptionUploadService.list(req.user) }),
+  list: async (req, res) => { const pagination = listPagination(req.query); const data = await prescriptionUploadService.list(req.user,pagination); res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } }); },
   create: async (req, res) => {
     const data = await prescriptionUploadService.create(req.body, req.user.id);
     await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOADED', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id, details: { fileName: data.originalName, prepareRequested: data.prepareRequested }, ipAddress: req.ip });
@@ -17,6 +18,11 @@ export const prescriptionUploadController = {
   review: async (req, res) => {
     const data = await prescriptionUploadService.review(Number(req.params.id), req.body, req.user.id);
     await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOAD_REVIEWED', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id, details: { status: data.status, estimatedTotal: data.estimatedTotal }, ipAddress: req.ip });
+    res.json({ data });
+  },
+  sendQuotation: async (req, res) => {
+    const data = await prescriptionUploadService.sendQuotation(Number(req.params.id), req.user.id);
+    await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOAD_QUOTATION_SENT', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id, details: { estimatedTotal: data.estimatedTotal }, ipAddress: req.ip });
     res.json({ data });
   },
   estimateQuote: async (req, res) => {
@@ -45,8 +51,13 @@ export const prescriptionUploadController = {
     res.json({ data });
   },
   acceptEstimate: async (req, res) => {
-    const data = await prescriptionUploadService.acceptEstimate(Number(req.params.id), req.user.id);
+    const data = await prescriptionUploadService.acceptEstimate(Number(req.params.id), req.user.id, req.body.revision);
     await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOAD_ESTIMATE_ACCEPTED', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id, ipAddress: req.ip });
+    res.json({ data });
+  },
+  cancel: async (req, res) => {
+    const data = await prescriptionUploadService.cancelByPatient(Number(req.params.id), req.body.reason, req.user);
+    await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOAD_CANCELLED_BY_PATIENT', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id, details: { reason: req.body.reason }, ipAddress: req.ip });
     res.json({ data });
   },
   retention: async (_req, res) => res.json({ data: await prescriptionUploadService.retention() }),
@@ -59,5 +70,40 @@ export const prescriptionUploadController = {
     const data = await prescriptionUploadService.setDeadline(Number(req.params.id), req.body.deleteAt);
     await recordAudit({ userId: req.user.id, action: 'UPLOAD_DELETION_DEADLINE_UPDATED', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id, details: { deleteAt: data.deleteAt }, ipAddress: req.ip });
     res.json({ data });
+  },
+
+  // ── Payment slip endpoints ─────────────────────────────────────────────────
+
+  submitSlip: async (req, res) => {
+    const data = await prescriptionUploadService.submitSlip(Number(req.params.id), req.body, req.user);
+    await recordAudit({
+      userId: req.user.id, action: 'UPLOAD_PAYMENT_SLIP_SUBMITTED', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id,
+      details: { declaredAmount: req.body.declaredAmount, reference: req.body.reference || null },
+      ipAddress: req.ip,
+    });
+    res.status(201).json({ data });
+  },
+
+  reviewSlip: async (req, res) => {
+    const result = await prescriptionUploadService.reviewSlip(
+      Number(req.params.id), Number(req.params.slipId), req.body, req.user,
+    );
+    await recordAudit({
+      userId: req.user.id,
+      action: req.body.approved ? 'UPLOAD_PAYMENT_SLIP_VERIFIED' : 'UPLOAD_PAYMENT_SLIP_REJECTED',
+      entityType: 'PRESCRIPTION_UPLOAD', entityId: Number(req.params.id),
+      details: { slipId: Number(req.params.slipId), reason: req.body.reason || null },
+      ipAddress: req.ip,
+    });
+    res.json(result);
+  },
+
+  slipFile: async (req, res) => {
+    const slip = await prescriptionUploadService.slipFile(
+      Number(req.params.id), Number(req.params.slipId), req.user,
+    );
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', `inline; filename="${slip.originalName}"`);
+    res.type(slip.mimeType).send(slip.fileData);
   },
 };

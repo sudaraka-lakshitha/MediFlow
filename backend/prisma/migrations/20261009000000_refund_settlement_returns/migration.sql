@@ -1,0 +1,36 @@
+CREATE TABLE `refunds` (
+  `id` INTEGER NOT NULL AUTO_INCREMENT,
+  `sale_id` INTEGER NULL,
+  `payment_request_id` INTEGER NULL,
+  `amount` DECIMAL(12,2) NOT NULL,
+  `reason` VARCHAR(500) NOT NULL,
+  `status` VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+  `method` VARCHAR(30) NULL,
+  `reference` VARCHAR(120) NULL,
+  `created_by_id` INTEGER NOT NULL,
+  `settled_by_id` INTEGER NULL,
+  `settled_at` DATETIME(3) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  INDEX `refunds_sale_id_idx` (`sale_id`),
+  INDEX `refunds_payment_request_id_idx` (`payment_request_id`),
+  CONSTRAINT `refunds_sale_id_fkey` FOREIGN KEY (`sale_id`) REFERENCES `sales` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `refunds_payment_request_id_fkey` FOREIGN KEY (`payment_request_id`) REFERENCES `payment_requests` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE TABLE `refund_lines` (
+  `id` INTEGER NOT NULL AUTO_INCREMENT,
+  `refund_id` INTEGER NOT NULL,
+  `sale_item_id` INTEGER NOT NULL,
+  `product_id` INTEGER NOT NULL,
+  `batch_id` INTEGER NOT NULL,
+  `name` VARCHAR(250) NOT NULL,
+  `quantity` DECIMAL(12,3) NOT NULL,
+  `amount` DECIMAL(12,2) NOT NULL,
+  `stock_status` VARCHAR(30) NOT NULL DEFAULT 'PENDING_REVIEW',
+  `stock_reason` VARCHAR(500) NULL,
+  `reviewed_by_id` INTEGER NULL,
+  `reviewed_at` DATETIME(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `refund_lines_refund_id_sale_item_id_key` (`refund_id`, `sale_item_id`),
+  CONSTRAINT `refund_lines_refund_id_fkey` FOREIGN KEY (`refund_id`) REFERENCES `refunds` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

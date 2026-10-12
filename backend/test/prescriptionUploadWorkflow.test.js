@@ -38,7 +38,7 @@ describe('prescription upload workflow validation', () => {
     expect(result.error?.issues.some((issue) => issue.path[0] === 'recipientDateOfBirth')).toBe(true);
   });
 
-  it('accepts third-party uploads with recipient age details', () => {
+  it('accepts third-party uploads with recipient age, allergies, and chronic conditions', () => {
     const result = uploadPrescriptionSchema.safeParse({
       originalName: 'child-prescription.txt',
       mimeType: 'text/plain',
@@ -48,8 +48,14 @@ describe('prescription upload workflow validation', () => {
       recipientName: 'Test Child',
       recipientRelationship: 'Child',
       recipientDateOfBirth: '2018-06-15',
+      recipientAllergies: 'Penicillin, Peanuts',
+      recipientConditions: 'Asthma',
     });
 
     expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.recipientAllergies).toBe('Penicillin, Peanuts');
+      expect(result.data.recipientConditions).toBe('Asthma');
+    }
   });
 });

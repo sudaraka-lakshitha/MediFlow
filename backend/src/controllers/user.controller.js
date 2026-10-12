@@ -6,15 +6,15 @@ export const userController = {
   list: async (req, res) => res.json({ data: await userService.list(req.query.search || '') }),
   create: async (req, res) => {
     const user = await userService.createStaff(req.body);
-    await recordAudit({ userId: req.user.id, action: 'USER_CREATED', entityType: 'USER', entityId: user.id, details: { role: user.role }, ipAddress: req.ip });
+    await recordAudit({ userId: req.user.id, action: 'USER_CREATED', entityType: 'USER', entityId: user.id, details: { role: user.role, pharmacyReconciliationAccess: user.pharmacyReconciliationAccess }, ipAddress: req.ip });
     res.status(201).json({ data: user });
   },
   update: async (req, res) => {
     if (Number(req.params.id) === req.user.id && req.body.role !== 'ADMIN') {
       throw new AppError(409, 'You cannot remove your own administrator role while signed in.');
     }
-    const user = await userService.update(Number(req.params.id), req.body);
-    await recordAudit({ userId: req.user.id, action: 'USER_UPDATED', entityType: 'USER', entityId: user.id, details: { email: user.email, role: user.role }, ipAddress: req.ip });
+    const user = await userService.update(Number(req.params.id), req.body, req.user.id);
+    await recordAudit({ userId: req.user.id, action: 'USER_UPDATED', entityType: 'USER', entityId: user.id, details: { email: user.email, role: user.role, pharmacyReconciliationAccess: user.pharmacyReconciliationAccess }, ipAddress: req.ip });
     res.json({ data: user });
   },
   resetPassword: async (req, res) => {

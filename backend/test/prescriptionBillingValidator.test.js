@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { dispenseQuoteSchema, dispenseSchema, paymentRequestSchema, prescriptionSchema } from '../src/validators/prescription.validator.js';
+import { createPatientSchema } from '../src/validators/patient.validator.js';
 
 const prescriptionItems = [{ prescriptionItemId: 11, quantity: 2 }];
 
@@ -88,5 +89,28 @@ describe('combined prescription and retail billing validation', () => {
 
     expect(result.success).toBe(false);
     expect(result.error?.issues.some((issue) => issue.path[0] === 'recipientDateOfBirth')).toBe(true);
+  });
+
+  it('rejects a doctor-issued prescription time in the future', () => {
+    const result = prescriptionSchema.safeParse({
+      patientId: 2,
+      prescriberName: 'Dr Example',
+      prescriptionDate: new Date(Date.now() + 60 * 60 * 1000),
+      orderedForSelf: true,
+      items: [{ productId: 10, quantityPerDose: 1, timesPerDay: 1, daysSupply: 1, dosageInstructions: 'Take one.' }],
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.some((issue) => issue.path[0] === 'prescriptionDate')).toBe(true);
+  });
+
+  it('accepts an internal walk-in patient without an email or online password', () => {
+    const result = createPatientSchema.parse({
+      onlineAccess: false,
+      fullName: 'Walk In Patient',
+      phone: '0771234567',
+      dateOfBirth: '1990-01-01',
+    });
+    expect(result.onlineAccess).toBe(false);
+    expect(result.email).toBeUndefined();
   });
 });

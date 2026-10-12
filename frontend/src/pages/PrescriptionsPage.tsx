@@ -7,6 +7,8 @@ import {
   type FormEvent,
 } from "react";
 import { api, errorMessage } from "../api/client";
+import { pagedList } from "../api/pagedList";
+import { DocumentPreview, type DocumentTarget } from "../components/DocumentPreview";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 import { ActionsDropdown } from "../components/ActionsDropdown";
@@ -16,6 +18,7 @@ import { PasswordField } from "../components/PasswordField";
 import { SearchableSelect } from "../components/SearchableSelect";
 import { PredictiveSearchInput } from "../components/PredictiveSearchInput";
 import { Alert, Empty, Loading, Status } from "../components/Ui";
+import { isCountableUnit, issuableTotal, stockQuantityStep } from "../utils/unitMeasure";
 import "../prescriptions.css";
 
 type RxItem = {
@@ -32,6 +35,10 @@ type RxItem = {
   calculatedQuantity: string;
   prescribedQuantity: string;
   dispensedQuantity: string;
+  cancelledQuantity?: string;
+  notSuppliedQuantity?: string;
+  pendingQuantity?: string;
+  cancellationReasons?: string[];
   quantityOverridden: boolean;
   overrideReason?: string;
   dosageInstructions: string;
@@ -41,6 +48,7 @@ type RxItem = {
   specialInstructions?: string;
   frequency?: string;
   duration?: string;
+  notes?: string;
   product: {
     genericName: string;
     strength: string;
@@ -93,6 +101,8 @@ type Rx = {
   recipientName?: string;
   recipientRelationship?: string;
   recipientDateOfBirth?: string;
+  recipientAllergies?: string | null;
+  recipientConditions?: string | null;
   createdBy?: StaffActor;
   verifiedBy?: StaffActor;
   patient: {
@@ -125,8 +135,10 @@ type Rx = {
   refillsAllowed?: number;
   refillsUsed?: number;
   originalPrescriptionId?: number | null;
+  isOnline?: boolean;
 };
 type Line = {
+  id?: number;
   productId: number;
   quantityPerDose: number | string;
   liquidDoseMode: "VOLUME" | "STRENGTH";
@@ -178,6 +190,7 @@ const localDateTime = (value: Date | string = new Date()) => {
 const emptyForm = () => ({
   patientId: 0,
   sourceUploadId: null as number | null,
+  sourceUploadStatus: null as string | null,
   prescriberTitle: "",
   prescriberName: "",
   prescriberReference: "",
@@ -186,6 +199,8 @@ const emptyForm = () => ({
   recipientName: "",
   recipientRelationship: "",
   recipientDateOfBirth: "",
+  recipientAllergies: "",
+  recipientConditions: "",
   notes: "",
   pickupNote: "",
   plannedPickupAt: "",
@@ -289,6 +304,7 @@ const instructionOpening = (route: string, quantity: number, unit: string) => {
 };
 
 export function PrescriptionsPage() {
+  const [documentPreview, setDocumentPreview] = useState<DocumentTarget | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const uploadOpened = useRef(false);
   const { user } = useAuth();
@@ -299,6 +315,7 @@ export function PrescriptionsPage() {
   const [operationSettings, setOperationSettings] = useState({
     requirePickupPin: true,
     cashierCanDispenseAtPayment: false,
+    cashReservationHours: 24,
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -309,12 +326,16 @@ export function PrescriptionsPage() {
   } | null>(null);
   const [sourceFileUrl, setSourceFileUrl] = useState("");
   const [sourceFileText, setSourceFileText] = useState("");
+  const [sourceFileMimeType, setSourceFileMimeType] = useState("");
   const [sourceViewerHeight, setSourceViewerHeight] = useState(620);
   const [action, setAction] = useState<{
-    type: "reject" | "dispense" | "history";
+    type: "reject" | "dispense" | "history" | "withdraw";
     rx: Rx;
   } | null>(null);
+  const [declineInvoice, setDeclineInvoice] = useState<{ rx: Rx; reason: string } | null>(null);
+  const [requestCancel, setRequestCancel] = useState<{ rx: Rx; reason: string } | null>(null);
   const [confirm, setConfirm] = useState<Rx | null>(null);
+  const [refillTarget, setRefillTarget] = useState<Rx | null>(null);
   const [patientModal, setPatientModal] = useState(false);
   const [collectionModal, setCollectionModal] = useState<Rx | null>(null);
   const [reverify, setReverify] = useState<any>(null);
@@ -336,8 +357,10 @@ export function PrescriptionsPage() {
     bottleFeePerBottle: 0,
     containerFee: 0,
     notes: "",
+    reservationHours: 24,
   });
   const [patientForm, setPatientForm] = useState({
+    onlineAccess: false,
     fullName: "",
     email: "",
     phone: "",
@@ -356,7 +379,7 @@ export function PrescriptionsPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const load = useCallback(async () => {
     try {
-      const requests = [api.get("/prescriptions")];
+      const requests = [pagedList("/prescriptions")];
       if (staff)
         requests.push(
           api.get("/patients"),
@@ -413,36 +436,90 @@ export function PrescriptionsPage() {
       !staff ||
       !uploadId ||
       !patientUserId ||
-      !patients.length ||
       uploadOpened.current
     )
       return;
-    const patient = patients.find(
+    // Try to find the patient in the already-loaded list first.
+    // If they're not there (large patient DB / not yet loaded), fetch by userId directly.
+    const openWithPatient = (patient: any) => {
+      if (!patient) return;
+      uploadOpened.current = true;
+      // Pre-populate medicine rows from the estimate items so the pharmacist
+      // only has to fill in dosage instructions rather than re-selecting everything.
+      let items: Line[] = [line()];
+      try {
+        const raw = searchParams.get("estimateItems");
+        if (raw) {
+          const parsed: { productId: number; quantity: number }[] = JSON.parse(decodeURIComponent(raw));
+          if (parsed.length) {
+            items = parsed.map((entry) => ({
+              ...line(),
+              productId: entry.productId,
+              prescribedQuantity: entry.quantity,
+              overrideEnabled: true,
+              overrideQuantity: entry.quantity,
+              overrideReason: "Pre-filled from upload quotation",
+            }));
+          }
+        }
+      } catch {
+        // malformed JSON — fall back to a blank row
+      }
+      setForm({
+        ...emptyForm(),
+        patientId: patient.id,
+        sourceUploadId: uploadId,
+        sourceUploadStatus: searchParams.get("uploadStatus") || null,
+        orderedForSelf,
+        recipientName: orderedForSelf ? "" : searchParams.get("recipientName") || "",
+        recipientRelationship: orderedForSelf ? "" : searchParams.get("recipientRelationship") || "",
+        recipientDateOfBirth: orderedForSelf ? "" : searchParams.get("recipientDateOfBirth") || "",
+        recipientAllergies: orderedForSelf ? "" : searchParams.get("recipientAllergies") || "",
+        recipientConditions: orderedForSelf ? "" : searchParams.get("recipientConditions") || "",
+        items,
+      });
+      setEditor({ mode: "create" });
+      api
+        .get(`/prescription-uploads/${uploadId}/file`, { responseType: "blob" })
+        .then(async (response) => {
+          setSourceFileUrl(URL.createObjectURL(response.data));
+          setSourceFileMimeType(response.data.type || "");
+          setSourceFileText(
+            response.data.type === "text/plain" ? await response.data.text() : "",
+          );
+        })
+        .catch((caught) => setError(errorMessage(caught)));
+      setSearchParams({}, { replace: true });
+    };
+
+    const cached = patients.find(
       (candidate) => candidate.user.id === patientUserId,
     );
-    if (!patient) return;
-    uploadOpened.current = true;
-    setForm({
-      ...emptyForm(),
-      patientId: patient.id,
-      sourceUploadId: uploadId,
-      orderedForSelf,
-      recipientName: orderedForSelf ? "" : searchParams.get("recipientName") || "",
-      recipientRelationship: orderedForSelf ? "" : searchParams.get("recipientRelationship") || "",
-      recipientDateOfBirth: orderedForSelf ? "" : searchParams.get("recipientDateOfBirth") || "",
-    });
-    setEditor({ mode: "create" });
-    api
-      .get(`/prescription-uploads/${uploadId}/file`, { responseType: "blob" })
-      .then(async (response) => {
-        setSourceFileUrl(URL.createObjectURL(response.data));
-        setSourceFileText(
-          response.data.type === "text/plain" ? await response.data.text() : "",
-        );
-      })
-      .catch((caught) => setError(errorMessage(caught)));
-    setSearchParams({}, { replace: true });
+    if (cached) {
+      openWithPatient(cached);
+    } else {
+      // Not in cache — fetch directly so we never silently fail
+      api
+        .get("/patients", { params: { search: String(patientUserId), userId: patientUserId } })
+        .then((response) => {
+          const found = (response.data.data as any[]).find(
+            (p) => p.user.id === patientUserId,
+          );
+          if (found) {
+            setPatients((prev) => {
+              const byId = new Map(prev.map((p: any) => [p.id, p]));
+              byId.set(found.id, found);
+              return [...byId.values()];
+            });
+            openWithPatient(found);
+          } else {
+            setError("Could not find the patient linked to this upload. Please select them manually.");
+          }
+        })
+        .catch(() => setError("Failed to load the patient profile for this upload. Please select the patient manually."));
+    }
   }, [patients, searchParams, setSearchParams, staff]);
+
   const processorOptions = useMemo(() => {
     const actors = rows
       .flatMap((rx) => [
@@ -515,7 +592,7 @@ export function PrescriptionsPage() {
   useEffect(() => {
     if (
       action?.type !== "dispense" ||
-      !dispense.items.length ||
+      (!dispense.items.length && !dispense.retailItems.length) ||
       dispense.items.some((item: any) => Number(item.quantity) <= 0) ||
       dispense.retailItems.some(
         (item: any) =>
@@ -527,6 +604,21 @@ export function PrescriptionsPage() {
       return;
     }
     let cancelled = false;
+    const saved = action.rx.paymentRequest;
+    if (saved && saved.status !== "CANCELLED") {
+      const requestedLines = [
+        ...dispense.items.map((item: any) => ({ key: `rx-${item.prescriptionItemId}`, quantity: Number(item.quantity) })),
+        ...dispense.retailItems.map((item: any) => ({ key: `retail-${item.productId}`, quantity: Number(item.quantity) })),
+      ];
+      const savedLines = saved.items.map((item: any) => ({ key: item.prescriptionItemId != null ? `rx-${item.prescriptionItemId}` : `retail-${item.productId}`, quantity: Number(item.quantity) }));
+      const sameLines = requestedLines.length === savedLines.length && requestedLines.every((item: any) => savedLines.some((line: any) => line.key === item.key && line.quantity === item.quantity));
+      if (sameLines && Number(dispense.tax) === Number(saved.tax) && Number(dispense.containerFee || 0) === Number(saved.containerFee || 0) && (dispense.couponCode || "") === (saved.couponCode || "")) {
+        setQuote({ ...saved, appliedDiscounts: [], lines: saved.items.map((item: any) => ({ ...item, name: item.product.genericName, unit: item.product.unit })), amountPaid: 0 });
+        setQuoteError("");
+        setQuoteBusy(false);
+        return;
+      }
+    }
     const timer = window.setTimeout(async () => {
       setQuoteBusy(true);
       setQuoteError("");
@@ -554,7 +646,7 @@ export function PrescriptionsPage() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [action?.type, action?.rx.id, dispense]);
+  }, [action?.type, action?.rx.id, action?.rx.paymentRequest, dispense]);
 
   const openEditor = (rx?: Rx) => {
     setError("");
@@ -570,10 +662,13 @@ export function PrescriptionsPage() {
         recipientName: rx.recipientName || "",
         recipientRelationship: rx.recipientRelationship || "",
         recipientDateOfBirth: rx.recipientDateOfBirth ? rx.recipientDateOfBirth.slice(0, 10) : "",
+        recipientAllergies: rx.recipientAllergies || "",
+        recipientConditions: rx.recipientConditions || "",
         notes: rx.notes || "",
         pickupNote: rx.pickupNote || "",
         plannedPickupAt: rx.plannedPickupAt ? localDateTime(rx.plannedPickupAt) : "",
         items: rx.items.map((item) => ({
+          id: item.id,
           productId: item.productId,
           quantityPerDose: item.quantityPerDose,
           liquidDoseMode:
@@ -607,12 +702,14 @@ export function PrescriptionsPage() {
           })) || [],
       });
     else setForm(emptyForm());
+    setSourceFileMimeType(rx?.sourceUpload?.mimeType || "");
     setEditor({ mode: rx ? "edit" : "create", rx });
   };
   const closeEditor = () => {
     if (sourceFileUrl) URL.revokeObjectURL(sourceFileUrl);
     setSourceFileUrl("");
     setSourceFileText("");
+    setSourceFileMimeType("");
     setEditor(null);
   };
   const updateLine = (index: number, changes: Partial<Line>) => {
@@ -668,15 +765,7 @@ export function PrescriptionsPage() {
     );
     const dose = effectiveDose(item);
     const raw = dose * Number(item.timesPerDay) * Number(item.daysSupply);
-    return {
-      product,
-      dose,
-      total: /tablet|capsule|patch|suppository|sachet/i.test(
-        product?.unit || "",
-      )
-        ? Math.ceil(raw)
-        : Number(raw.toFixed(3)),
-    };
+    return { product, dose, total: issuableTotal(raw, product?.unit) };
   };
   const generatedDirections = (item: Line) => {
     const { product, dose } = calculated(item);
@@ -745,6 +834,12 @@ export function PrescriptionsPage() {
     recipientDateOfBirth: form.orderedForSelf
       ? null
       : form.recipientDateOfBirth,
+    recipientAllergies: form.orderedForSelf
+      ? null
+      : (form.recipientAllergies?.trim() || null),
+    recipientConditions: form.orderedForSelf
+      ? null
+      : (form.recipientConditions?.trim() || null),
     pickupNote: form.pickupNote || null,
     plannedPickupAt: form.plannedPickupAt ? new Date(form.plannedPickupAt).toISOString() : null,
     items: form.items.map((item: Line) => {
@@ -753,6 +848,7 @@ export function PrescriptionsPage() {
       );
       const strengthMode = liquid && item.liquidDoseMode === "STRENGTH";
       return {
+        id: item.id,
         productId: Number(item.productId),
         quantityPerDose: effectiveDose(item),
         doseInputAmount: liquid
@@ -793,20 +889,28 @@ export function PrescriptionsPage() {
       quantity: Number(item.quantity),
     })),
   });
-  const save = async (event: FormEvent) => {
-    event.preventDefault();
+  const save = async (
+    event?: FormEvent,
+    options?: { autoVerify?: boolean; sendToCashier?: boolean },
+  ) => {
+    if (event) event.preventDefault();
     if (!editor) return;
     setBusy(true);
     setError("");
     try {
       if (editor.mode === "create") {
-        const response = await api.post("/prescriptions", payload());
+        const body = {
+          ...payload(),
+          autoVerify: options?.autoVerify ?? false,
+          sendToCashier: options?.sendToCashier ?? false,
+        };
+        await api.post("/prescriptions", body);
         closeEditor();
         setError("");
-        setReverify(response.data.data);
       } else {
-        await api.put(`/prescriptions/${editor.rx!.id}`, payload());
+        const response = await api.put(`/prescriptions/${editor.rx!.id}`, payload());
         closeEditor();
+        if (editor.rx?.status === "VERIFIED" && response.data.data?.status === "PENDING") setReverify(response.data.data);
       }
       load();
     } catch (caught) {
@@ -815,13 +919,21 @@ export function PrescriptionsPage() {
       setBusy(false);
     }
   };
-  const confirmVerify = async (event: FormEvent) => {
-    event.preventDefault();
+  const confirmVerify = async (event?: FormEvent, andSendToCashier = false) => {
+    if (event) event.preventDefault();
     if (!reverify) return;
     setBusy(true);
     setError("");
     try {
-      await api.post(`/prescriptions/${reverify.id}/verify`);
+      const rxId = reverify.id;
+      if (andSendToCashier) {
+        // Review charges and notes before the atomic verify-and-bill submission.
+        setReverify(null);
+        await openAction("dispense", reverify);
+        return;
+      } else {
+        await api.post(`/prescriptions/${rxId}/verify`);
+      }
       setReverify(null);
       load();
     } catch (caught) {
@@ -865,7 +977,7 @@ export function PrescriptionsPage() {
     }
   };
   const openAction = (
-    type: "reject" | "dispense" | "history",
+    type: "reject" | "dispense" | "history" | "withdraw",
     rx: Rx,
   ) => {
     setReason("");
@@ -882,6 +994,7 @@ export function PrescriptionsPage() {
         })
         .then(async (response) => {
           setSourceFileUrl(URL.createObjectURL(response.data));
+          setSourceFileMimeType(response.data.type || rx.sourceUpload?.mimeType || "");
           setSourceFileText(
             response.data.type === "text/plain" ? await response.data.text() : "",
           );
@@ -894,7 +1007,7 @@ export function PrescriptionsPage() {
         items: rx.items
           .filter(
             (item) =>
-              Number(item.dispensedQuantity) < Number(item.prescribedQuantity),
+              Number(item.dispensedQuantity) + Number(item.cancelledQuantity || 0) < Number(item.prescribedQuantity),
           )
           .map((item) => ({
             prescriptionItemId: item.id,
@@ -902,11 +1015,18 @@ export function PrescriptionsPage() {
             unit: item.product.unit,
             dosageForm: item.product.dosageForm,
             quantity:
-              Number(item.prescribedQuantity) - Number(item.dispensedQuantity),
+              Number((Number(item.prescribedQuantity) - Number(item.dispensedQuantity) - Number(item.cancelledQuantity || 0)).toFixed(3)),
             maximum:
-              Number(item.prescribedQuantity) - Number(item.dispensedQuantity),
+              Number((Number(item.prescribedQuantity) - Number(item.dispensedQuantity) - Number(item.cancelledQuantity || 0)).toFixed(3)),
           })),
-        retailItems: rx.paymentRequest
+        // A cancelled bill may refer to prescription items that were deleted and
+        // recreated during a later prescription edit. Their foreign keys become
+        // null, which makes them indistinguishable from genuine retail lines.
+        // Treat a resend as a fresh billing cycle and seed retail products from
+        // the current prescription only; otherwise old medicine lines can be
+        // duplicated as retail items in the new cashier bill.
+        retailItems:
+          rx.paymentRequest && rx.paymentRequest.status !== "CANCELLED"
           ? rx.paymentRequest.items
               .filter((item: any) => item.prescriptionItemId == null)
               .map((item: any) => ({
@@ -924,14 +1044,16 @@ export function PrescriptionsPage() {
               quantity: Number(item.quantity),
             })),
         amountPaid: 0,
-        tax: 0,
+        tax: Number(rx.paymentRequest?.tax || 0),
         paymentMethod: "CASH",
-        couponCode: "",
+        couponCode: rx.paymentRequest?.couponCode || "",
         addBottleFee: existingContainerFee > 0,
         bottleCount: existingContainerFee > 0 ? 1 : 1,
         bottleFeePerBottle: existingContainerFee,
         containerFee: existingContainerFee,
-        notes: "",
+        notes: rx.paymentRequest?.pharmacyNote || "",
+        revisionReason: "",
+        reservationHours: Number(rx.paymentRequest?.reservationDurationHours || operationSettings.cashReservationHours || 24),
         paymentRequestId: rx.paymentRequest?.id || null,
         pickupPin: "",
       });
@@ -942,6 +1064,7 @@ export function PrescriptionsPage() {
     if (sourceFileUrl) URL.revokeObjectURL(sourceFileUrl);
     setSourceFileUrl("");
     setSourceFileText("");
+    setSourceFileMimeType("");
     setAction(null);
   };
   const dispenseHasLiquid = [
@@ -974,6 +1097,16 @@ export function PrescriptionsPage() {
         closeAction();
         load();
       }
+      if (action.type === "withdraw") {
+        await api.post(
+          `/payment-requests/${action.rx.paymentRequest.id}/cancel`,
+          { reason },
+        );
+        closeAction();
+        await load();
+        const refreshed = await api.get(`/prescriptions/${action.rx.id}`);
+        openEditor(refreshed.data.data);
+      }
       if (action.type === "dispense") {
         const response = await api.post(`/prescriptions/${action.rx.id}/dispense`, {
           ...dispense,
@@ -992,19 +1125,7 @@ export function PrescriptionsPage() {
     request: any,
     kind: "handoff" | "receipt" = "handoff",
   ) => {
-    const popup = window.open("", "_blank");
-    try {
-      const response = await api.get(
-        `/payment-requests/${request.id}/${kind}.pdf`,
-        { responseType: "blob" },
-      );
-      const url = URL.createObjectURL(response.data);
-      if (popup) popup.location.href = url;
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (caught) {
-      popup?.close();
-      setError(errorMessage(caught));
-    }
+    setDocumentPreview({ id: request.id, kind, name: request.requestNumber });
   };
   const printBagLabel = (rx: Rx, issue: Dispensing) => {
     const win = window.open("", "_blank", "width=600,height=800");
@@ -1164,7 +1285,7 @@ export function PrescriptionsPage() {
     setBusy(true);
     setError("");
     try {
-      await api.post(`/prescriptions/${action.rx.id}/payment-request`, {
+      await api.post(`/prescriptions/${action.rx.id}/${action.rx.status === "PENDING" ? "send-to-cashier" : "payment-request"}`, {
         items: dispense.items.map((item: any) => ({
           prescriptionItemId: item.prescriptionItemId,
           quantity: Number(item.quantity),
@@ -1177,6 +1298,7 @@ export function PrescriptionsPage() {
         containerFee: Number(dispense.containerFee || 0),
         tax: Number(dispense.tax),
         notes: dispense.notes || null,
+        reservationHours: Number(dispense.reservationHours || operationSettings.cashReservationHours || 24),
       });
       closeAction();
       await load();
@@ -1192,6 +1314,8 @@ export function PrescriptionsPage() {
     setError("");
     try {
       await api.put(`/prescriptions/${action.rx.id}/payment-request`, {
+        revision: action.rx.paymentRequest.revision,
+        revisionReason: dispense.revisionReason || null,
         items: dispense.items.map((item: any) => ({
           prescriptionItemId: item.prescriptionItemId,
           quantity: Number(item.quantity),
@@ -1204,6 +1328,7 @@ export function PrescriptionsPage() {
         containerFee: Number(dispense.containerFee || 0),
         tax: Number(dispense.tax),
         notes: dispense.notes || null,
+        reservationHours: Number(dispense.reservationHours || operationSettings.cashReservationHours || 24),
       });
       closeAction();
       await load();
@@ -1227,6 +1352,23 @@ export function PrescriptionsPage() {
       setBusy(false);
     }
   };
+  const handleRefill = async (rx: Rx) => {
+    setRefillTarget(rx);
+  };
+  const issueRefill = async () => {
+    if (!refillTarget) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/prescriptions/${refillTarget.id}/refill`, {});
+      setRefillTarget(null);
+      await load();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
   const createPatient = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -1234,11 +1376,49 @@ export function PrescriptionsPage() {
     try {
       const response = await api.post("/patients", {
         ...patientForm,
+        email: patientForm.onlineAccess ? patientForm.email : undefined,
+        password: patientForm.onlineAccess ? patientForm.password : undefined,
         dateOfBirth: patientForm.dateOfBirth || null,
       });
       await load();
       setForm({ ...form, patientId: response.data.data.id });
       setPatientModal(false);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const submitDeclineInvoice = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!declineInvoice) return;
+    if (declineInvoice.reason.trim().length < 3) return setError("Enter a reason for declining the invoice.");
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/payment-requests/${declineInvoice.rx.paymentRequest!.id}/decline`, {
+        reason: declineInvoice.reason.trim(),
+      });
+      setDeclineInvoice(null);
+      load();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const submitRequestCancel = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!requestCancel?.rx.paymentRequest) return;
+    if (requestCancel.reason.trim().length < 3) return setError("Enter a reason for requesting cancellation.");
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/payment-requests/${requestCancel.rx.paymentRequest.id}/request-cancellation`, {
+        reason: requestCancel.reason.trim(),
+      });
+      setRequestCancel(null);
+      load();
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -1258,10 +1438,11 @@ export function PrescriptionsPage() {
       </datalist>
       <div className="page-intro">
         <div>
-          <h2>Prescription workflow</h2>
+          <h2>{staff ? "Prescription workflow" : "My prescriptions"}</h2>
           <p>
-            Structured directions, exact timestamps, pharmacist tracking, and
-            FIFO dispensing.
+            {staff
+              ? "Structured directions, exact timestamps, pharmacist tracking, and FIFO dispensing."
+              : "Your prescriptions, how to take each medicine, and what has been collected so far."}
           </p>
         </div>
         {staff && (
@@ -1382,11 +1563,34 @@ export function PrescriptionsPage() {
                     {rx.patient.user.fullName} · {prescriberLabel(rx)} ·{" "}
                     {new Date(rx.prescriptionDate).toLocaleString()}
                   </div>
-                  <small>
-                    {rx.orderedForSelf
-                      ? "Ordered for patient"
-                      : `For ${rx.recipientName} (${rx.recipientRelationship})${rx.recipientDateOfBirth ? ` · Age ${ageFromDob(rx.recipientDateOfBirth)}` : ""}`}
-                  </small>
+                  <div className="small">
+                    {rx.orderedForSelf ? (
+                      <span className="text-secondary">Ordered for patient</span>
+                    ) : (
+                      <div>
+                        <span className="fw-semibold text-primary">
+                          <i className="bi bi-person-fill me-1" />
+                          For {rx.recipientName} ({rx.recipientRelationship}){rx.recipientDateOfBirth ? ` · Age ${ageFromDob(rx.recipientDateOfBirth)}` : ""}
+                        </span>
+                        {(rx.recipientAllergies || rx.recipientConditions) && (
+                          <div className="d-flex flex-wrap gap-2 mt-1">
+                            {rx.recipientAllergies && (
+                              <span className="badge bg-danger-subtle text-danger border border-danger-subtle">
+                                <i className="bi bi-shield-exclamation me-1" />
+                                Allergies: {rx.recipientAllergies}
+                              </span>
+                            )}
+                            {rx.recipientConditions && (
+                              <span className="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
+                                <i className="bi bi-heart-pulse me-1" />
+                                Conditions: {rx.recipientConditions}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                   {(rx.plannedPickupAt || rx.pickupNote) && (
                     <div className="alert alert-info py-2 mt-2 mb-0 small d-flex flex-column align-items-start gap-1" style={{ borderLeft: '3px solid var(--c-info)' }}>
                       <div className="d-flex align-items-center gap-1">
@@ -1403,9 +1607,9 @@ export function PrescriptionsPage() {
                       )}
                     </div>
                   )}
-                  {(rx.sourceUpload || rx.paymentRequest) && (
+                  {(rx.isOnline || rx.sourceUpload || rx.paymentRequest) && (
                     <div className="mt-2">
-                      {rx.sourceUpload && (
+                      {(rx.isOnline || rx.sourceUpload) && (
                         <span className="badge text-bg-primary">
                           <i className="bi bi-cloud-check me-1" />
                           Online pharmacy order
@@ -1434,7 +1638,28 @@ export function PrescriptionsPage() {
                         )}
                     </div>
                   )}
+                  {rx.paymentRequest?.customerCancellationReason && !['CANCELLED', 'FULFILLED'].includes(rx.paymentRequest.status) && <div className="alert alert-warning mt-2"><strong>Collection on hold: customer requested cancellation.</strong><div>{rx.paymentRequest.customerCancellationReason}</div>{staff && <div>Resolve the request at the cashier desk before continuing.</div>}</div>}
+                  {rx.paymentRequest?.status === "CANCELLED" && (
+                    <div className="alert alert-danger py-2 mt-2 mb-0 small">
+                      <strong>
+                        Cashier bill {rx.paymentRequest.requestNumber} was cancelled.
+                      </strong>
+                      {rx.paymentRequest.cancellationReason && (
+                        <span className="d-block">
+                          Reason: {rx.paymentRequest.cancellationReason}
+                        </span>
+                      )}
+                      <span className="d-block">
+                        The prescription remains verified. Review the current items and use
+                        &quot;Resend to Cashier&quot; to start a fresh billing cycle.
+                      </span>
+                    </div>
+                  )}
                   <div className="workflow-actors">
+                    {!staff && <>
+                      <span><i className="bi bi-pencil-square" /><span><strong>Prescription prepared by {rx.createdBy?.fullName || "Not recorded"}</strong><small>{new Date(rx.createdAt).toLocaleString()}</small></span></span>
+                      {rx.verifiedBy && <span><i className="bi bi-patch-check" /><span><strong>Verified by {rx.verifiedBy.fullName}</strong>{rx.verifiedAt && <small>{new Date(rx.verifiedAt).toLocaleString()}</small>}</span></span>}
+                    </>}
                     {staff ? (
                       <>
                         <span>
@@ -1525,14 +1750,25 @@ export function PrescriptionsPage() {
                             {money(invoiceBalance)}
                           </small>
                         </>
+                      ) : rx.paymentRequest && rx.paymentRequest.status !== "CANCELLED" ? (
+                        <>
+                          <strong>
+                            Cashier bill: {money(rx.paymentRequest.total)}
+                          </strong>
+                          <small>
+                            Bill {rx.paymentRequest.requestNumber} · Subtotal {money(rx.paymentRequest.subtotal)}
+                            {Number(rx.paymentRequest.tax) > 0 ? ` · Tax ${money(rx.paymentRequest.tax)}` : ""}
+                            {Number(rx.paymentRequest.discount) > 0 ? ` · Discount ${money(rx.paymentRequest.discount)}` : ""}
+                            {` · ${rx.paymentRequest.status.replace(/_/g, " ")}`}
+                          </small>
+                        </>
                       ) : (
                         <>
                           <strong>
                             Estimated medicine value: {money(estimatedValue)}
                           </strong>
                           <small>
-                            Before discounts and tax · final invoice is created
-                            when dispensing
+                            Before discounts and tax · finalized at cashier prior to dispensing
                           </small>
                         </>
                       )}
@@ -1548,72 +1784,212 @@ export function PrescriptionsPage() {
                       Choose pickup time
                     </button>
                   )}
+                  {/* Patient: decline a pending invoice they do not want to pay */}
+                  {!staff && rx.paymentRequest?.status === "AWAITING_PAYMENT" && (
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-danger"
+                      onClick={() => setDeclineInvoice({ rx, reason: "" })}
+                    >
+                      <i className="bi bi-x-circle me-1" />
+                      Decline invoice
+                    </button>
+                  )}
+                  {/* Patient: request cancellation if slip submitted or paid before dispensing */}
+                  {!staff &&
+                    ["SLIP_SUBMITTED", "PAID"].includes(rx.paymentRequest?.status) &&
+                    rx.status !== "DISPENSED" &&
+                    !rx.paymentRequest?.cancellationReason?.startsWith("Customer cancellation requested:") && (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-warning"
+                        onClick={() => setRequestCancel({ rx, reason: "" })}
+                      >
+                        <i className="bi bi-arrow-counterclockwise me-1" />
+                        Request order cancellation
+                      </button>
+                    )}
+                  {rx.paymentRequest?.cancellationReason?.startsWith("Customer cancellation requested:") && (
+                    <span className="badge bg-warning text-dark">
+                      <i className="bi bi-clock-history me-1" />
+                      Cancellation requested
+                    </span>
+                  )}
                   {staff && (
-                    <ActionsDropdown
-                      actions={[
-                        {
-                          label: "Edit prescription",
-                          icon: "pencil",
-                          onClick: () => openEditor(rx),
-                          disabled:
-                            !["PENDING", "VERIFIED"].includes(rx.status) ||
-                            (rx.status === "VERIFIED" &&
-                              Boolean(rx.paymentRequest) &&
-                              rx.paymentRequest.status !== "CANCELLED"),
-                        },
-                        {
-                          label: "Verify",
-                          icon: "check-circle",
-                          onClick: () => verify(rx),
-                          disabled: rx.status !== "PENDING",
-                        },
-                        {
-                          label: "Reject",
-                          icon: "x-circle",
-                          onClick: () => openAction("reject", rx),
-                          disabled: !["PENDING", "VERIFIED"].includes(
-                            rx.status,
-                          ),
-                        },
-                        {
-                          label: !rx.paymentRequest
-                            ? "Send to cashier"
-                            : rx.paymentRequest.status === "AWAITING_PAYMENT"
-                              ? "Awaiting cashier payment"
-                              : rx.paymentRequest.status === "PAID"
-                                ? "Verify PIN and dispense"
-                                : rx.paymentRequest.status === "CANCELLED"
-                                  ? "Bill cancelled — resend to cashier"
-                                  : "Dispensed",
-                          icon: !rx.paymentRequest
-                            ? "send"
-                            : rx.paymentRequest.status === "AWAITING_PAYMENT"
-                              ? "hourglass-split"
-                              : rx.paymentRequest.status === "PAID"
-                                ? "shield-check"
-                                : rx.paymentRequest.status === "CANCELLED"
-                                  ? "arrow-repeat"
-                                  : "bag-check",
-                          onClick: () => openAction("dispense", rx),
-                          disabled:
-                            !["VERIFIED", "PARTIALLY_DISPENSED"].includes(
-                              rx.status,
-                            ) || rx.paymentRequest?.status === "FULFILLED",
-                        },
-                        {
-                          label: "Issue history",
-                          icon: "clock-history",
-                          onClick: () => openAction("history", rx),
-                        },
-                        {
-                          label: "Delete pending prescription",
-                          icon: "trash",
-                          danger: true,
-                          onClick: () => setConfirm(rx),
-                          disabled: rx.status !== "PENDING",
-                        },
-                      ]}
-                    />
+                    <div className="d-flex flex-wrap align-items-center gap-2">
+                      {/* ── Status-aware PRIMARY action buttons ── */}
+                      {/* PENDING: Verify or Send to Cashier */}
+                      {rx.status === "PENDING" && (
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-success"
+                            onClick={() => verify(rx)}
+                          >
+                            <i className="bi bi-check-circle me-1" />
+                            Verify
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-primary"
+                            onClick={() => openAction("dispense", rx)}
+                          >
+                            <i className="bi bi-send-check me-1" />
+                            Verify &amp; Send to Cashier
+                          </button>
+                        </>
+                      )}
+                      {/* VERIFIED: Send to cashier (no bill yet) or view billing status */}
+                      {rx.status === "VERIFIED" && !rx.paymentRequest && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-primary"
+                          onClick={() => openAction("dispense", rx)}
+                        >
+                          <i className="bi bi-send me-1" />
+                          Send to Cashier
+                        </button>
+                      )}
+                      {rx.status === "VERIFIED" &&
+                        rx.paymentRequest?.status === "CANCELLED" && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-warning"
+                            onClick={() => openAction("dispense", rx)}
+                          >
+                            <i className="bi bi-arrow-repeat me-1" />
+                            Resend to Cashier
+                          </button>
+                        )}
+                      {/* PARTIALLY_DISPENSED: Bill remaining items when previous request fulfilled or cancelled */}
+                      {rx.status === "PARTIALLY_DISPENSED" && (!rx.paymentRequest || rx.paymentRequest.status === "FULFILLED") && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-primary"
+                          onClick={() => openAction("dispense", rx)}
+                        >
+                          <i className="bi bi-send me-1" />
+                          Bill Remaining
+                        </button>
+                      )}
+                      {rx.status === "PARTIALLY_DISPENSED" &&
+                        rx.paymentRequest?.status === "CANCELLED" && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-warning"
+                            onClick={() => openAction("dispense", rx)}
+                          >
+                            <i className="bi bi-arrow-repeat me-1" />
+                            Resend Remainder to Cashier
+                          </button>
+                        )}
+                      {/* VERIFIED/PARTIALLY_DISPENSED + AWAITING_PAYMENT: waiting badge */}
+                      {["VERIFIED", "PARTIALLY_DISPENSED"].includes(rx.status) &&
+                        rx.paymentRequest?.status === "AWAITING_PAYMENT" && (
+                          <span className="badge bg-info text-dark">
+                            <i className="bi bi-hourglass-split me-1" />
+                            Awaiting cashier payment
+                          </span>
+                        )}
+                      {/* VERIFIED/PARTIALLY_DISPENSED + PAID: Dispense button */}
+                      {["VERIFIED", "PARTIALLY_DISPENSED"].includes(rx.status) &&
+                        rx.paymentRequest?.status === "PAID" && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-success"
+                            onClick={() => openAction("dispense", rx)}
+                          >
+                            <i className="bi bi-shield-check me-1" />
+                            {operationSettings.requirePickupPin
+                              ? "Verify PIN & Dispense"
+                              : "Dispense"}
+                          </button>
+                        )}
+                      {/* DISPENSED: done badge + Refill button */}
+                      {rx.status === "DISPENSED" && (
+                        <>
+                          <span className="badge bg-success">
+                            <i className="bi bi-bag-check me-1" />
+                            Dispensed
+                          </span>
+                          {(rx.refillsAllowed || 0) > (rx.refillsUsed || 0) && (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline-primary"
+                              disabled={busy}
+                              onClick={() => handleRefill(rx)}
+                            >
+                              <i className="bi bi-arrow-repeat me-1" />
+                              Refill prescription
+                            </button>
+                          )}
+                        </>
+                      )}
+                      {/* REJECTED: badge */}
+                      {rx.status === "REJECTED" && (
+                        <span className="badge bg-danger">
+                          <i className="bi bi-x-octagon me-1" />
+                          Rejected
+                        </span>
+                      )}
+
+                      {/* ── Compact overflow menu for secondary actions ── */}
+                      <ActionsDropdown
+                        actions={[
+                          ...(["PENDING", "VERIFIED"].includes(rx.status)
+                            ? [
+                                {
+                                  label: "Edit prescription",
+                                  icon: "pencil",
+                                  onClick: () => openEditor(rx),
+                                },
+                              ]
+                            : []),
+                          ...(["PENDING", "VERIFIED"].includes(rx.status)
+                            ? [
+                                {
+                                  label: "Reject",
+                                  icon: "x-circle",
+                                  onClick: () => openAction("reject", rx),
+                                },
+                              ]
+                            : []),
+                          ...(rx.paymentRequest?.status === "AWAITING_PAYMENT"
+                            ? [
+                                {
+                                  label: "Withdraw bill & edit prescription",
+                                  icon: "x-square",
+                                  onClick: () => openAction("withdraw", rx),
+                                },
+                              ]
+                            : []),
+                          ...(rx.status === "DISPENSED" && (rx.refillsAllowed || 0) > (rx.refillsUsed || 0)
+                            ? [
+                                {
+                                  label: "Refill prescription",
+                                  icon: "arrow-repeat",
+                                  onClick: () => handleRefill(rx),
+                                },
+                              ]
+                            : []),
+                          {
+                            label: "Issue history",
+                            icon: "clock-history",
+                            onClick: () => openAction("history", rx),
+                          },
+                          ...(rx.status === "PENDING"
+                            ? [
+                                {
+                                  label: "Delete prescription",
+                                  icon: "trash",
+                                  danger: true,
+                                  onClick: () => setConfirm(rx),
+                                },
+                              ]
+                            : []),
+                        ]}
+                      />
+                    </div>
                   )}
                 </div>
               </div>
@@ -1624,8 +2000,11 @@ export function PrescriptionsPage() {
                       <th>Medicine</th>
                       <th>Calculation</th>
                       <th>Directions</th>
-                      <th>Total</th>
+                      <th>Prescribed</th>
                       <th>Dispensed</th>
+                      <th>Cancelled</th>
+                      <th>Not supplied</th>
+                      <th>Pending in this order</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1670,37 +2049,58 @@ export function PrescriptionsPage() {
                           )}
                         </td>
                         <td>
-                          {item.dosageInstructions}
-                          {item.specialInstructions &&
-                            !item.dosageInstructions
-                              ?.toLowerCase()
-                              .includes(
-                                item.specialInstructions.toLowerCase(),
-                              ) && (
-                              <>
-                                <br />
-                                <small>{item.specialInstructions}</small>
-                              </>
-                            )}
-                          {item.product.storageInstructions && (
+                          {/* Dosage directions are clinical — reveal them once paid or dispensed.
+                              Staff always see the full details. */}
+                          {(!staff && rx.status !== "DISPENSED" && !["PAID", "FULFILLED"].includes(rx.paymentRequest?.status)) ? (
+                            <small className="text-secondary fst-italic">
+                              <i className="bi bi-lock me-1" />
+                              Instructions unlocked once payment is confirmed by cashier
+                            </small>
+                          ) : (
                             <>
-                              <br />
-                              <small className="text-primary">
-                                <i className="bi bi-thermometer-snow me-1" />
-                                Storage: {item.product.storageInstructions}
-                              </small>
+                              {item.dosageInstructions}
+                              {item.specialInstructions &&
+                                !item.dosageInstructions
+                                  ?.toLowerCase()
+                                  .includes(
+                                    item.specialInstructions.toLowerCase(),
+                                  ) && (
+                                <>
+                                  <br />
+                                  <small>{item.specialInstructions}</small>
+                                </>
+                              )}
+                              {item.product.storageInstructions && (
+                                <>
+                                  <br />
+                                  <small className="text-primary">
+                                    <i className="bi bi-thermometer-snow me-1" />
+                                    Storage: {item.product.storageInstructions}
+                                  </small>
+                                </>
+                              )}
                             </>
                           )}
                         </td>
+                        <td>{Number(item.prescribedQuantity)}</td>
+                        <td>{Number(item.dispensedQuantity)}</td>
+                        <td>{Number(item.cancelledQuantity || 0)}</td>
                         <td>
-                          {item.prescribedQuantity} {item.product.unit}
+                          {Number(item.notSuppliedQuantity ?? Math.max(0, Number((Number(item.prescribedQuantity) - Number(item.dispensedQuantity)).toFixed(3))))}
+                          {Number(item.cancelledQuantity || 0) > 0 && <div className="small text-secondary mt-1">
+                            {(item.cancellationReasons?.length ? item.cancellationReasons : ['Reason not recorded — ask the pharmacy.']).map((reason, index) => <div key={index}>Cancellation reason: {reason}</div>)}
+                          </div>}
                         </td>
-                        <td>{item.dispensedQuantity}</td>
+                        <td>{Math.max(0, Number((Number(item.prescribedQuantity) - Number(item.dispensedQuantity) - Number(item.cancelledQuantity || 0)).toFixed(3)))}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              <p className="small text-secondary mt-2 mb-0">
+                Not supplied includes cancelled quantities. Pending in this order excludes cancelled quantities and is not a stock reservation.
+                {rx.items.some(item => Number(item.cancelledQuantity || 0) > 0) && ' Supplying cancelled quantities requires pharmacist review and a new bill; it does not reopen this order.'}
+              </p>
             </div>
           );
         })}
@@ -1724,9 +2124,9 @@ export function PrescriptionsPage() {
           {editor.mode === "edit" && editor.rx?.status === "VERIFIED" && (
             <div className="alert alert-warning" role="alert">
               <i className="bi bi-exclamation-triangle me-2" />
-              This prescription was already verified. Saving changes will move
-              it back to <strong>Pending</strong> and it will need to be
-              re-verified before it can be billed or dispensed.
+              Changes to medicines, clinical instructions, patient details or refills
+              move this prescription back to <strong>Pending</strong> for pharmacist review.
+              Collection-note and collection-time changes keep verification.
             </div>
           )}
           <div className={sourceFileUrl ? "prescription-editor-split" : ""}>
@@ -1738,7 +2138,7 @@ export function PrescriptionsPage() {
                     <button type="button" className="btn btn-outline-secondary" onClick={() => setSourceViewerHeight((height) => Math.max(320, height - 140))} title="Make viewer shorter">
                       <i className="bi bi-dash-lg" />
                     </button>
-                    <button type="button" className="btn btn-outline-secondary" onClick={() => setSourceViewerHeight(620)}>Fit</button>
+                    <button type="button" className="btn btn-outline-secondary" onClick={() => setSourceViewerHeight(Math.max(320, Math.min(760, window.innerHeight - 230)))}>Fit</button>
                     <button type="button" className="btn btn-outline-secondary" onClick={() => setSourceViewerHeight((height) => Math.min(1000, height + 140))} title="Make viewer taller">
                       <i className="bi bi-plus-lg" />
                     </button>
@@ -1753,6 +2153,10 @@ export function PrescriptionsPage() {
                 </small>
                 {sourceFileText ? (
                   <pre className="prescription-text-viewer" style={{ height: sourceViewerHeight }}>{sourceFileText}</pre>
+                ) : sourceFileMimeType.startsWith("image/") ? (
+                  <div className="prescription-image-viewer" style={{ height: sourceViewerHeight }}>
+                    <img src={sourceFileUrl} alt="Customer submitted prescription" />
+                  </div>
                 ) : (
                   <iframe
                     src={sourceFileUrl}
@@ -1772,7 +2176,7 @@ export function PrescriptionsPage() {
                         options={patients.map((patient) => ({
                           value: patient.id,
                           label: patient.user.fullName,
-                          description: `${patient.patientNumber} · ${patient.user.phone || "No phone"}`,
+                          description: `${patient.patientNumber} · ${patient.user.phone || "No phone"}${patient.onlineAccess === false ? " · Walk-in — no online login" : ""}`,
                         }))}
                         value={form.patientId}
                         onChange={(patientId) => {
@@ -1806,17 +2210,15 @@ export function PrescriptionsPage() {
                     ) : null;
                   })()}
                 </div>
-                {(editor.mode === "edit" || form.sourceUploadId) && (
-                  <div>
-                    <label className="form-label">
-                      Prescription date and time
-                    </label>
-                    <FriendlyDateTimePicker value={form.prescriptionDate} onChange={(prescriptionDate) => setForm({ ...form, prescriptionDate })} required />
-                    <small className="text-secondary">
-                      The original date the prescription was written.
-                    </small>
-                  </div>
-                )}
+                <div>
+                  <label className="form-label">
+                    Doctor-issued date and time
+                  </label>
+                  <FriendlyDateTimePicker value={form.prescriptionDate} onChange={(prescriptionDate) => setForm({ ...form, prescriptionDate })} pastOnly required />
+                  <small className="text-secondary">
+                    The original date and time the prescriber wrote or issued this prescription — not the upload or processing time.
+                  </small>
+                </div>
                 <div className="full">
                   <PatientClinicalWarning
                     patient={patients.find(
@@ -1824,6 +2226,10 @@ export function PrescriptionsPage() {
                     )}
                     recipientDateOfBirth={form.orderedForSelf ? undefined : form.recipientDateOfBirth}
                     thirdPartyRecipient={!form.orderedForSelf}
+                    recipientName={form.recipientName}
+                    recipientRelationship={form.recipientRelationship}
+                    recipientAllergies={form.recipientAllergies}
+                    recipientConditions={form.recipientConditions}
                     referenceDate={form.prescriptionDate}
                     medicines={form.items.map((item: Line) => products.find((product) => product.id === Number(item.productId))).filter(Boolean)}
                   />
@@ -1917,70 +2323,131 @@ export function PrescriptionsPage() {
                   </label>
                 </div>
                 {!form.orderedForSelf && (
-                  <>
-                    <div>
-                      <label className="form-label">Recipient name</label>
-                      <input
-                        className="form-control"
-                        value={form.recipientName}
-                        onChange={(event) =>
-                          setForm({
-                            ...form,
-                            recipientName: event.target.value,
-                          })
-                        }
-                        required
-                      />
+                  <div className="full border rounded-3 p-3 bg-light-subtle">
+                    <div className="d-flex align-items-center justify-content-between mb-2 pb-1 border-bottom">
+                      <span className="fw-semibold small text-primary d-flex align-items-center gap-1">
+                        <i className="bi bi-person-heart" />
+                        Recipient Information &amp; Clinical Safety
+                      </span>
+                      <span className="badge bg-secondary-subtle text-secondary small">
+                        Third-party recipient
+                      </span>
                     </div>
-                    <div>
-                      <label className="form-label">
-                        Relationship to patient
-                      </label>
-                      <select
-                        className="form-select"
-                        value={form.recipientRelationship}
-                        onChange={(event) =>
-                          setForm({
-                            ...form,
-                            recipientRelationship: event.target.value,
-                          })
-                        }
-                        required
-                      >
-                        <option value="">Select relationship</option>
-                        <option>Child</option>
-                        <option>Parent</option>
-                        <option>Spouse</option>
-                        <option>Sibling</option>
-                        <option>Carer</option>
-                        <option>Other</option>
-                      </select>
+
+                    <div className="row g-2 mb-2">
+                      <div className="col-md-5">
+                        <label className="form-label small mb-1">
+                          Recipient name <span className="text-danger">*</span>
+                        </label>
+                        <input
+                          className="form-control"
+                          value={form.recipientName}
+                          onChange={(event) =>
+                            setForm({
+                              ...form,
+                              recipientName: event.target.value,
+                            })
+                          }
+                          required
+                        />
+                      </div>
+                      <div className="col-md-4">
+                        <label className="form-label small mb-1">
+                          Relationship to patient <span className="text-danger">*</span>
+                        </label>
+                        <select
+                          className="form-select"
+                          value={form.recipientRelationship}
+                          onChange={(event) =>
+                            setForm({
+                              ...form,
+                              recipientRelationship: event.target.value,
+                            })
+                          }
+                          required
+                        >
+                          <option value="">Select relationship</option>
+                          <option>Child</option>
+                          <option>Parent</option>
+                          <option>Spouse</option>
+                          <option>Sibling</option>
+                          <option>Relative</option>
+                          <option>Carer</option>
+                          <option>Other</option>
+                        </select>
+                      </div>
+                      <div className="col-md-3">
+                        <label className="form-label small mb-1">
+                          Recipient age <span className="text-danger">*</span>
+                        </label>
+                        <div className="input-group">
+                          <input
+                            className="form-control"
+                            type="number"
+                            min={0}
+                            max={130}
+                            step={1}
+                            placeholder="Age"
+                            value={ageFromDob(form.recipientDateOfBirth)}
+                            onChange={(event) =>
+                              setForm({
+                                ...form,
+                                recipientDateOfBirth:
+                                  event.target.value === ""
+                                    ? ""
+                                    : dobFromAge(Number(event.target.value)),
+                              })
+                            }
+                            required
+                          />
+                          <span className="input-group-text small">years</span>
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <label className="form-label">Recipient age (years)</label>
-                      <input
-                        className="form-control"
-                        type="number"
-                        min={0}
-                        max={130}
-                        step={1}
-                        value={ageFromDob(form.recipientDateOfBirth)}
-                        onChange={(event) =>
-                          setForm({
-                            ...form,
-                            recipientDateOfBirth:
-                              event.target.value === ""
-                                ? ""
-                                : dobFromAge(Number(event.target.value)),
-                          })
-                        }
-                        required
-                      />
-                      <small className="text-secondary">
-                        Used automatically for medicine age-suitability checks.
-                      </small>
+
+                    <div className="row g-2">
+                      <div className="col-md-6">
+                        <label className="form-label small mb-1 text-danger-emphasis d-flex align-items-center gap-1">
+                          <i className="bi bi-shield-exclamation text-danger" />
+                          Recipient allergies
+                        </label>
+                        <input
+                          className="form-control"
+                          value={form.recipientAllergies || ""}
+                          onChange={(event) =>
+                            setForm({
+                              ...form,
+                              recipientAllergies: event.target.value,
+                            })
+                          }
+                          placeholder="e.g. Penicillin, Aspirin, or None"
+                        />
+                        <small className="text-secondary d-block mt-1">
+                          Checked against prescribed medicine active ingredients.
+                        </small>
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label small mb-1 text-warning-emphasis d-flex align-items-center gap-1">
+                          <i className="bi bi-heart-pulse text-warning" />
+                          Recipient chronic illnesses / conditions
+                        </label>
+                        <input
+                          className="form-control"
+                          value={form.recipientConditions || ""}
+                          onChange={(event) =>
+                            setForm({
+                              ...form,
+                              recipientConditions: event.target.value,
+                            })
+                          }
+                          placeholder="e.g. Asthma, Diabetes, Hypertension, or None"
+                        />
+                        <small className="text-secondary d-block mt-1">
+                          Checked for drug interactions and contraindications.
+                        </small>
+                      </div>
                     </div>
-                  </>
+                  </div>
                 )}
               </div>
               <h4 className="fs-6 mt-4">Medicine items</h4>
@@ -2381,8 +2848,8 @@ export function PrescriptionsPage() {
                           <input
                             className="form-control"
                             type="number"
-                            min={liquid ? "0.1" : "0.25"}
-                            step={liquid ? "0.1" : "0.25"}
+                            min={isCountableUnit(auto.product?.unit) ? "1" : "0.1"}
+                            step={isCountableUnit(auto.product?.unit) ? "1" : "0.1"}
                             value={item.overrideQuantity}
                             onChange={(event) =>
                               updateLine(index, {
@@ -2441,6 +2908,58 @@ export function PrescriptionsPage() {
                   + Add medicine
                 </button>
               </div>
+              {/* Bug #9: Estimated price preview computed from catalogue selling prices */}
+              {form.items.some((item: any) => item.productId) && (() => {
+                const priceLines = form.items
+                  .map((item: any) => {
+                    const product = products.find((p: any) => p.id === Number(item.productId));
+                    if (!product || !product.sellingPrice) return null;
+                    const qty = item.overrideEnabled && item.overrideQuantity
+                      ? Number(item.overrideQuantity)
+                      : calculated(item).total || 0;
+                    const lineTotal = Number(product.sellingPrice) * qty;
+                    return { name: `${product.genericName} ${product.strength}`.trim(), unit: product.unit, qty, unitPrice: Number(product.sellingPrice), lineTotal };
+                  })
+                  .filter(Boolean);
+                const retailLines = form.retailItems
+                  .map((item: any) => {
+                    const product = products.find((p: any) => p.id === Number(item.productId));
+                    if (!product || !product.sellingPrice) return null;
+                    const lineTotal = Number(product.sellingPrice) * Number(item.quantity);
+                    return { name: `${product.genericName}`.trim(), unit: product.unit, qty: Number(item.quantity), unitPrice: Number(product.sellingPrice), lineTotal };
+                  })
+                  .filter(Boolean);
+                const allLines = [...priceLines, ...retailLines];
+                if (!allLines.length) return null;
+                const subtotal = allLines.reduce((sum, l: any) => sum + l.lineTotal, 0);
+                return (
+                  <div className="alert alert-light border mt-3 p-2 small">
+                    <div className="d-flex align-items-center gap-2 mb-2">
+                      <i className="bi bi-calculator text-secondary" />
+                      <strong className="text-secondary">Estimated price preview</strong>
+                      <small className="text-muted ms-auto">Based on current catalogue prices. Final amount set at cashier.</small>
+                    </div>
+                    <table className="table table-sm mb-1">
+                      <tbody>
+                        {allLines.map((l: any, i: number) => (
+                          <tr key={i}>
+                            <td className="text-secondary">{l.name}</td>
+                            <td className="text-secondary">{l.qty} {l.unit}</td>
+                            <td className="text-secondary text-end">{money(l.unitPrice)} / {l.unit}</td>
+                            <td className="fw-semibold text-end">{money(l.lineTotal)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-top">
+                          <td colSpan={3} className="text-end fw-bold">Estimated subtotal</td>
+                          <td className="fw-bold text-primary text-end">{money(subtotal)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                );
+              })()}
               <section className="prescription-retail-request">
                 <div className="prescription-retail-heading">
                   <div>
@@ -2541,19 +3060,19 @@ export function PrescriptionsPage() {
                                 className="form-control"
                                 type="number"
                                 list="retail-quantity-options"
-                                min="0.001"
+                                min={stockQuantityStep(selectedProduct?.unit)}
                                 max={
                                   selectedProduct
                                     ? usableStock(selectedProduct)
                                     : undefined
                                 }
-                                step="0.001"
+                                step={stockQuantityStep(selectedProduct?.unit)}
                                 value={retailItem.quantity}
                                 onChange={(event) => {
                                   const retailItems = [...form.retailItems];
                                   retailItems[retailIndex] = {
                                     ...retailItem,
-                                    quantity: Number(event.target.value),
+                                    quantity: event.target.value,
                                   };
                                   setForm({ ...form, retailItems });
                                 }}
@@ -2595,15 +3114,55 @@ export function PrescriptionsPage() {
                 )}
               </section>
               <Alert message={error} />
-              <ModalActions
-                onClose={closeEditor}
-                submitLabel={
-                  editor.mode === "create"
-                    ? "Create prescription"
-                    : "Save changes"
-                }
-                busy={busy}
-              />
+              <div className="d-flex justify-content-end gap-2 mt-4 flex-wrap">
+                <button type="button" className="btn btn-light" onClick={closeEditor}>
+                  Cancel
+                </button>
+                {editor.mode === "create" ? (
+                  <>
+                    {!form.sourceUploadId && <button
+                      type="button"
+                      className="btn btn-outline-secondary"
+                      disabled={busy}
+                      onClick={() => save(undefined, { autoVerify: false, sendToCashier: false })}
+                    >
+                      {busy ? "Saving..." : "Save as Draft"}
+                    </button>}
+                    {!form.sourceUploadId && <button
+                      type="button"
+                      className="btn btn-outline-primary"
+                      disabled={busy}
+                      onClick={() => save(undefined, { autoVerify: true, sendToCashier: false })}
+                    >
+                      <i className="bi bi-check-circle me-1" />
+                      {busy ? "Saving..." : "Save & Verify"}
+                    </button>}
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={busy}
+                      onClick={() => save(undefined, { autoVerify: true, sendToCashier: true })}
+                    >
+                      <i className="bi bi-send-check me-1" />
+                      {busy
+                        ? "Processing..."
+                        : form.sourceUploadStatus === "READY_TO_PREPARE"
+                          ? "Save & Ready to Dispense"
+                          : form.sourceUploadId
+                            ? "Save, Verify & Send to Cashier"
+                            : "Save, Verify & Send to Cashier"}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={busy}
+                  >
+                    {busy ? "Saving..." : "Save changes"}
+                  </button>
+                )}
+              </div>
             </form>
           </div>
         </Modal>
@@ -2611,19 +3170,26 @@ export function PrescriptionsPage() {
 
       {reverify && (
         <Modal
-          title={`Reverify ${reverify.prescriptionNumber} before it can be billed`}
+          title={
+            reverify.verifiedAt
+              ? `Reverify clinical details — ${reverify.prescriptionNumber}`
+              : `Verify clinical details — ${reverify.prescriptionNumber}`
+          }
           onClose={() => setReverify(null)}
           size="md"
         >
-          <form onSubmit={confirmVerify}>
+          <form onSubmit={(e) => confirmVerify(e, false)}>
             <div className="alert alert-info small">
-              Double-check the details below before confirming. Once verified,
-              this prescription can be sent to the cashier for billing.
+              Double-check the clinical details below before confirming verification.
             </div>
             <PatientClinicalWarning
               patient={reverify.patient}
               recipientDateOfBirth={reverify.recipientDateOfBirth}
               thirdPartyRecipient={!reverify.orderedForSelf}
+              recipientName={reverify.recipientName}
+              recipientRelationship={reverify.recipientRelationship}
+              recipientAllergies={reverify.recipientAllergies}
+              recipientConditions={reverify.recipientConditions}
               referenceDate={reverify.prescriptionDate}
               medicines={reverify.items.map((item: any) => item.product)}
             />
@@ -2638,11 +3204,32 @@ export function PrescriptionsPage() {
               ))}
             </ul>
             <Alert message={error} />
-            <ModalActions
-              onClose={() => setReverify(null)}
-              submitLabel="Confirm & verify"
-              busy={busy}
-            />
+            <div className="d-flex justify-content-end gap-2 mt-4 flex-wrap">
+              <button
+                type="button"
+                className="btn btn-light"
+                onClick={() => setReverify(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline-primary"
+                disabled={busy}
+                onClick={(e) => confirmVerify(e, false)}
+              >
+                {busy ? "Verifying..." : "Verify only"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={(e) => confirmVerify(e, true)}
+              >
+                <i className="bi bi-send-check me-1" />
+                {busy ? "Processing..." : "Review bill & send to cashier"}
+              </button>
+            </div>
           </form>
         </Modal>
       )}
@@ -2670,9 +3257,45 @@ export function PrescriptionsPage() {
           </form>
         </Modal>
       )}
+      {action?.type === "withdraw" && (
+        <Modal
+          title={`Withdraw bill · ${action.rx.prescriptionNumber}`}
+          onClose={() => setAction(null)}
+          size="sm"
+        >
+          <form onSubmit={saveAction}>
+            <div className="alert alert-warning">
+              <i className="bi bi-exclamation-triangle me-2" />
+              This pulls {action.rx.paymentRequest?.requestNumber} back from the
+              cashier so it can no longer be paid. The prescription stays
+              verified. Next, the editor opens for corrections. Clinical changes need
+              pharmacist review; the replacement invoice needs fresh customer approval.
+            </div>
+            <label className="form-label">Mandatory reason</label>
+            <textarea
+              className="form-control"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              required
+            />
+            <Alert message={error} />
+            <ModalActions
+              onClose={() => setAction(null)}
+              submitLabel="Withdraw & edit prescription"
+              busy={busy}
+            />
+          </form>
+        </Modal>
+      )}
       {action?.type === "dispense" && (
         <Modal
-          title={`Prepare invoice · ${action.rx.prescriptionNumber}`}
+          title={
+            action.rx.paymentRequest?.status === "PAID"
+              ? `Dispense Prescription · ${action.rx.prescriptionNumber}`
+              : action.rx.paymentRequest?.status === "AWAITING_PAYMENT"
+                ? `Update Cashier Invoice · ${action.rx.prescriptionNumber}`
+                : `Prepare Cashier Invoice · ${action.rx.prescriptionNumber}`
+          }
           onClose={closeAction}
           size={action.rx.sourceUpload ? "xl" : "lg"}
         >
@@ -2714,13 +3337,21 @@ export function PrescriptionsPage() {
                 <i className="bi bi-shield-lock me-2" />
                 <strong>One combined checkout.</strong> Confirm the prescribed
                 medicines, add any non-prescription retail products requested
-                by the customer, then send one total to the cashier. Dispensing
-                remains locked until payment and PIN verification.
+                by the customer, then send one total to the cashier.{" "}
+                {operationSettings.cashierCanDispenseAtPayment
+                  ? "The cashier hands the medicine over as soon as it is paid for."
+                  : operationSettings.requirePickupPin
+                    ? "Dispensing remains locked until payment and PIN verification."
+                    : "Dispensing remains locked until the cashier takes payment."}
               </div>
               <PatientClinicalWarning
                 patient={patients.find((p) => p.id === action.rx.patient.id)}
                 recipientDateOfBirth={action.rx.orderedForSelf ? undefined : action.rx.recipientDateOfBirth}
                 thirdPartyRecipient={!action.rx.orderedForSelf}
+                recipientName={action.rx.recipientName}
+                recipientRelationship={action.rx.recipientRelationship}
+                recipientAllergies={action.rx.recipientAllergies}
+                recipientConditions={action.rx.recipientConditions}
                 referenceDate={action.rx.prescriptionDate}
                 medicines={action.rx.items.map((item) => item.product)}
               />
@@ -2753,16 +3384,16 @@ export function PrescriptionsPage() {
                           <input
                             className="form-control"
                             type="number"
-                            step="0.001"
-                            min="0.001"
+                            step={stockQuantityStep(item.unit)}
+                            min={stockQuantityStep(item.unit)}
                             max={item.maximum}
                             value={item.quantity}
-                            disabled={Boolean(action.rx.paymentRequest) && action.rx.paymentRequest.status !== "AWAITING_PAYMENT"}
+                            disabled={Boolean(action.rx.paymentRequest) && !["AWAITING_PAYMENT", "CANCELLED"].includes(action.rx.paymentRequest.status)}
                             onChange={(event) => {
                               const items = [...dispense.items];
                               items[index] = {
                                 ...item,
-                                quantity: Number(event.target.value),
+                                quantity: event.target.value,
                               };
                               setDispense({ ...dispense, items });
                             }}
@@ -2917,10 +3548,10 @@ export function PrescriptionsPage() {
                                 className="form-control"
                                 type="number"
                                 list="retail-quantity-options"
-                                min="0.001"
+                                min={stockQuantityStep(product?.unit)}
                                 max={available || undefined}
-                                step="0.001"
-                                disabled={Boolean(action.rx.paymentRequest) && action.rx.paymentRequest.status !== "AWAITING_PAYMENT"}
+                                step={stockQuantityStep(product?.unit)}
+                                disabled={Boolean(action.rx.paymentRequest) && !["AWAITING_PAYMENT", "CANCELLED"].includes(action.rx.paymentRequest.status)}
                                 value={retailItem.quantity}
                                 onChange={(event) => {
                                   const retailItems = [
@@ -2928,7 +3559,7 @@ export function PrescriptionsPage() {
                                   ];
                                   retailItems[index] = {
                                     ...retailItem,
-                                    quantity: Number(event.target.value),
+                                    quantity: event.target.value,
                                   };
                                   setDispense({ ...dispense, retailItems });
                                 }}
@@ -3013,7 +3644,7 @@ export function PrescriptionsPage() {
                           Boolean(dispense.addBottleFee)
                         }
                         disabled={
-                          Boolean(action.rx.paymentRequest) ||
+                          (Boolean(action.rx.paymentRequest) && !["AWAITING_PAYMENT", "CANCELLED"].includes(action.rx.paymentRequest.status)) ||
                           !dispenseHasLiquid
                         }
                         onChange={(event) =>
@@ -3040,7 +3671,7 @@ export function PrescriptionsPage() {
                           type="number"
                           min="1"
                           step="1"
-                          disabled={Boolean(action.rx.paymentRequest) && action.rx.paymentRequest.status !== "AWAITING_PAYMENT"}
+                          disabled={Boolean(action.rx.paymentRequest) && !["AWAITING_PAYMENT", "CANCELLED"].includes(action.rx.paymentRequest.status)}
                           value={dispense.bottleCount}
                           onChange={(event) =>
                             updateDispenseBottleFee(
@@ -3059,7 +3690,7 @@ export function PrescriptionsPage() {
                             type="number"
                             min="0"
                             step="0.01"
-                            disabled={Boolean(action.rx.paymentRequest) && action.rx.paymentRequest.status !== "AWAITING_PAYMENT"}
+                            disabled={Boolean(action.rx.paymentRequest) && !["AWAITING_PAYMENT", "CANCELLED"].includes(action.rx.paymentRequest.status)}
                             value={dispense.bottleFeePerBottle}
                             onChange={(event) =>
                               updateDispenseBottleFee(
@@ -3094,7 +3725,7 @@ export function PrescriptionsPage() {
                   <input
                     className="form-control text-uppercase"
                     value={dispense.couponCode}
-                    disabled={Boolean(action.rx.paymentRequest) && action.rx.paymentRequest.status !== "AWAITING_PAYMENT"}
+                    disabled={Boolean(action.rx.paymentRequest) && !["AWAITING_PAYMENT", "CANCELLED"].includes(action.rx.paymentRequest.status)}
                     onChange={(event) =>
                       setDispense({
                         ...dispense,
@@ -3111,7 +3742,7 @@ export function PrescriptionsPage() {
                     min="0"
                     step="0.01"
                     value={dispense.tax}
-                    disabled={Boolean(action.rx.paymentRequest) && action.rx.paymentRequest.status !== "AWAITING_PAYMENT"}
+                    disabled={Boolean(action.rx.paymentRequest) && !["AWAITING_PAYMENT", "CANCELLED"].includes(action.rx.paymentRequest.status)}
                     onChange={(event) =>
                       setDispense({
                         ...dispense,
@@ -3120,6 +3751,49 @@ export function PrescriptionsPage() {
                     }
                   />
                 </div>
+                <div>
+                  <label className="form-label">Cash stock reservation</label>
+                  <div className="input-group">
+                    <input
+                      className="form-control"
+                      type="number"
+                      min="1"
+                      max="168"
+                      step="1"
+                      value={dispense.reservationHours}
+                      disabled={Boolean(action.rx.paymentRequest) && !["AWAITING_PAYMENT", "CANCELLED"].includes(action.rx.paymentRequest.status)}
+                      onChange={(event) => setDispense({ ...dispense, reservationHours: Number(event.target.value) })}
+                      required
+                    />
+                    <span className="input-group-text">hours</span>
+                  </div>
+                  <small className="text-secondary">Used only if the customer acknowledges the invoice and chooses cash. The administrator default is {operationSettings.cashReservationHours || 24} hours.</small>
+                </div>
+                <div>
+                  <label className="form-label">Note to customer (optional)</label>
+                  <textarea
+                    className="form-control"
+                    rows={3}
+                    maxLength={500}
+                    value={dispense.notes}
+                    disabled={Boolean(action.rx.paymentRequest) && !["AWAITING_PAYMENT", "CANCELLED"].includes(action.rx.paymentRequest.status)}
+                    onChange={(event) => setDispense({ ...dispense, notes: event.target.value })}
+                    placeholder="Collection instructions or information about this final invoice"
+                  />
+                </div>
+                {action.rx.paymentRequest?.status === "AWAITING_PAYMENT" && (
+                  <div>
+                    <label className="form-label">Reason for invoice changes</label>
+                    <textarea className="form-control" rows={2} maxLength={500}
+                      value={dispense.revisionReason}
+                      onChange={(event) => setDispense({ ...dispense, revisionReason: event.target.value })}
+                      placeholder="Explain changes to items or charges for the customer" />
+                    <small className="text-secondary">Required when items or charges change. Note-only saves keep the customer's approval.</small>
+                  </div>
+                )}
+                {action.rx.paymentRequest?.customerNote && (
+                  <div className="alert alert-info"><strong>Customer note: </strong>{action.rx.paymentRequest.customerNote}</div>
+                )}
               </div>
               {quoteError && (
                 <div className="alert alert-danger mt-3 mb-0">{quoteError}</div>
@@ -3152,7 +3826,7 @@ export function PrescriptionsPage() {
                         <strong>− {money(quote.discount)}</strong>
                       </div>
                       <div className="invoice-discounts">
-                        {quote.appliedDiscounts.map(
+                        {(quote.appliedDiscounts || []).map(
                           (rule: any, index: number) => (
                             <span key={`${rule.ruleId}-${index}`}>
                               {rule.ruleName}: −{money(rule.amount)}
@@ -3199,12 +3873,13 @@ export function PrescriptionsPage() {
                   <small className="d-block">
                     The prescription itself is still verified. Sending it to
                     the cashier again starts a new billing cycle with a new
-                    request number and PIN.
+                    request number
+                    {operationSettings.requirePickupPin ? " and PIN" : ""}.
                   </small>
                 </div>
               )}
               {(!action.rx.paymentRequest ||
-                ["AWAITING_PAYMENT", "CANCELLED"].includes(
+                ["AWAITING_PAYMENT", "CANCELLED", "FULFILLED"].includes(
                   action.rx.paymentRequest.status,
                 )) && (
                 <div className="d-flex justify-content-end gap-2 mt-4">
@@ -3230,7 +3905,9 @@ export function PrescriptionsPage() {
                       ? "Update bill sent to cashier"
                       : action.rx.paymentRequest?.status === "CANCELLED"
                         ? "Resend to cashier"
-                        : "Send combined invoice to cashier"}
+                        : action.rx.paymentRequest?.status === "FULFILLED"
+                          ? "Send remainder invoice to cashier"
+                          : "Send combined invoice to cashier"}
                   </button>
                 </div>
               )}
@@ -3391,15 +4068,31 @@ export function PrescriptionsPage() {
       )}
       {patientModal && (
         <Modal
-          title="Create patient without leaving prescription"
+          title="Add patient without leaving prescription"
           onClose={() => setPatientModal(false)}
         >
           <form onSubmit={createPatient}>
             <div className="form-grid">
+              <div className="full alert alert-light border mb-0">
+                <div className="form-check form-switch">
+                  <input
+                    className="form-check-input"
+                    type="checkbox"
+                    id="patient-online-access"
+                    checked={patientForm.onlineAccess}
+                    onChange={(event) => setPatientForm({ ...patientForm, onlineAccess: event.target.checked })}
+                  />
+                  <label className="form-check-label fw-semibold" htmlFor="patient-online-access">
+                    Create an online patient login
+                  </label>
+                </div>
+                <small className="text-secondary d-block mt-1">
+                  Leave this off for a walk-in or unregistered customer. Their prescription, clinical details, bill, and stock transaction remain in the pharmacy record, but they cannot sign in or receive online acknowledgements.
+                </small>
+              </div>
               {(
                 [
                   ["fullName", "Full name", "text"],
-                  ["email", "Email", "email"],
                   ["phone", "Phone", "tel"],
                   ["dateOfBirth", "Date of birth", "date"],
                 ] as const
@@ -3427,6 +4120,18 @@ export function PrescriptionsPage() {
                   />
                 </div>
               ))}
+              {patientForm.onlineAccess && (
+                <div>
+                  <label className="form-label">Email</label>
+                  <input
+                    className="form-control"
+                    type="email"
+                    value={patientForm.email}
+                    onChange={(event) => setPatientForm({ ...patientForm, email: event.target.value })}
+                    required
+                  />
+                </div>
+              )}
               <div className="full">
                 <label className="form-label">Allergies</label>
                 <textarea
@@ -3451,7 +4156,7 @@ export function PrescriptionsPage() {
                   rows={2}
                 />
               </div>
-              <div className="full">
+              {patientForm.onlineAccess && <div className="full">
                 <PasswordField
                   value={patientForm.password}
                   onChange={(password) =>
@@ -3459,7 +4164,7 @@ export function PrescriptionsPage() {
                   }
                   label="Temporary password"
                 />
-              </div>
+              </div>}
             </div>
             <Alert message={error} />
             <ModalActions
@@ -3476,6 +4181,17 @@ export function PrescriptionsPage() {
           message={`${confirm.prescriptionNumber} will be permanently removed. Only pending prescriptions can be deleted.`}
           onConfirm={remove}
           onClose={() => setConfirm(null)}
+          busy={busy}
+        />
+      )}
+      {refillTarget && (
+        <ConfirmModal
+          title="Issue prescription refill?"
+          message={`Issue refill #${(refillTarget.refillsUsed || 0) + 1} of ${refillTarget.refillsAllowed} for ${refillTarget.prescriptionNumber}? A new prescription record will be created for pharmacist review.`}
+          confirmLabel="Issue refill"
+          danger={false}
+          onConfirm={issueRefill}
+          onClose={() => setRefillTarget(null)}
           busy={busy}
         />
       )}
@@ -3573,6 +4289,79 @@ export function PrescriptionsPage() {
           </form>
         </Modal>
       )}
+      {/* ── Patient: decline an invoice they do not want to pay ── */}
+      {declineInvoice && (
+        <Modal
+          title="Decline invoice"
+          onClose={() => setDeclineInvoice(null)}
+          size="sm"
+        >
+          <form onSubmit={submitDeclineInvoice}>
+            <div className="alert alert-warning small">
+              <i className="bi bi-exclamation-triangle me-2" />
+              <strong>Are you sure you want to decline this invoice?</strong>
+              <br />
+              This will cancel the pharmacy bill. If you still need your
+              medicine, contact the pharmacy directly.
+            </div>
+            <label className="form-label">Reason for declining</label>
+            <textarea
+              className="form-control"
+              minLength={3}
+              maxLength={500}
+              value={declineInvoice.reason}
+              onChange={(event) =>
+                setDeclineInvoice({ ...declineInvoice, reason: event.target.value })
+              }
+              placeholder="e.g. I no longer need these medicines, or I found them elsewhere."
+              required
+            />
+            <Alert message={error} />
+            <ModalActions
+              onClose={() => setDeclineInvoice(null)}
+              submitLabel="Decline invoice"
+              busy={busy}
+            />
+          </form>
+        </Modal>
+      )}
+
+      {/* ── Patient: request cancellation/refund for submitted slip or paid order ── */}
+      {requestCancel && (
+        <Modal
+          title={`Request cancellation — ${requestCancel.rx.prescriptionNumber}`}
+          onClose={() => setRequestCancel(null)}
+          size="sm"
+        >
+          <form onSubmit={submitRequestCancel}>
+            <div className="alert alert-warning small">
+              <i className="bi bi-exclamation-triangle me-2" />
+              <strong>Request cancellation for this order</strong>
+              <br />
+              Our cashier team will review your cancellation request and process any refund or payment void before the medicines are prepared.
+            </div>
+            <label className="form-label">Reason for cancellation request (required)</label>
+            <textarea
+              className="form-control"
+              minLength={3}
+              maxLength={500}
+              value={requestCancel.reason}
+              onChange={(event) =>
+                setRequestCancel({ ...requestCancel, reason: event.target.value })
+              }
+              placeholder="e.g. Doctor changed prescription, duplicate order, need refund..."
+              required
+            />
+            <Alert message={error} />
+            <ModalActions
+              onClose={() => setRequestCancel(null)}
+              submitLabel="Submit cancellation request"
+              busy={busy}
+            />
+          </form>
+        </Modal>
+      )}
+      {documentPreview && <DocumentPreview document={documentPreview} onClose={() => setDocumentPreview(null)} />}
     </>
   );
 }
@@ -3580,7 +4369,7 @@ export function PrescriptionsPage() {
 const padDatePart = (value: number) => String(value).padStart(2, "0");
 const localPickerValue = (date: Date) => `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}T${padDatePart(date.getHours())}:${padDatePart(Math.floor(date.getMinutes() / 15) * 15)}`;
 
-function FriendlyDateTimePicker({ value, onChange, futureOnly = false, optional = false, required = false }: { value: string; onChange(value: string): void; futureOnly?: boolean; optional?: boolean; required?: boolean }) {
+function FriendlyDateTimePicker({ value, onChange, futureOnly = false, pastOnly = false, optional = false, required = false }: { value: string; onChange(value: string): void; futureOnly?: boolean; pastOnly?: boolean; optional?: boolean; required?: boolean }) {
   const fallback = new Date();
   if (futureOnly) fallback.setDate(fallback.getDate() + 1);
   fallback.setHours(9, 0, 0, 0);
@@ -3601,7 +4390,15 @@ function FriendlyDateTimePicker({ value, onChange, futureOnly = false, optional 
   const selectedDate = new Date(year, month - 1, day);
   const calendarStart = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1 - viewMonth.getDay());
   const calendarDays = Array.from({ length: 42 }, (_, index) => { const date = new Date(calendarStart); date.setDate(calendarStart.getDate() + index); return date; });
-  const chooseDate = (date: Date) => onChange(`${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}T${time}`);
+  const chooseDate = (date: Date) => {
+    let selectedTime = time;
+    if (pastOnly && date.toDateString() === new Date().toDateString()) {
+      const now = new Date();
+      const selected = new Date(date.getFullYear(), date.getMonth(), date.getDate(), Number(time.slice(0, 2)), Number(time.slice(3, 5)));
+      if (selected > now) selectedTime = `${padDatePart(now.getHours())}:${padDatePart(Math.floor(now.getMinutes() / 15) * 15)}`;
+    }
+    onChange(`${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}T${selectedTime}`);
+  };
   const quickDate = (offset: number) => {
     const date = new Date();
     date.setDate(date.getDate() + offset);
@@ -3626,17 +4423,21 @@ function FriendlyDateTimePicker({ value, onChange, futureOnly = false, optional 
         <div className="friendly-calendar-grid">{calendarDays.map((date) => {
           const dateKey = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
           const selected = date.toDateString() === selectedDate.toDateString();
-          const disabled = futureOnly && new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1) < new Date();
+          const disabled = (futureOnly && new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1) < new Date()) || (pastOnly && new Date(date.getFullYear(), date.getMonth(), date.getDate()) > new Date());
           return <button type="button" key={dateKey} className={`${date.getMonth() !== viewMonth.getMonth() ? "outside" : ""} ${selected ? "selected" : ""}`} disabled={disabled} onClick={() => chooseDate(date)}>{date.getDate()}</button>;
         })}</div>
         <div className="friendly-calendar-time"><i className="bi bi-clock" /><label>Time</label><select className="form-select" aria-label="Time" value={time} onChange={(event) => onChange(`${parts[0]}T${event.target.value}`)} required={required}>
-          {times.map((item) => <option key={item} value={item}>{new Date(`2000-01-01T${item}`).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</option>)}
+          {times.map((item) => {
+            const now = new Date();
+            const futureTimeToday = pastOnly && selectedDate.toDateString() === now.toDateString() && (Number(item.slice(0, 2)) * 60 + Number(item.slice(3, 5))) > (now.getHours() * 60 + now.getMinutes());
+            return <option key={item} value={item} disabled={futureTimeToday}>{new Date(`2000-01-01T${item}`).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</option>;
+          })}
         </select></div>
       </div>}
       <div className="friendly-date-shortcuts">
         <button type="button" onClick={() => quickDate(0)}>Today</button>
-        <button type="button" onClick={() => quickDate(1)}>Tomorrow</button>
-        <button type="button" onClick={() => quickDate(7)}>Next week</button>
+        <button type="button" onClick={() => quickDate(pastOnly ? -1 : 1)}>{pastOnly ? "Yesterday" : "Tomorrow"}</button>
+        <button type="button" onClick={() => quickDate(pastOnly ? -7 : 7)}>{pastOnly ? "Last week" : "Next week"}</button>
         {optional && value && <button type="button" className="clear" onClick={() => onChange("")}>Clear</button>}
       </div>
     </div>
@@ -3647,20 +4448,32 @@ function PatientClinicalWarning({
   patient,
   recipientDateOfBirth,
   thirdPartyRecipient = false,
+  recipientName,
+  recipientRelationship,
+  recipientAllergies,
+  recipientConditions,
   referenceDate,
   medicines = [],
 }: {
   patient?: any;
   recipientDateOfBirth?: string;
   thirdPartyRecipient?: boolean;
+  recipientName?: string;
+  recipientRelationship?: string;
+  recipientAllergies?: string | null;
+  recipientConditions?: string | null;
   referenceDate?: string;
   medicines?: any[];
 }) {
   if (!patient) return null;
   const isRecorded = (value?: string | null) =>
-    Boolean(value?.trim() && value.trim().toLowerCase() !== "none");
-  const hasAllergies = isRecorded(patient.allergies);
-  const hasConditions = isRecorded(patient.chronicConditions);
+    Boolean(value?.trim() && !["none", "no", "n/a", "nil"].includes(value.trim().toLowerCase()));
+
+  const effectiveAllergies = thirdPartyRecipient ? recipientAllergies : patient.allergies;
+  const effectiveConditions = thirdPartyRecipient ? recipientConditions : patient.chronicConditions;
+  const hasAllergies = isRecorded(effectiveAllergies);
+  const hasConditions = isRecorded(effectiveConditions);
+
   const medicineRecipientDateOfBirth = thirdPartyRecipient
     ? recipientDateOfBirth
     : patient.dateOfBirth;
@@ -3676,16 +4489,27 @@ function PatientClinicalWarning({
     (medicine.maximumAgeYears != null && age > Number(medicine.maximumAgeYears)),
   );
 
+  const isWarning = hasAllergies || hasConditions || unsuitable.length > 0;
+
   return (
     <div
-      className={`patient-clinical-warning alert ${(!thirdPartyRecipient && (hasAllergies || hasConditions)) || unsuitable.length ? "alert-warning" : "alert-light border"} mb-3`}
+      className={`patient-clinical-warning alert ${isWarning ? "alert-warning" : "alert-light border"} mb-3`}
       role="status"
       aria-live="polite"
     >
-      <h5 className="alert-heading fs-6 mb-1">
-        <i className="bi bi-clipboard2-pulse me-2" />
-        {thirdPartyRecipient ? "Medicine recipient age information" : "Patient clinical information"}
-      </h5>
+      <div className="d-flex align-items-center justify-content-between mb-1">
+        <h5 className="alert-heading fs-6 mb-0">
+          <i className="bi bi-clipboard2-pulse me-2" />
+          {thirdPartyRecipient
+            ? `Recipient clinical safety ${recipientName ? `(${recipientName})` : ""}`
+            : "Patient clinical information"}
+        </h5>
+        {thirdPartyRecipient && (
+          <span className="badge bg-secondary-subtle text-secondary border small">
+            {recipientRelationship ? `Third-party (${recipientRelationship})` : "Third-party recipient"}
+          </span>
+        )}
+      </div>
       <div className="patient-clinical-details">
         <div className={`small ${age == null ? "text-danger fw-semibold" : ""}`}>
           <strong>Age:</strong>{" "}
@@ -3695,24 +4519,37 @@ function PatientClinicalWarning({
               ? `${age} years`
               : `${age} years (${new Date(medicineRecipientDateOfBirth!).toLocaleDateString()})`}
         </div>
-        {thirdPartyRecipient ? (
-          <div className="small text-secondary mt-1">
-            Allergies and chronic conditions on this account belong to the sender and are not applied to the recipient.
+
+        <div className="small mt-1">
+          <strong>Allergies:</strong>{" "}
+          {hasAllergies ? (
+            <span className="text-danger fw-semibold">
+              <i className="bi bi-shield-exclamation text-danger me-1" />
+              {effectiveAllergies}
+            </span>
+          ) : (
+            <span className="text-secondary">{thirdPartyRecipient ? "None reported for recipient" : "None recorded"}</span>
+          )}
+        </div>
+
+        <div className="small mt-1">
+          <strong>Chronic conditions / illnesses:</strong>{" "}
+          {hasConditions ? (
+            <span className="fw-semibold text-warning-emphasis">
+              <i className="bi bi-heart-pulse text-warning me-1" />
+              {effectiveConditions}
+            </span>
+          ) : (
+            <span className="text-secondary">{thirdPartyRecipient ? "None reported for recipient" : "None recorded"}</span>
+          )}
+        </div>
+
+        {unsuitable.length > 0 && (
+          <div className="small text-danger fw-semibold mt-2">
+            <i className="bi bi-exclamation-triangle me-1" />
+            Age warning: {unsuitable.map((medicine) => `${medicine.genericName} (allowed ${medicine.minimumAgeYears ?? 0}–${medicine.maximumAgeYears ?? "no maximum"} years)`).join(", ")}
           </div>
-        ) : <>
-          <div className="small">
-            <strong>Allergies:</strong>{" "}
-            {hasAllergies ? patient.allergies : "None recorded"}
-          </div>
-          <div className="small mt-1">
-            <strong>Chronic conditions:</strong>{" "}
-            {hasConditions ? patient.chronicConditions : "None recorded"}
-          </div>
-        </>}
-        {unsuitable.length > 0 && <div className="small text-danger fw-semibold mt-2">
-          <i className="bi bi-exclamation-triangle me-1" />
-          Age warning: {unsuitable.map((medicine) => `${medicine.genericName} (allowed ${medicine.minimumAgeYears ?? 0}–${medicine.maximumAgeYears ?? "no maximum"} years)`).join(", ")}
-        </div>}
+        )}
       </div>
     </div>
   );

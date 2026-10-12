@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api/client";
+import { stockQuantityStep } from "../utils/unitMeasure";
+import { pagedList } from "../api/pagedList";
 import { useAuth } from "../auth/useAuth";
 import { useNavigate } from "react-router-dom";
 import { Modal, ModalActions } from "../components/Modal";
@@ -7,8 +9,30 @@ import { SearchableSelect } from "../components/SearchableSelect";
 import { Alert, Empty, Loading, Status } from "../components/Ui";
 import "../prescriptionUploads.css";
 
+type UploadSlip = {
+  id: number;
+  status: string;
+  declaredAmount: string;
+  reference?: string;
+  paidOn?: string;
+  note?: string;
+  originalName: string;
+  mimeType: string;
+  rejectionReason?: string;
+  reviewedAt?: string;
+  quoteRevision?: number;
+  acknowledgedQuoteRevision?: number | null;
+  quoteSentAt?: string;
+  quoteAcknowledgedAt?: string;
+  createdAt: string;
+  uploadedBy: { id: number; fullName: string };
+  reviewedBy?: { id: number; fullName: string };
+  bankAccount?: { id: number; bankName: string; accountNumber: string };
+};
+
 type Upload = {
   id: number;
+  quoteRevision: number;
   originalName: string;
   mimeType: string;
   patientNote?: string;
@@ -17,6 +41,8 @@ type Upload = {
   recipientName?: string;
   recipientRelationship?: string;
   recipientDateOfBirth?: string;
+  recipientAllergies?: string | null;
+  recipientConditions?: string | null;
   status: string;
   availabilityNotes?: string;
   estimatedTotal?: string;
@@ -36,6 +62,7 @@ type Upload = {
   reviewedAt?: string;
   createdAt: string;
   deleteAt?: string;
+  attachmentRemovedAt?: string | null;
   patient: {
     id: number;
     fullName: string;
@@ -43,11 +70,34 @@ type Upload = {
     patientProfile?: { id: number; patientNumber: string };
   };
   reviewedBy?: { id: number; fullName: string; role: string };
-  prescription?: { id: number; prescriptionNumber: string; status: string };
+  prescription?: { id: number; prescriptionNumber: string; status: string; paymentRequest?: { status: string; revision: number; acknowledgedRevision?: number; customerPaymentChoice?: string; reservationExpiresAt?: string } };
+  paymentSlips?: UploadSlip[];
 };
+
+const uploadStatusLabels: Record<string, string> = {
+  PENDING: "Awaiting pharmacy review",
+  AVAILABLE: "All medicines available",
+  PARTIALLY_AVAILABLE: "Some medicines unavailable",
+  UNAVAILABLE: "Medicines unavailable",
+  REJECTED: "Upload rejected",
+  QUOTE_SENT: "Quotation sent — awaiting your decision",
+  QUOTE_ACCEPTED: "Quotation approved — awaiting final bill",
+  PAYMENT_PENDING: "Final invoice issued — payment decision pending",
+  PAYMENT_SUBMITTED: "Payment receipt awaiting review",
+  READY_TO_PREPARE: "Payment verified — prepare medicines",
+};
+
+const UploadStatus = ({ value }: { value: string }) => (
+  <span className={`status status-${value.toLowerCase().replaceAll("_", "-")}`}>
+    {uploadStatusLabels[value] || value.replaceAll("_", " ")}
+  </span>
+);
 
 const money = (value: unknown) =>
   `Rs. ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const isImageUpload = (mimeType: string) => mimeType.startsWith("image/");
+const fittedDocumentUrl = (url: string, mimeType: string) =>
+  mimeType === "application/pdf" ? `${url}#view=FitH&zoom=page-width` : url;
 const dobFromAge = (age: number) => {
   const date = new Date();
   date.setFullYear(date.getFullYear() - age);
@@ -64,6 +114,24 @@ const ageFromDob = (dob?: string) => {
   )
     age -= 1;
   return String(age);
+};
+const buildPrescriptionCreateUrl = (
+  uploadItem: Upload,
+  estimateItems: any[] = [],
+) => {
+  const params = new URLSearchParams({
+    uploadId: String(uploadItem.id),
+    patientUserId: String(uploadItem.patient.id),
+    orderedForSelf: uploadItem.orderedForSelf ? "1" : "0",
+    uploadStatus: uploadItem.status,
+    recipientName: uploadItem.recipientName || "",
+    recipientRelationship: uploadItem.recipientRelationship || "",
+    recipientDateOfBirth: uploadItem.recipientDateOfBirth ? uploadItem.recipientDateOfBirth.slice(0, 10) : "",
+    recipientAllergies: uploadItem.recipientAllergies || "",
+    recipientConditions: uploadItem.recipientConditions || "",
+    estimateItems: JSON.stringify(estimateItems),
+  });
+  return `/prescriptions?${params.toString()}`;
 };
 const liquidUnits = ["ml", "millilitre", "milliliter", "l", "litre", "liter"];
 const isLiquidProduct = (product: any) =>
@@ -94,9 +162,12 @@ export function PrescriptionUploadsPage() {
   const { user } = useAuth();
   const patient = user!.role === "PATIENT";
   const admin = user!.role === "ADMIN";
+  const cashier = user!.role === "CASHIER";
+  const pharmacist = user!.role === "PHARMACIST";
   const [rows, setRows] = useState<Upload[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [retailProducts, setRetailProducts] = useState<any[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -109,6 +180,24 @@ export function PrescriptionUploadsPage() {
     null,
   );
   const [statusFilter, setStatusFilter] = useState("");
+  const fitDocumentViewer = useCallback(() => {
+    const availableHeight = Math.max(320, Math.min(760, window.innerHeight - 230));
+    setDocumentViewerHeight(availableHeight);
+  }, []);
+  // Patient: submit bank-transfer slip
+  const [slipUploadItem, setSlipUploadItem] = useState<Upload | null>(null);
+  const [slipForm, setSlipForm] = useState<{
+    file: File | null;
+    declaredAmount: string;
+    bankAccountId: string;
+    reference: string;
+    paidOn: string;
+    note: string;
+  }>({ file: null, declaredAmount: "", bankAccountId: "", reference: "", paidOn: "", note: "" });
+  // Cashier: review a slip
+  const [slipReviewItem, setSlipReviewItem] = useState<{ upload: Upload; slip: UploadSlip } | null>(null);
+  const [slipReviewUrl, setSlipReviewUrl] = useState("");
+  const [slipReviewForm, setSlipReviewForm] = useState({ reason: "" });
   const [uploadForm, setUploadForm] = useState<{
     file: File | null;
     prescriptionText: string;
@@ -118,7 +207,20 @@ export function PrescriptionUploadsPage() {
     recipientName: string;
     recipientRelationship: string;
     recipientDateOfBirth: string;
-  }>({ file: null, prescriptionText: "", patientNote: "", prepareRequested: true, orderedForSelf: true, recipientName: "", recipientRelationship: "", recipientDateOfBirth: "" });
+    recipientAllergies: string;
+    recipientConditions: string;
+  }>({
+    file: null,
+    prescriptionText: "",
+    patientNote: "",
+    prepareRequested: true,
+    orderedForSelf: true,
+    recipientName: "",
+    recipientRelationship: "",
+    recipientDateOfBirth: "",
+    recipientAllergies: "",
+    recipientConditions: "",
+  });
   const [reviewForm, setReviewForm] = useState({
     status: "AVAILABLE",
     availabilityNotes: "",
@@ -128,11 +230,17 @@ export function PrescriptionUploadsPage() {
   const [estimateQuote, setEstimateQuote] = useState<any>(null);
   const [estimateBusy, setEstimateBusy] = useState(false);
   const [estimateError, setEstimateError] = useState("");
+  const [cancelModal, setCancelModal] = useState<{ upload: Upload; reason: string } | null>(null);
   const [retentionDays, setRetentionDays] = useState(30);
+  const [savedRetentionDays, setSavedRetentionDays] = useState(30);
+  const [retentionEditing, setRetentionEditing] = useState(false);
+  const [deadlineEditingId, setDeadlineEditingId] = useState<number | null>(null);
+  const [deadlineDraft, setDeadlineDraft] = useState("");
+  const [deadlineSavingId, setDeadlineSavingId] = useState<number | null>(null);
   const load = useCallback(async () => {
     try {
       setError("");
-      const response = await api.get("/prescription-uploads");
+      const response = await pagedList("/prescription-uploads");
       setRows(response.data.data);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -142,7 +250,9 @@ export function PrescriptionUploadsPage() {
   }, []);
   useEffect(() => {
     load();
-    if (!patient)
+    // Load bank accounts for patient slip upload & cashier review
+    api.get("/bank-accounts").then((r) => setBankAccounts(r.data.data.filter((a: any) => a.active))).catch(() => undefined);
+    if (!patient && !cashier)
       api
         .get("/catalog/products")
         .then((response) => {
@@ -165,14 +275,19 @@ export function PrescriptionUploadsPage() {
     if (admin)
       api
         .get("/prescription-uploads/retention")
-        .then((response) => setRetentionDays(response.data.data.days))
+        .then((response) => {
+          setRetentionDays(response.data.data.days);
+          setSavedRetentionDays(response.data.data.days);
+        })
         .catch(() => undefined);
-  }, [load, admin, patient]);
+  }, [load, admin, patient, cashier]);
   const saveRetention = async () => {
     setBusy(true);
     setError("");
     try {
       await api.put("/prescription-uploads/retention", { days: retentionDays });
+      setSavedRetentionDays(retentionDays);
+      setRetentionEditing(false);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -181,20 +296,130 @@ export function PrescriptionUploadsPage() {
   };
   const acceptEstimate = async (item: Upload) => {
     try {
-      await api.put(`/prescription-uploads/${item.id}/accept`);
+      await api.put(`/prescription-uploads/${item.id}/accept`, { revision: item.quoteRevision });
       await load();
     } catch (caught) {
       setError(errorMessage(caught));
     }
   };
   const saveDeadline = async (item: Upload, value: string) => {
+    if (!value) return;
+    setDeadlineSavingId(item.id);
+    setError("");
     try {
       await api.put(`/prescription-uploads/${item.id}/deletion-deadline`, {
         deleteAt: `${value}T23:59:59`,
       });
       await load();
+      setDeadlineEditingId(null);
+      setDeadlineDraft("");
     } catch (caught) {
       setError(errorMessage(caught));
+    } finally {
+      setDeadlineSavingId(null);
+    }
+  };
+  const sendQuotation = async (item: Upload) => {
+    setBusy(true);
+    setError("");
+    try {
+      await api.put(`/prescription-uploads/${item.id}/send-quotation`);
+      closeReview();
+      await load();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Patient: open slip upload modal
+  const openSlipUpload = (item: Upload) => {
+    setSlipForm({ file: null, declaredAmount: "", bankAccountId: "", reference: "", paidOn: "", note: "" });
+    setSlipUploadItem(item);
+    setError("");
+  };
+  const submitSlip = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!slipUploadItem || !slipForm.file) return setError("Select a file for the bank transfer receipt.");
+    if (!slipForm.declaredAmount || Number(slipForm.declaredAmount) <= 0) return setError("Enter the amount you transferred.");
+    if (slipForm.file.size > 2_500_000) return setError("File must be 2.5 MB or smaller.");
+    if (!["application/pdf", "image/jpeg", "image/png", "image/webp"].includes(slipForm.file.type))
+      return setError("Upload a PDF, JPEG, PNG, or WebP file.");
+    setBusy(true);
+    setError("");
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(slipForm.file!);
+      });
+      await api.post(`/prescription-uploads/${slipUploadItem.id}/slip`, {
+        originalName: slipForm.file.name,
+        mimeType: slipForm.file.type,
+        fileBase64: dataUrl.split(",")[1],
+        declaredAmount: Number(slipForm.declaredAmount),
+        bankAccountId: slipForm.bankAccountId ? Number(slipForm.bankAccountId) : null,
+        reference: slipForm.reference || null,
+        paidOn: slipForm.paidOn || null,
+        note: slipForm.note || null,
+      });
+      setSlipUploadItem(null);
+      await load();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Cashier: open slip review modal
+  const openSlipReview = async (upload: Upload, slip: UploadSlip) => {
+    setSlipReviewItem({ upload, slip });
+    setSlipReviewForm({ reason: "" });
+    setSlipReviewUrl("");
+    setError("");
+    try {
+      const response = await api.get(`/prescription-uploads/${upload.id}/slips/${slip.id}/file`, { responseType: "blob" });
+      setSlipReviewUrl(URL.createObjectURL(response.data));
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
+  };
+  const closeSlipReview = () => {
+    if (slipReviewUrl) URL.revokeObjectURL(slipReviewUrl);
+    setSlipReviewUrl("");
+    setSlipReviewItem(null);
+  };
+  const approveSlip = async () => {
+    if (!slipReviewItem) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/prescription-uploads/${slipReviewItem.upload.id}/slips/${slipReviewItem.slip.id}/review`, { approved: true });
+      closeSlipReview();
+      await load();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const rejectSlip = async () => {
+    if (!slipReviewItem) return;
+    if (!slipReviewForm.reason.trim() || slipReviewForm.reason.trim().length < 3) {
+      setError("Enter a rejection reason.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/prescription-uploads/${slipReviewItem.upload.id}/slips/${slipReviewItem.slip.id}/review`, { approved: false, reason: slipReviewForm.reason.trim() });
+      closeSlipReview();
+      await load();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -241,9 +466,22 @@ export function PrescriptionUploadsPage() {
         recipientName: uploadForm.orderedForSelf ? null : uploadForm.recipientName,
         recipientRelationship: uploadForm.orderedForSelf ? null : uploadForm.recipientRelationship,
         recipientDateOfBirth: uploadForm.orderedForSelf ? null : uploadForm.recipientDateOfBirth,
+        recipientAllergies: uploadForm.orderedForSelf ? null : (uploadForm.recipientAllergies.trim() || null),
+        recipientConditions: uploadForm.orderedForSelf ? null : (uploadForm.recipientConditions.trim() || null),
       });
       setUploadOpen(false);
-      setUploadForm({ file: null, prescriptionText: "", patientNote: "", prepareRequested: true, orderedForSelf: true, recipientName: "", recipientRelationship: "", recipientDateOfBirth: "" });
+      setUploadForm({
+        file: null,
+        prescriptionText: "",
+        patientNote: "",
+        prepareRequested: true,
+        orderedForSelf: true,
+        recipientName: "",
+        recipientRelationship: "",
+        recipientDateOfBirth: "",
+        recipientAllergies: "",
+        recipientConditions: "",
+      });
       await load();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -254,6 +492,7 @@ export function PrescriptionUploadsPage() {
 
   const openFile = async (item: Upload) => {
     try {
+      fitDocumentViewer();
       const response = await api.get(`/prescription-uploads/${item.id}/file`, {
         responseType: "blob",
       });
@@ -278,9 +517,17 @@ export function PrescriptionUploadsPage() {
   };
   const openReview = async (item: Upload) => {
     setError("");
+    fitDocumentViewer();
     setReview(item);
     setReviewForm({
-      status: item.status === "PENDING" ? "AVAILABLE" : item.status,
+      status:
+        item.status === "PENDING"
+          ? "AVAILABLE"
+          : ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status)
+            ? item.availabilityNotes?.toLowerCase().includes("some")
+              ? "PARTIALLY_AVAILABLE"
+              : "AVAILABLE"
+            : item.status,
       availabilityNotes: item.availabilityNotes || "",
       estimatedTotal: item.estimatedTotal || "",
     });
@@ -324,7 +571,6 @@ export function PrescriptionUploadsPage() {
     const items = [...estimateForm.items];
     items[index] = { ...items[index], [field]: value };
     setEstimateForm({ ...estimateForm, items });
-    setEstimateQuote(null);
     setEstimateError("");
   };
   const updateEstimateRetailItem = (
@@ -335,7 +581,6 @@ export function PrescriptionUploadsPage() {
     const retailItems = [...estimateForm.retailItems];
     retailItems[index] = { ...retailItems[index], [field]: value };
     setEstimateForm({ ...estimateForm, retailItems });
-    setEstimateQuote(null);
     setEstimateError("");
   };
   const updateBottleFee = (
@@ -352,7 +597,6 @@ export function PrescriptionUploadsPage() {
         ? Number((bottleCount * bottleFeePerBottle).toFixed(2))
         : 0,
     });
-    setEstimateQuote(null);
   };
   const selectedEstimateProducts = estimateForm.items
     .map((item: any) =>
@@ -426,6 +670,11 @@ export function PrescriptionUploadsPage() {
         current
           ? {
               ...current,
+              status: ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(current.status)
+                ? response.data.data.allMedicinesInStock
+                  ? "AVAILABLE"
+                  : "PARTIALLY_AVAILABLE"
+                : current.status,
               estimatedTotal: String(response.data.data.total),
               estimateDetails,
             }
@@ -436,6 +685,11 @@ export function PrescriptionUploadsPage() {
           item.id === review.id
             ? {
                 ...item,
+                status: ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status)
+                  ? response.data.data.allMedicinesInStock
+                    ? "AVAILABLE"
+                    : "PARTIALLY_AVAILABLE"
+                  : item.status,
                 estimatedTotal: String(response.data.data.total),
                 estimateDetails,
               }
@@ -447,6 +701,48 @@ export function PrescriptionUploadsPage() {
       setEstimateError(errorMessage(caught));
     } finally {
       setEstimateBusy(false);
+    }
+  };
+  const calculateEstimateRef = useRef(calculateEstimate);
+  calculateEstimateRef.current = calculateEstimate;
+
+  useEffect(() => {
+    if (!review?.id) return;
+    const hasItems = estimateForm.items?.some(
+      (item: any) => item.productId && Number(item.quantity) > 0,
+    );
+    if (!hasItems) return;
+    const timer = window.setTimeout(() => {
+      calculateEstimateRef.current();
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [
+    review?.id,
+    estimateForm.items,
+    estimateForm.retailItems,
+    estimateForm.couponCode,
+    estimateForm.addBottleFee,
+    estimateForm.containerFee,
+    estimateForm.bottleCount,
+    estimateForm.bottleFeePerBottle,
+    estimateForm.tax,
+  ]);
+
+  const submitCancelUpload = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!cancelModal) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/prescription-uploads/${cancelModal.upload.id}/cancel`, {
+        reason: cancelModal.reason || "Cancelled by customer",
+      });
+      setCancelModal(null);
+      await load();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
     }
   };
   const submitReview = async (event: FormEvent) => {
@@ -493,7 +789,7 @@ export function PrescriptionUploadsPage() {
     }
   };
   const filtered = statusFilter
-    ? rows.filter((item) => item.status === statusFilter)
+    ? rows.filter((item) => (item.prescription?.paymentRequest?.status || item.status) === statusFilter)
     : rows;
   if (loading) return <Loading />;
 
@@ -522,6 +818,8 @@ export function PrescriptionUploadsPage() {
                 recipientName: "",
                 recipientRelationship: "",
                 recipientDateOfBirth: "",
+                recipientAllergies: "",
+                recipientConditions: "",
               });
               setUploadOpen(true);
             }}
@@ -544,6 +842,7 @@ export function PrescriptionUploadsPage() {
                   min="1"
                   max="365"
                   value={retentionDays}
+                  disabled={!retentionEditing || busy}
                   onChange={(event) =>
                     setRetentionDays(Number(event.target.value))
                   }
@@ -551,16 +850,21 @@ export function PrescriptionUploadsPage() {
                 <span className="input-group-text">days</span>
               </div>
             </div>
-            <button
-              className="btn btn-outline-primary"
-              disabled={busy}
-              onClick={saveRetention}
-            >
-              Save retention policy
-            </button>
+            {!retentionEditing ? (
+              <button type="button" className="btn btn-outline-primary" onClick={() => setRetentionEditing(true)}>
+                <i className="bi bi-pencil me-2" />Edit retention policy
+              </button>
+            ) : (
+              <div className="d-flex gap-2">
+                <button type="button" className="btn btn-light" disabled={busy} onClick={() => { setRetentionDays(savedRetentionDays); setRetentionEditing(false); }}>Cancel</button>
+                <button type="button" className="btn btn-primary" disabled={busy || retentionDays < 1 || retentionDays > 365 || retentionDays === savedRetentionDays} onClick={saveRetention}>
+                  <i className="bi bi-check-lg me-2" />{busy ? "Saving…" : "Save policy"}
+                </button>
+              </div>
+            )}
             <small className="text-secondary">
-              New uploads use this automatic deletion deadline. Individual
-              deadlines can be changed on each card.
+              This deadline removes attachments only after active orders are resolved.
+              Order and payment history are retained. Individual deadlines can be changed on each card.
             </small>
           </div>
         </div>
@@ -574,10 +878,20 @@ export function PrescriptionUploadsPage() {
         >
           <option value="">All statuses</option>
           <option value="PENDING">Awaiting review</option>
-          <option value="AVAILABLE">Available</option>
+          <option value="AVAILABLE">Available — awaiting quotation</option>
           <option value="PARTIALLY_AVAILABLE">Partially available</option>
           <option value="UNAVAILABLE">Unavailable</option>
           <option value="REJECTED">Rejected</option>
+          <option value="QUOTE_SENT">Quotation sent — awaiting customer</option>
+          <option value="QUOTE_ACCEPTED">Quotation accepted — prepare final bill</option>
+          <option value="PAYMENT_PENDING">Final invoice issued — payment action pending</option>
+          <option value="AWAITING_PAYMENT">Final invoice — awaiting payment</option>
+          <option value="SLIP_SUBMITTED">Final invoice — bank slip to check</option>
+          <option value="PAID">Paid — awaiting collection</option>
+          <option value="FULFILLED">Collected</option>
+          <option value="CANCELLED">Invoice cancelled</option>
+          <option value="PAYMENT_SUBMITTED">Bank slip submitted — awaiting cashier</option>
+          <option value="READY_TO_PREPARE">Payment verified — ready to prepare</option>
         </select>
         <span>{filtered.length} request(s)</span>
       </div>
@@ -598,12 +912,40 @@ export function PrescriptionUploadsPage() {
                     : `${item.patient.fullName} · ${item.patient.email} · ${new Date(item.createdAt).toLocaleString()}`}
                 </small>
               </div>
-              <Status value={item.status} />
+              {item.prescription?.paymentRequest ? <div className="text-end"><small className="d-block">Current invoice</small><Status value={item.prescription.paymentRequest.status} /></div> : <UploadStatus value={item.status} />}
             </div>
             {item.patientNote && (
               <div className="upload-note">
                 <small>Patient note</small>
                 <p>{item.patientNote}</p>
+              </div>
+            )}
+            {!item.orderedForSelf && (
+              <div className="alert alert-light border small mt-2 mb-0 py-2">
+                <div className="d-flex align-items-center justify-content-between">
+                  <span className="fw-semibold text-primary">
+                    <i className="bi bi-person-fill me-1" />
+                    Recipient: {item.recipientName} ({item.recipientRelationship})
+                    {item.recipientDateOfBirth ? ` · Age ${ageFromDob(item.recipientDateOfBirth)}` : ""}
+                  </span>
+                  <span className="badge bg-secondary-subtle text-secondary">For someone else</span>
+                </div>
+                {(item.recipientAllergies || item.recipientConditions) && (
+                  <div className="d-flex flex-wrap gap-2 mt-1">
+                    {item.recipientAllergies && (
+                      <span className="badge bg-danger-subtle text-danger border border-danger-subtle">
+                        <i className="bi bi-shield-exclamation me-1" />
+                        Allergies: {item.recipientAllergies}
+                      </span>
+                    )}
+                    {item.recipientConditions && (
+                      <span className="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
+                        <i className="bi bi-heart-pulse me-1" />
+                        Conditions: {item.recipientConditions}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
             <div
@@ -623,10 +965,26 @@ export function PrescriptionUploadsPage() {
             </div>
             <div className="availability-box">
               <div>
-                <small>Medicine availability</small>
+                <small>Availability review</small>
                 <strong>
                   {item.status === "PENDING"
                     ? "Waiting for pharmacist review"
+                    : item.status === "AVAILABLE"
+                    ? "All requested medicines are currently in stock"
+                    : item.status === "PARTIALLY_AVAILABLE"
+                    ? "Only some requested medicines are currently in stock"
+                    : item.status === "UNAVAILABLE"
+                    ? "Requested medicines are currently unavailable"
+                    : item.status === "QUOTE_SENT"
+                    ? "Pharmacy quotation sent — awaiting your decision"
+                    : item.status === "QUOTE_ACCEPTED"
+                    ? "Quotation approved — pharmacist is preparing the final invoice"
+                    : item.status === "PAYMENT_PENDING"
+                    ? "Final invoice issued — review it under Sales & billing"
+                    : item.status === "PAYMENT_SUBMITTED"
+                    ? "Bank slip submitted — awaiting cashier verification"
+                    : item.status === "READY_TO_PREPARE"
+                    ? "Payment verified — pharmacy preparing your medicines"
                     : item.status.replaceAll("_", " ").toLowerCase()}
                 </strong>
               </div>
@@ -649,16 +1007,147 @@ export function PrescriptionUploadsPage() {
             )}
             {patient &&
               item.estimatedTotal != null &&
-              !item.prepareRequested &&
-              ["AVAILABLE", "PARTIALLY_AVAILABLE"].includes(item.status) && (
+              item.status === "QUOTE_SENT" && (
+                <div className="alert alert-info small mt-2 mb-0">
+                  <strong>Decision required:</strong> Approve this estimate only if you want the pharmacist to prepare the final prescription invoice. No payment or stock reservation happens at this stage.
+                  <div className="mt-2">
+                    <button
+                      className="btn btn-sm btn-success"
+                      onClick={() => acceptEstimate(item)}
+                    >
+                      <i className="bi bi-check-circle me-1" />
+                      Approve quotation &amp; request processing
+                    </button>
+                  </div>
+                </div>
+              )}
+            {/* Patient: decline or cancel quotation / request */}
+            {patient &&
+              !item.prescription &&
+              ["PENDING", "AVAILABLE", "PARTIALLY_AVAILABLE", "QUOTE_SENT", "QUOTE_ACCEPTED", "PAYMENT_PENDING", "PAYMENT_SUBMITTED"].includes(
+                item.status,
+              ) && (
                 <button
-                  className="btn btn-sm btn-success mt-2"
-                  onClick={() => acceptEstimate(item)}
+                  type="button"
+                  className="btn btn-sm btn-outline-danger mt-2"
+                  onClick={() => {
+                    setError("");
+                    setCancelModal({ upload: item, reason: "" });
+                  }}
                 >
-                  <i className="bi bi-check-circle me-1" />
-                  Accept — prepare my medicines
+                  <i className="bi bi-x-circle me-1" />
+                  {["QUOTE_SENT", "QUOTE_ACCEPTED", "PAYMENT_PENDING", "PAYMENT_SUBMITTED"].includes(item.status)
+                    ? "Decline quote & cancel"
+                    : "Cancel request"}
                 </button>
               )}
+            {/* Patient: bank-transfer slip upload */}
+            {patient && item.prescription?.paymentRequest?.status === "AWAITING_PAYMENT" && (
+              <div className="alert alert-info small mt-2 mb-0">
+                <i className="bi bi-receipt me-2" />
+                The pharmacist has issued the final invoice. Open <strong>Sales &amp; billing</strong> to acknowledge the latest invoice, choose cash or bank transfer, and continue payment.
+              </div>
+            )}
+            {patient && item.prescription?.paymentRequest?.status === 'FULFILLED' && <div className="alert alert-success mt-3">Order collected. View the final invoice under Sales &amp; billing.</div>}
+            {patient && item.prescription?.paymentRequest?.status === 'PAID' && <div className="alert alert-info mt-3">Payment confirmed. Your collection receipt is available under Sales &amp; billing.</div>}
+            {patient && item.prescription?.paymentRequest?.status === 'CANCELLED' && <div className="alert alert-warning mt-3">Invoice cancelled. View cancellation and refund details under Sales &amp; billing.</div>}
+            {patient && !item.prescription && ["PAYMENT_PENDING", "PAYMENT_SUBMITTED"].includes(item.status) && (
+              <div className="mt-2">
+                {item.status === "PAYMENT_PENDING" ? (
+                  <div className="alert alert-info small">
+                    <i className="bi bi-bank me-2" />
+                    <strong>Action required:</strong> Please pay <strong>{money(item.estimatedTotal)}</strong> by bank transfer to one of our accounts, then upload your receipt below.
+                  </div>
+                ) : (
+                  <div className="alert alert-success small">
+                    <i className="bi bi-hourglass-split me-2" />
+                    Your bank transfer receipt has been submitted and is being verified by our cashier. We will prepare your medicines once confirmed.
+                  </div>
+                )}
+                {bankAccounts.length > 0 && item.status === "PAYMENT_PENDING" && (
+                  <div className="bank-account-list mb-2">
+                    {bankAccounts.map((ba: any) => (
+                      <div key={ba.id} className="bank-account-card">
+                        <i className="bi bi-bank" />
+                        <div>
+                          <strong>{ba.bankName}</strong>
+                          <small>{ba.accountName} · {ba.accountNumber}{ba.branch ? ` · ${ba.branch}` : ""}</small>
+                          {ba.instructions && <small className="text-secondary">{ba.instructions}</small>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <button
+                  className="btn btn-sm btn-primary"
+                  onClick={() => openSlipUpload(item)}
+                >
+                  <i className="bi bi-upload me-1" />
+                  {item.status === "PAYMENT_SUBMITTED" ? "Re-upload receipt" : "Upload bank transfer receipt"}
+                </button>
+                {/* Show previously submitted slips */}
+                {item.paymentSlips && item.paymentSlips.length > 0 && (
+                  <div className="mt-2">
+                    {item.paymentSlips.map((slip) => (
+                      <div key={slip.id} className={`slip-status-badge slip-${slip.status.toLowerCase()}`}>
+                        <i className={`bi bi-${slip.status === "VERIFIED" ? "check-circle" : slip.status === "REJECTED" ? "x-circle" : "clock"} me-1`} />
+                        Receipt {slip.status.toLowerCase()} · {money(slip.declaredAmount)}
+                        {slip.status === "REJECTED" && slip.rejectionReason && (
+                          <span className="ms-2 text-danger">Reason: {slip.rejectionReason}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {/* Cashier: slip review section */}
+            {(cashier || admin || pharmacist) && item.status === "PAYMENT_SUBMITTED" && item.paymentSlips && item.paymentSlips.some((s) => s.status === "PENDING") && (
+              <div className="mt-2">
+                <div className="alert alert-warning small">
+                  <i className="bi bi-receipt me-2" />
+                  <strong>Action required:</strong> Customer has submitted a bank transfer receipt. Please verify it before the pharmacy prepares the medicines.
+                </div>
+                {item.paymentSlips.filter((s) => s.status === "PENDING").map((slip) => (
+                  <div key={slip.id} className="d-flex align-items-center gap-2 flex-wrap">
+                    <div className="flex-grow-1">
+                      <small>Declared: <strong>{money(slip.declaredAmount)}</strong></small>
+                      {slip.reference && <small className="ms-2">Ref: {slip.reference}</small>}
+                      {slip.bankAccount && <small className="ms-2">{slip.bankAccount.bankName} · {slip.bankAccount.accountNumber}</small>}
+                    </div>
+                    {(cashier || admin) && (
+                      <button
+                        className="btn btn-sm btn-warning"
+                        onClick={() => openSlipReview(item, slip)}
+                      >
+                        <i className="bi bi-eye me-1" />
+                        Review slip
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Pharmacist: ready to prepare badge */}
+            {!patient && item.status === "READY_TO_PREPARE" && !item.prescription && (
+              <div className="alert alert-success small mt-2">
+                <i className="bi bi-check-circle-fill me-2" />
+                <strong>Payment verified by cashier.</strong> Please prepare the medicines and create the prescription order.
+              </div>
+            )}
+            {item.prescription && (
+              <div className="mt-2 p-2 rounded bg-light border">
+                <small className="text-secondary d-block fw-semibold">
+                  <i className="bi bi-file-earmark-medical me-1" /> Linked Prescription
+                </small>
+                <strong>{item.prescription.prescriptionNumber}</strong> · <Status value={item.prescription.status} />
+                {item.prescription.paymentRequest && (
+                  <div className="mt-2"><strong>Current invoice: </strong><Status value={item.prescription.paymentRequest.status} />
+                    {item.prescription.paymentRequest.status === "AWAITING_PAYMENT" && <small className="d-block">{item.prescription.paymentRequest.acknowledgedRevision !== item.prescription.paymentRequest.revision ? "Awaiting customer approval of the latest invoice" : "Customer approved — awaiting payment"}</small>}
+                  </div>
+                )}
+              </div>
+            )}
             {item.availabilityNotes && (
               <p className="review-note">{item.availabilityNotes}</p>
             )}
@@ -672,30 +1161,46 @@ export function PrescriptionUploadsPage() {
             )}
             <div className="mt-2">
               <small className="text-secondary">
-                Automatic deletion:{" "}
+                {item.attachmentRemovedAt ? "Attachment removed; order history retained. Scheduled date: " : "Attachment retention deadline (deferred for active orders): "}
                 {item.deleteAt
                   ? new Date(item.deleteAt).toLocaleString()
                   : "Not scheduled"}
               </small>
-              {admin && (
-                <input
-                  className="form-control form-control-sm mt-1"
-                  type="date"
-                  min={new Date().toISOString().slice(0, 10)}
-                  value={item.deleteAt?.slice(0, 10) || ""}
-                  onChange={(event) => saveDeadline(item, event.target.value)}
-                />
+              {admin && !item.attachmentRemovedAt && deadlineEditingId !== item.id && (
+                <button type="button" className="btn btn-sm btn-link px-0 mt-1 d-block" onClick={() => { setDeadlineEditingId(item.id); setDeadlineDraft(item.deleteAt?.slice(0, 10) || ""); }}>
+                  <i className="bi bi-pencil me-1" />Edit deletion date
+                </button>
+              )}
+              {admin && deadlineEditingId === item.id && (
+                <div className="deadline-editor mt-2">
+                  <label className="form-label small mb-1">New deletion date</label>
+                  <input
+                    className="form-control form-control-sm"
+                    type="date"
+                    min={new Date().toISOString().slice(0, 10)}
+                    value={deadlineDraft}
+                    disabled={deadlineSavingId === item.id}
+                    onChange={(event) => setDeadlineDraft(event.target.value)}
+                  />
+                  <div className="d-flex gap-2 mt-2">
+                    <button type="button" className="btn btn-sm btn-light" disabled={deadlineSavingId === item.id} onClick={() => { setDeadlineEditingId(null); setDeadlineDraft(""); }}>Cancel</button>
+                    <button type="button" className="btn btn-sm btn-primary" disabled={!deadlineDraft || deadlineDraft === item.deleteAt?.slice(0, 10) || deadlineSavingId === item.id} onClick={() => saveDeadline(item, deadlineDraft)}>
+                      {deadlineSavingId === item.id ? "Saving…" : "Save date"}
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
-            <div className="d-flex gap-2 mt-3">
+            <div className="d-flex gap-2 mt-3 flex-wrap">
               <button
                 className="btn btn-sm btn-outline-secondary"
                 onClick={() => openFile(item)}
+                disabled={Boolean(item.attachmentRemovedAt)}
               >
                 <i className="bi bi-eye me-1" />
                 View prescription
               </button>
-              {!patient && (
+              {!patient && !cashier && item.status === "PENDING" && (
                 <button
                   className="btn btn-sm btn-primary"
                   onClick={() => openReview(item)}
@@ -704,6 +1209,39 @@ export function PrescriptionUploadsPage() {
                   Review availability
                 </button>
               )}
+              {!patient && !cashier && ["AVAILABLE", "PARTIALLY_AVAILABLE", "QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status) && !item.prescription && (
+                <button
+                  className="btn btn-sm btn-outline-success"
+                  onClick={() => openReview(item)}
+                >
+                  <i className="bi bi-send me-1" />
+                  Edit / Send quotation
+                </button>
+              )}
+              {!patient && !cashier && item.status === "READY_TO_PREPARE" && !item.prescription && (
+                <button
+                  className="btn btn-sm btn-success"
+                  onClick={() => {
+                    const estimateItems = item.estimateDetails?.input?.items || [];
+                    navigate(buildPrescriptionCreateUrl(item, estimateItems));
+                  }}
+                >
+                  <i className="bi bi-file-medical me-1" />
+                  Create prescription
+                </button>
+              )}
+              {!patient && !cashier && item.status === "QUOTE_ACCEPTED" && !item.prescription && (
+                  <button
+                    className="btn btn-sm btn-outline-primary"
+                    onClick={() => {
+                      const estimateItems = item.estimateDetails?.input?.items || [];
+                      navigate(buildPrescriptionCreateUrl(item, estimateItems));
+                    }}
+                  >
+                    <i className="bi bi-file-medical me-1" />
+                    Prepare final prescription &amp; invoice
+                  </button>
+                )}
             </div>
           </article>
         ))}
@@ -730,6 +1268,13 @@ export function PrescriptionUploadsPage() {
             <div className="alert alert-info small">
               Upload a clear PDF/image, type the prescription and retail-item request, or both. The pharmacy will review it; the estimate is not a final invoice.
             </div>
+            <div className="upload-clinical-disclaimer" role="note">
+              <i className="bi bi-shield-exclamation" aria-hidden="true" />
+              <span>
+                It remains explicitly unsuitable for real clinical use without
+                authoritative pharmacist validation.
+              </span>
+            </div>
             <label className="form-label">Prescription file (optional)</label>
             <input className="form-control" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => setUploadForm({ ...uploadForm, file: event.target.files?.[0] || null })} />
             <label className="form-label mt-3">Type prescription / retail items (optional)</label>
@@ -751,12 +1296,151 @@ export function PrescriptionUploadsPage() {
               placeholder="For example: please confirm whether all medicines are available."
             />
             <fieldset className="mt-3">
-              <legend className="form-label">Who is this prescription for?</legend>
+              <legend className="form-label fw-semibold">Who is this prescription for?</legend>
               <div className="recipient-choice-grid">
-                <label className={`preparation-choice ${uploadForm.orderedForSelf ? "selected" : ""}`}><input type="radio" name="recipient" checked={uploadForm.orderedForSelf} onChange={() => setUploadForm({ ...uploadForm, orderedForSelf: true })} /><span><strong>For me</strong><small>I am the patient named on this prescription.</small></span></label>
-                <label className={`preparation-choice ${!uploadForm.orderedForSelf ? "selected" : ""}`}><input type="radio" name="recipient" checked={!uploadForm.orderedForSelf} onChange={() => setUploadForm({ ...uploadForm, orderedForSelf: false })} /><span><strong>For someone else</strong><small>I am uploading this on behalf of another person.</small></span></label>
+                <label className={`preparation-choice ${uploadForm.orderedForSelf ? "selected" : ""}`}>
+                  <input
+                    type="radio"
+                    name="recipient"
+                    checked={uploadForm.orderedForSelf}
+                    onChange={() => setUploadForm({ ...uploadForm, orderedForSelf: true })}
+                  />
+                  <span>
+                    <strong>For me</strong>
+                    <small>I am the patient named on this prescription.</small>
+                  </span>
+                </label>
+                <label className={`preparation-choice ${!uploadForm.orderedForSelf ? "selected" : ""}`}>
+                  <input
+                    type="radio"
+                    name="recipient"
+                    checked={!uploadForm.orderedForSelf}
+                    onChange={() => setUploadForm({ ...uploadForm, orderedForSelf: false })}
+                  />
+                  <span>
+                    <strong>For someone else</strong>
+                    <small>I am uploading this on behalf of another person.</small>
+                  </span>
+                </label>
               </div>
-              {!uploadForm.orderedForSelf && <div className="row g-2 mt-1"><div className="col-sm-5"><label className="form-label">Recipient full name</label><input className="form-control" placeholder="Full name" value={uploadForm.recipientName} onChange={(event) => setUploadForm({ ...uploadForm, recipientName: event.target.value })} required /></div><div className="col-sm-3"><label className="form-label">Relationship</label><input className="form-control" placeholder="e.g. Child" value={uploadForm.recipientRelationship} onChange={(event) => setUploadForm({ ...uploadForm, recipientRelationship: event.target.value })} required /></div><div className="col-sm-4"><label className="form-label">Recipient age (years)</label><input className="form-control" type="number" min={0} max={130} step={1} value={ageFromDob(uploadForm.recipientDateOfBirth)} onChange={(event) => setUploadForm({ ...uploadForm, recipientDateOfBirth: event.target.value === "" ? "" : dobFromAge(Number(event.target.value)) })} required /><small className="text-secondary">Used for medicine age checks.</small></div></div>}
+
+              {!uploadForm.orderedForSelf && (
+                <div className="recipient-details-card p-3 mt-3">
+                  <div className="recipient-details-heading">
+                    <span className="recipient-details-title">
+                      <i className="bi bi-person-heart" />
+                      Recipient Information &amp; Clinical Safety
+                    </span>
+                    <span className="recipient-required-badge">
+                      Required for safe dispensing
+                    </span>
+                  </div>
+
+                  <div className="recipient-identity-grid">
+                    <div className="recipient-name-field">
+                      <label className="form-label small mb-1">
+                        Recipient full name <span className="text-danger">*</span>
+                      </label>
+                      <input
+                        className="form-control"
+                        placeholder="Full name"
+                        value={uploadForm.recipientName}
+                        onChange={(event) =>
+                          setUploadForm({ ...uploadForm, recipientName: event.target.value })
+                        }
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="form-label small mb-1">
+                        Relationship <span className="text-danger">*</span>
+                      </label>
+                      <input
+                        className="form-control"
+                        placeholder="e.g. Child, Parent"
+                        list="upload-recipient-relationships"
+                        value={uploadForm.recipientRelationship}
+                        onChange={(event) =>
+                          setUploadForm({
+                            ...uploadForm,
+                            recipientRelationship: event.target.value,
+                          })
+                        }
+                        required
+                      />
+                      <datalist id="upload-recipient-relationships">
+                        <option value="Child" />
+                        <option value="Parent" />
+                        <option value="Spouse" />
+                        <option value="Sibling" />
+                        <option value="Relative" />
+                        <option value="Carer" />
+                        <option value="Other" />
+                      </datalist>
+                    </div>
+                    <div>
+                      <label className="form-label small mb-1">
+                        Recipient age <span className="text-danger">*</span>
+                      </label>
+                      <div className="input-group recipient-age-input">
+                        <input
+                          className="form-control"
+                          type="number"
+                          min={0}
+                          max={130}
+                          step={1}
+                          placeholder="Age"
+                          value={ageFromDob(uploadForm.recipientDateOfBirth)}
+                          onChange={(event) =>
+                            setUploadForm({
+                              ...uploadForm,
+                              recipientDateOfBirth:
+                                event.target.value === ""
+                                  ? ""
+                                  : dobFromAge(Number(event.target.value)),
+                            })
+                          }
+                          required
+                        />
+                        <span className="input-group-text small">years</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="recipient-clinical-grid">
+                    <div className="recipient-clinical-field recipient-clinical-field--allergy">
+                      <label className="form-label small mb-1 text-danger-emphasis d-flex align-items-center gap-1">
+                        <i className="bi bi-shield-exclamation text-danger" />
+                        Known allergies
+                      </label>
+                      <input
+                        className="form-control"
+                        placeholder="e.g. Penicillin, Aspirin, or None"
+                        value={uploadForm.recipientAllergies}
+                        onChange={(event) =>
+                          setUploadForm({ ...uploadForm, recipientAllergies: event.target.value })
+                        }
+                      />
+                      <small className="text-secondary d-block mt-1">Helps pharmacist check for allergy risks.</small>
+                    </div>
+                    <div className="recipient-clinical-field recipient-clinical-field--condition">
+                      <label className="form-label small mb-1 text-warning-emphasis d-flex align-items-center gap-1">
+                        <i className="bi bi-heart-pulse text-warning" />
+                        Chronic illnesses / conditions
+                      </label>
+                      <input
+                        className="form-control"
+                        placeholder="e.g. Asthma, Diabetes, Hypertension, or None"
+                        value={uploadForm.recipientConditions}
+                        onChange={(event) =>
+                          setUploadForm({ ...uploadForm, recipientConditions: event.target.value })
+                        }
+                      />
+                      <small className="text-secondary d-block mt-1">Helps pharmacist verify drug interactions.</small>
+                    </div>
+                  </div>
+                </div>
+              )}
             </fieldset>
             <fieldset className="mt-3">
               <legend className="form-label">
@@ -821,45 +1505,83 @@ export function PrescriptionUploadsPage() {
                 <strong>Submitted prescription</strong>
                 <div className="btn-group btn-group-sm" aria-label="Document size">
                   <button type="button" className="btn btn-outline-secondary" onClick={() => setDocumentViewerHeight((height) => Math.max(320, height - 140))} title="Make viewer shorter"><i className="bi bi-dash-lg" /></button>
-                  <button type="button" className="btn btn-outline-secondary" onClick={() => setDocumentViewerHeight(620)}>Fit</button>
+                  <button type="button" className="btn btn-outline-secondary" onClick={fitDocumentViewer} title="Fit document to window">Fit</button>
                   <button type="button" className="btn btn-outline-secondary" onClick={() => setDocumentViewerHeight((height) => Math.min(1000, height + 140))} title="Make viewer taller"><i className="bi bi-plus-lg" /></button>
                   <button type="button" className="btn btn-outline-secondary" onClick={() => openFile(review)} title="Open full size"><i className="bi bi-arrows-fullscreen" /></button>
                 </div>
               </div>
               {reviewText ? (
                 <pre className="prescription-text-viewer" style={{ height: documentViewerHeight }}>{reviewText}</pre>
+              ) : reviewUrl && isImageUpload(review.mimeType) ? (
+                <img className="prescription-document-image" src={reviewUrl} alt={review.originalName} style={{ height: documentViewerHeight }} />
               ) : reviewUrl ? (
-                <iframe src={reviewUrl} title={review.originalName} style={{ height: documentViewerHeight }} />
+                <iframe src={fittedDocumentUrl(reviewUrl, review.mimeType)} title={review.originalName} style={{ height: documentViewerHeight }} />
               ) : (
                 <div className="loading">Loading prescription…</div>
               )}
             </div>
             <form onSubmit={submitReview} className="prescription-review-form">
               {!review.orderedForSelf && (
-                <div className="alert alert-info small">
-                  <strong>Medicine recipient:</strong> {review.recipientName} · {review.recipientRelationship}
-                  <br />
-                  <strong>Age:</strong>{" "}
-                  {review.recipientDateOfBirth
-                    ? `${ageFromDob(review.recipientDateOfBirth)} years`
-                    : "Not provided"}
+                <div className={`alert ${review.recipientAllergies || review.recipientConditions ? "alert-warning" : "alert-info"} small mb-3`}>
+                  <div className="d-flex align-items-center justify-content-between mb-1">
+                    <strong className="d-flex align-items-center gap-1">
+                      <i className="bi bi-person-heart" />
+                      Recipient: {review.recipientName} ({review.recipientRelationship})
+                    </strong>
+                    <span className="badge bg-secondary-subtle text-secondary border">
+                      Third-party order
+                    </span>
+                  </div>
+                  <div>
+                    <strong>Age:</strong>{" "}
+                    {review.recipientDateOfBirth
+                      ? `${ageFromDob(review.recipientDateOfBirth)} years`
+                      : "Not provided"}
+                  </div>
+                  <div className="mt-1">
+                    <strong>Known allergies:</strong>{" "}
+                    {review.recipientAllergies ? (
+                      <span className="text-danger fw-semibold">
+                        <i className="bi bi-shield-exclamation text-danger me-1" />
+                        {review.recipientAllergies}
+                      </span>
+                    ) : (
+                      <span className="text-secondary">None reported</span>
+                    )}
+                  </div>
+                  <div className="mt-1">
+                    <strong>Chronic conditions / illnesses:</strong>{" "}
+                    {review.recipientConditions ? (
+                      <span className="fw-semibold text-warning-emphasis">
+                        <i className="bi bi-heart-pulse text-warning me-1" />
+                        {review.recipientConditions}
+                      </span>
+                    ) : (
+                      <span className="text-secondary">None reported</span>
+                    )}
+                  </div>
                 </div>
               )}
               {review.prepareRequested && (
                 <div className="upload-review-steps-indicator mb-3 p-2 bg-light border rounded d-flex justify-content-around text-center small">
-                  <div className="step-item text-primary fw-bold">
-                    <span className="badge rounded-circle bg-primary me-1">1</span>
+                  <div className={`step-item fw-bold ${review.status === "PENDING" ? "text-primary" : "text-success"}`}>
+                    <span className={`badge rounded-circle me-1 ${review.status === "PENDING" ? "bg-primary" : "bg-success"}`}>1</span>
                     Review scan
                   </div>
                   <div className="step-divider text-secondary align-self-center">&rarr;</div>
-                  <div className="step-item text-primary fw-bold">
-                    <span className="badge rounded-circle bg-primary me-1">2</span>
+                  <div className={`step-item fw-bold ${["AVAILABLE","PARTIALLY_AVAILABLE"].includes(review.status) ? "text-primary" : ["PAYMENT_PENDING","PAYMENT_SUBMITTED","READY_TO_PREPARE"].includes(review.status) ? "text-success" : "text-secondary"}`}>
+                    <span className={`badge rounded-circle me-1 ${["AVAILABLE","PARTIALLY_AVAILABLE"].includes(review.status) ? "bg-primary" : ["PAYMENT_PENDING","PAYMENT_SUBMITTED","READY_TO_PREPARE"].includes(review.status) ? "bg-success" : "bg-secondary"}`}>2</span>
                     Build estimate
                   </div>
                   <div className="step-divider text-secondary align-self-center">&rarr;</div>
-                  <div className="step-item text-primary fw-bold">
-                    <span className="badge rounded-circle bg-primary me-1">3</span>
-                    Create prescription
+                  <div className={`step-item fw-bold ${review.status === "PAYMENT_PENDING" ? "text-primary" : ["PAYMENT_SUBMITTED","READY_TO_PREPARE"].includes(review.status) ? "text-success" : "text-secondary"}`}>
+                    <span className={`badge rounded-circle me-1 ${review.status === "PAYMENT_PENDING" ? "bg-primary" : ["PAYMENT_SUBMITTED","READY_TO_PREPARE"].includes(review.status) ? "bg-success" : "bg-secondary"}`}>3</span>
+                    Send quotation
+                  </div>
+                  <div className="step-divider text-secondary align-self-center">&rarr;</div>
+                  <div className={`step-item fw-bold ${review.status === "READY_TO_PREPARE" ? "text-primary" : "text-secondary"}`}>
+                    <span className={`badge rounded-circle me-1 ${review.status === "READY_TO_PREPARE" ? "bg-primary" : "bg-secondary"}`}>4</span>
+                    Prepare &amp; Create Rx
                   </div>
                 </div>
               )}
@@ -948,14 +1670,14 @@ export function PrescriptionUploadsPage() {
                             <input
                               className="form-control"
                               type="number"
-                              min="0.001"
-                              step="0.001"
+                              min={stockQuantityStep(selectedProduct?.unit)}
+                              step={stockQuantityStep(selectedProduct?.unit)}
                               value={item.quantity}
                               onChange={(event) =>
                                 updateEstimateItem(
                                   index,
                                   "quantity",
-                                  Number(event.target.value),
+                                  event.target.value,
                                 )
                               }
                               required
@@ -1098,19 +1820,19 @@ export function PrescriptionUploadsPage() {
                                   <input
                                     className="form-control"
                                     type="number"
-                                    min="0.001"
+                                    min={stockQuantityStep(selectedProduct?.unit)}
                                     max={
                                       selectedProduct
                                         ? usableStock(selectedProduct)
                                         : undefined
                                     }
-                                    step="0.001"
+                                    step={stockQuantityStep(selectedProduct?.unit)}
                                     value={item.quantity}
                                     onChange={(event) =>
                                       updateEstimateRetailItem(
                                         index,
                                         "quantity",
-                                        Number(event.target.value),
+                                        event.target.value,
                                       )
                                     }
                                     required
@@ -1131,7 +1853,6 @@ export function PrescriptionUploadsPage() {
                                           ) => itemIndex !== index,
                                         ),
                                     });
-                                    setEstimateQuote(null);
                                   }}
                                 >
                                   <i className="bi bi-trash" />
@@ -1233,7 +1954,6 @@ export function PrescriptionUploadsPage() {
                             ...estimateForm,
                             couponCode: event.target.value.toUpperCase(),
                           });
-                          setEstimateQuote(null);
                         }}
                       />
                     </div>
@@ -1252,7 +1972,6 @@ export function PrescriptionUploadsPage() {
                               ...estimateForm,
                               tax: Math.max(0, Number(event.target.value)),
                             });
-                            setEstimateQuote(null);
                           }}
                         />
                       </div>
@@ -1264,7 +1983,7 @@ export function PrescriptionUploadsPage() {
                       onClick={calculateEstimate}
                     >
                       <i className="bi bi-calculator me-1" />
-                      {estimateBusy ? "Calculating…" : "Calculate estimate"}
+                      {estimateBusy ? "Calculating…" : "Recalculate / Verify estimate"}
                     </button>
                   </div>
                   {estimateError && (
@@ -1418,40 +2137,100 @@ export function PrescriptionUploadsPage() {
               </div>
               <div className="alert alert-warning small mt-3 mb-0">
                 This is an availability estimate only. The final invoice is
-                created after pharmacist verification and dispensing.
+                created after the customer approves the quotation and the pharmacist completes clinical verification and final pricing.
               </div>
+              {/* ── After reviewing availability: send quotation to patient ── */}
+              {["AVAILABLE", "PARTIALLY_AVAILABLE"].includes(review.status) && review.prepareRequested && !review.prescription && (
+                <div className="mt-3">
+                  <div className="alert alert-info small mb-2">
+                    <i className="bi bi-send me-2" />
+                    Once you are happy with the estimate above, send the rough quotation to the patient.
+                    They must approve it before you can create the final prescription and invoice; payment is chosen only after that final invoice is acknowledged.
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-success w-100"
+                    disabled={busy || review.estimatedTotal == null}
+                    onClick={() => sendQuotation(review)}
+                  >
+                    <i className="bi bi-send me-2" />
+                    Send quotation to patient
+                  </button>
+                </div>
+              )}
+              {/* ── Awaiting patient payment ── */}
+              {review.status === "PAYMENT_PENDING" && (
+                <div className="alert alert-warning small mt-3">
+                  <i className="bi bi-hourglass me-2" />
+                  Quotation sent. Waiting for the patient to make a bank transfer and upload their receipt.
+                </div>
+              )}
+              {/* ── Cashier to verify slip ── */}
+              {review.status === "PAYMENT_SUBMITTED" && (
+                <div className="alert alert-warning small mt-3">
+                  <i className="bi bi-receipt me-2" />
+                  The patient has uploaded a bank transfer receipt. Waiting for the cashier to verify it.
+                </div>
+              )}
+              {/* ── Payment verified — create prescription ── */}
               {review.prescription ? (
                 <div className="alert alert-success small mt-3">
                   Structured order:{" "}
                   <strong>{review.prescription.prescriptionNumber}</strong> ·{" "}
                   {review.prescription.status}
                 </div>
-              ) : review.prepareRequested ? (
+              ) : review.status === "READY_TO_PREPARE" ? (
+                <div className="mt-3">
+                  <div className="alert alert-success small mb-2">
+                    <i className="bi bi-check-circle-fill me-2" />
+                    <strong>Payment has been verified by the cashier.</strong> Please prepare the medicines and create the prescription.
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary w-100"
+                    onClick={() => {
+                      const estimateItems = review.estimateDetails?.input?.items || [];
+                      navigate(buildPrescriptionCreateUrl(review, estimateItems));
+                    }}
+                  >
+                    <i className="bi bi-file-medical me-2" />
+                    Create prescription &amp; prepare medicines
+                  </button>
+                </div>
+              ) : review.status === "QUOTE_ACCEPTED" ? (
                 <button
                   type="button"
                   className="btn btn-outline-primary w-100 mt-3"
-                  onClick={() =>
-                    navigate(
-                      `/prescriptions?uploadId=${review.id}&patientUserId=${review.patient.id}&orderedForSelf=${review.orderedForSelf ? "1" : "0"}&recipientName=${encodeURIComponent(review.recipientName || "")}&recipientRelationship=${encodeURIComponent(review.recipientRelationship || "")}&recipientDateOfBirth=${encodeURIComponent(review.recipientDateOfBirth ? review.recipientDateOfBirth.slice(0, 10) : "")}`,
-                    )
-                  }
+                  onClick={() => {
+                    const estimateItems = review.estimateDetails?.input?.items || [];
+                    navigate(buildPrescriptionCreateUrl(review, estimateItems));
+                  }}
                 >
                   <i className="bi bi-file-medical me-2" />
                   Create prescription and prepare cashier invoice
                 </button>
-              ) : (
+              ) : !review.prepareRequested ? (
                 <div className="alert alert-secondary small mt-3">
                   <i className="bi bi-info-circle me-2" />
                   The customer requested a quotation only. Confirm with the
                   customer before creating a prepared order.
                 </div>
-              )}
+              ) : null}
               <Alert message={error} />
-              <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3">
-                <button type="button" className="btn btn-outline-danger" disabled={busy} onClick={rejectUpload}>
-                  <i className="bi bi-x-octagon me-2" />Reject upload
-                </button>
-                <div className="flex-grow-1"><ModalActions onClose={closeReview} submitLabel="Save review" busy={busy} /></div>
+              <div className="modal-actions review-modal-actions">
+                {review.status === "PENDING" && (
+                  <button type="button" className="btn btn-outline-danger" disabled={busy} onClick={rejectUpload}>
+                    <i className="bi bi-x-octagon me-2" />Reject upload
+                  </button>
+                )}
+                <div className="review-modal-primary-actions">
+                  <button type="button" className="btn btn-light" disabled={busy} onClick={closeReview}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary" disabled={busy}>
+                    {busy ? "Saving…" : review.status === "PENDING" ? "Save review" : "Save notes"}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -1473,17 +2252,24 @@ export function PrescriptionUploadsPage() {
           <div className="d-flex justify-content-end mb-2">
             <div className="btn-group btn-group-sm" aria-label="Document size">
               <button type="button" className="btn btn-outline-secondary" onClick={() => setDocumentViewerHeight((height) => Math.max(320, height - 140))}><i className="bi bi-dash-lg" /></button>
-              <button type="button" className="btn btn-outline-secondary" onClick={() => setDocumentViewerHeight(620)}>Fit</button>
+              <button type="button" className="btn btn-outline-secondary" onClick={fitDocumentViewer} title="Fit document to window">Fit</button>
               <button type="button" className="btn btn-outline-secondary" onClick={() => setDocumentViewerHeight((height) => Math.min(1000, height + 140))}><i className="bi bi-plus-lg" /></button>
               <button type="button" className="btn btn-outline-secondary" onClick={() => window.open(preview.url, "_blank", "noopener,noreferrer")} title="Open full size"><i className="bi bi-arrows-fullscreen" /></button>
             </div>
           </div>
           {preview.text ? (
             <pre className="prescription-text-viewer" style={{ height: documentViewerHeight }}>{preview.text}</pre>
+          ) : isImageUpload(preview.item.mimeType) ? (
+            <img
+              className="prescription-popup-viewer prescription-document-image"
+              src={preview.url}
+              alt={preview.item.originalName}
+              style={{ height: documentViewerHeight }}
+            />
           ) : (
             <iframe
               className="prescription-popup-viewer"
-              src={preview.url}
+              src={fittedDocumentUrl(preview.url, preview.item.mimeType)}
               title={preview.item.originalName}
               style={{ height: documentViewerHeight }}
             />
@@ -1499,6 +2285,203 @@ export function PrescriptionUploadsPage() {
           </div>
         </Modal>
       )}
+      {/* ── Patient: Bank Transfer Receipt Upload Modal ── */}
+      {slipUploadItem && (
+        <Modal
+          title="Upload bank transfer receipt"
+          onClose={() => setSlipUploadItem(null)}
+          size="sm"
+        >
+          <form onSubmit={submitSlip}>
+            <div className="alert alert-info small">
+              <i className="bi bi-bank me-2" />
+              Upload proof of your bank transfer for <strong>{slipUploadItem.patient.fullName}</strong>.
+              Expected amount: <strong>{money(slipUploadItem.estimatedTotal)}</strong>.
+            </div>
+            {bankAccounts.length > 0 && (
+              <div className="bank-account-list mb-3">
+                {bankAccounts.map((ba: any) => (
+                  <div key={ba.id} className="bank-account-card">
+                    <i className="bi bi-bank" />
+                    <div>
+                      <strong>{ba.bankName}</strong>
+                      <small>{ba.accountName} · {ba.accountNumber}{ba.branch ? ` · ${ba.branch}` : ""}</small>
+                      {ba.instructions && <small className="text-secondary">{ba.instructions}</small>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <label className="form-label">Receipt file (PDF, JPEG, PNG, or WebP)</label>
+            <input
+              className="form-control"
+              type="file"
+              accept="application/pdf,image/jpeg,image/png,image/webp"
+              required
+              onChange={(event) => setSlipForm({ ...slipForm, file: event.target.files?.[0] || null })}
+            />
+            <label className="form-label mt-3">Amount transferred (Rs.)</label>
+            <div className="input-group">
+              <span className="input-group-text">Rs.</span>
+              <input
+                className="form-control"
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={slipForm.declaredAmount}
+                onChange={(event) => setSlipForm({ ...slipForm, declaredAmount: event.target.value })}
+                required
+              />
+            </div>
+            <label className="form-label mt-3">Bank account transferred to (optional)</label>
+            <select
+              className="form-select"
+              value={slipForm.bankAccountId}
+              onChange={(event) => setSlipForm({ ...slipForm, bankAccountId: event.target.value })}
+            >
+              <option value="">— Select bank account —</option>
+              {bankAccounts.map((ba: any) => (
+                <option key={ba.id} value={ba.id}>{ba.bankName} · {ba.accountNumber}</option>
+              ))}
+            </select>
+            <label className="form-label mt-3">Transfer reference / transaction ID (optional)</label>
+            <input
+              className="form-control"
+              value={slipForm.reference}
+              onChange={(event) => setSlipForm({ ...slipForm, reference: event.target.value })}
+              placeholder="e.g. TXN12345678"
+            />
+            <label className="form-label mt-3">Date of transfer (optional)</label>
+            <input
+              className="form-control"
+              type="date"
+              max={new Date().toISOString().slice(0, 10)}
+              value={slipForm.paidOn}
+              onChange={(event) => setSlipForm({ ...slipForm, paidOn: event.target.value })}
+            />
+            <label className="form-label mt-3">Note to cashier (optional)</label>
+            <textarea
+              className="form-control"
+              maxLength={500}
+              value={slipForm.note}
+              onChange={(event) => setSlipForm({ ...slipForm, note: event.target.value })}
+              placeholder="Any additional information for the cashier."
+            />
+            <Alert message={error} />
+            <ModalActions onClose={() => setSlipUploadItem(null)} submitLabel="Submit receipt" busy={busy} />
+          </form>
+        </Modal>
+      )}
+
+      {/* ── Cashier: Bank Transfer Slip Review Modal ── */}
+      {slipReviewItem && (
+        <Modal
+          title={`Review payment receipt — ${slipReviewItem.upload.patient.fullName}`}
+          onClose={closeSlipReview}
+          size="xl"
+        >
+          <div className="prescription-review-split">
+            <div className="prescription-document-pane">
+              <strong>Submitted receipt</strong>
+              {slipReviewUrl ? (
+                <iframe src={slipReviewUrl} title="Payment receipt" style={{ height: 600, marginTop: 8 }} />
+              ) : (
+                <div className="loading mt-2">Loading receipt…</div>
+              )}
+            </div>
+            <div className="prescription-review-form">
+              <div className="alert alert-light border small">
+                <strong>Patient:</strong> {slipReviewItem.upload.patient.fullName} · {slipReviewItem.upload.patient.email}
+                <br />
+                <strong>Estimated invoice:</strong> {money(slipReviewItem.upload.estimatedTotal)}
+              </div>
+              <div className="availability-box mb-3">
+                <div>
+                  <small>Declared amount</small>
+                  <strong>{money(slipReviewItem.slip.declaredAmount)}</strong>
+                </div>
+                <div>
+                  <small>Transfer reference</small>
+                  <strong>{slipReviewItem.slip.reference || "—"}</strong>
+                </div>
+                {slipReviewItem.slip.bankAccount && (
+                  <div>
+                    <small>Bank account</small>
+                    <strong>{slipReviewItem.slip.bankAccount.bankName} · {slipReviewItem.slip.bankAccount.accountNumber}</strong>
+                  </div>
+                )}
+                {slipReviewItem.slip.paidOn && (
+                  <div>
+                    <small>Transfer date</small>
+                    <strong>{new Date(slipReviewItem.slip.paidOn).toLocaleDateString()}</strong>
+                  </div>
+                )}
+                {slipReviewItem.slip.note && (
+                  <div className="full">
+                    <small>Patient note</small>
+                    <strong>{slipReviewItem.slip.note}</strong>
+                  </div>
+                )}
+              </div>
+              <div className="alert alert-warning small">
+                <i className="bi bi-shield-exclamation me-2" />
+                Verify the declared amount matches your bank records before approving. Approving will move this request to <strong>Ready to Prepare</strong> and notify the pharmacist.
+              </div>
+              <label className="form-label">Rejection reason (required only when rejecting)</label>
+              <textarea
+                className="form-control"
+                rows={3}
+                maxLength={500}
+                value={slipReviewForm.reason}
+                onChange={(event) => setSlipReviewForm({ reason: event.target.value })}
+                placeholder="Explain why the slip was not accepted, e.g. amount mismatch, unclear image."
+              />
+              <Alert message={error} />
+              <div className="d-flex gap-2 mt-3 flex-wrap justify-content-end">
+                <button type="button" className="btn btn-outline-secondary" onClick={closeSlipReview}>Cancel</button>
+                <button type="button" className="btn btn-danger" disabled={busy} onClick={rejectSlip}>
+                  <i className="bi bi-x-octagon me-2" />Reject slip
+                </button>
+                <button type="button" className="btn btn-success" disabled={busy} onClick={approveSlip}>
+                  <i className="bi bi-check-circle me-2" />Approve — mark payment verified
+                </button>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Patient: Cancel / Decline Request Modal ── */}
+      {cancelModal && (
+        <Modal
+          title={`Cancel prescription request #${cancelModal.upload.id}`}
+          onClose={() => setCancelModal(null)}
+          size="sm"
+        >
+          <form onSubmit={submitCancelUpload}>
+            <div className="alert alert-danger small">
+              <i className="bi bi-exclamation-triangle me-2" />
+              Are you sure you want to cancel this prescription quotation request? This action cannot be undone.
+            </div>
+            <label className="form-label">Reason for cancellation (optional)</label>
+            <textarea
+              className="form-control"
+              rows={3}
+              maxLength={300}
+              value={cancelModal.reason}
+              onChange={(e) => setCancelModal({ ...cancelModal, reason: e.target.value })}
+              placeholder="e.g. Purchased elsewhere, price reconsideration, uploaded incorrect document..."
+            />
+            <Alert message={error} />
+            <ModalActions
+              onClose={() => setCancelModal(null)}
+              submitLabel="Cancel request"
+              busy={busy}
+            />
+          </form>
+        </Modal>
+      )}
     </>
   );
 }
+

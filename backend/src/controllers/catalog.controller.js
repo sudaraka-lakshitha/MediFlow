@@ -1,6 +1,8 @@
-import { catalogService, productTemplateColumns, productTemplateRows } from '../services/catalog.service.js';
+import { catalogService } from '../services/catalog.service.js';
 import { recordAudit } from '../services/audit.service.js';
-import { toCsv } from '../utils/csv.js';
+import { toCsv, streamCsv } from '../utils/csv.js';
+import { productBulkFields, productTemplateRows, bulkInstructions, CLEAR_VALUE } from '../utils/productBulkFormat.js';
+import { productUpdateExport } from '../services/adminExport.service.js';
 
 const save = (entityType, action, operation) => async (req, res) => {
   const result = await operation(req);
@@ -37,13 +39,18 @@ export const catalogController = {
   setManufacturerActive: save('MANUFACTURER', 'MANUFACTURER_STATUS_CHANGED', (req) => catalogService.setManufacturerActive(Number(req.params.id), req.body.active)),
   deleteManufacturer: remove('MANUFACTURER', catalogService.deleteManufacturer),
   productTemplate: async (_req, res) => {
-    const columns = productTemplateColumns.map((key) => ({ key, label: key }));
     res.setHeader('Content-Disposition', 'attachment; filename="mediflow-product-bulk-template.csv"');
-    res.type('text/csv').send(toCsv(columns, productTemplateRows));
+    res.type('text/csv').send(`\uFEFF${toCsv(productBulkFields, productTemplateRows)}`);
+  },
+  bulkFormat: (_req, res) => res.json({ data: { fields: productBulkFields, instructions: bulkInstructions, clearValue: CLEAR_VALUE, examples: productTemplateRows } }),
+  exportForUpdate: async (req, res) => {
+    res.setHeader('Content-Disposition', 'attachment; filename="mediflow-products-for-update.csv"');
+    res.type('text/csv');
+    const rowCount = await streamCsv(res, productBulkFields, productUpdateExport.pages());
+    await recordAudit({ userId: req.user.id, action: 'PRODUCTS_EXPORTED_FOR_UPDATE', entityType: 'DATA_EXPORT', details: { rowCount }, ipAddress: req.ip });
   },
   bulkProducts: async (req, res) => {
-    const result = await catalogService.bulkProducts(req.body.rows, req.body.dryRun);
-    await recordAudit({ userId: req.user.id, action: req.body.dryRun ? 'PRODUCT_BULK_VALIDATED' : 'PRODUCT_BULK_APPLIED', entityType: 'PRODUCT', details: { total: result.total, creates: result.creates, updates: result.updates, errorCount: result.errors.length }, ipAddress: req.ip });
-    res.json({ data: result });
+    const result = await catalogService.bulkProducts(req.body.rows, req.body.dryRun, { previewToken: req.body.previewToken, fileName: req.body.fileName, userId: req.user.id, ipAddress: req.ip });
+    res.json({ data: result, message: req.body.dryRun ? `Validation finished. ${result.errors.length} invalid rows. No products were saved.` : 'Bulk changes saved successfully.' });
   },
 };

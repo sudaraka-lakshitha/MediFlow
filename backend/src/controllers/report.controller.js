@@ -2,11 +2,12 @@ import { reportService } from '../services/report.service.js';
 import { recordAudit } from '../services/audit.service.js';
 import { toCsv } from '../utils/csv.js';
 import { createPdf } from '../utils/pdf.js';
+const numericColumns = new Set(['quantity', 'grossSales', 'discount', 'containerFee', 'netRevenue', 'cost', 'profit', 'margin', 'opening', 'received', 'dispensed', 'adjustments', 'closing', 'reorderLevel', 'stockValue', 'transactions']);
 
 const dailyColumns = [
   ['invoice', 'Invoice'], ['prescription', 'Prescription'], ['patient', 'Patient'], ['product', 'Product'],
   ['batch', 'Batch'], ['quantity', 'Quantity'], ['pharmacist', 'Pharmacist'], ['grossSales', 'Gross Sales'], ['discount', 'Allocated Discount'],
-  ['containerFee', 'Allocated Bottle Fee'], ['netRevenue', 'Net Revenue'], ['cost', 'FIFO Cost'], ['profit', 'Gross Profit'], ['margin', 'Margin'], ['status', 'Status'], ['time', 'Time'],
+  ['containerFee', 'Allocated Bottle Fee'], ['netRevenue', 'Net Revenue'], ['cost', 'FIFO Cost'], ['profit', 'Gross Profit'], ['margin', 'Margin'], ['status', 'Activity type'], ['time', 'Activity time'],
 ].map(([key, label]) => ({ key, label }));
 const monthlyColumns = [
   ['sku', 'SKU'], ['product', 'Product'], ['opening', 'Opening'], ['received', 'Received'], ['dispensed', 'Sold / Dispensed'],
@@ -21,7 +22,7 @@ const send = async (req, res, type, period, format, rows, columns, presentation 
   const filename = `mediflow-${type}-${period}.${format}`;
   const body = format === 'pdf'
     ? await createPdf({ title: `MediFlow ${type[0].toUpperCase() + type.slice(1)} Report`, subtitle: `Period: ${period}`, columns, rows, ...presentation })
-    : Buffer.from(`${toCsv([{ key: 'label', label: 'Report summary' }, { key: 'value', label: 'Value' }], [{ label: 'Report', value: type }, { label: 'Period', value: period }, ...(presentation.summary || [])])}\r\n${toCsv(columns, rows)}`);
+    : Buffer.from(`\uFEFF${toCsv([{ key: 'label', label: 'Report summary' }, { key: 'value', label: 'Value', numeric: true }], [{ label: 'Report', value: type }, { label: 'Period', value: period }, ...(presentation.summary || [])])}\r\n${toCsv(columns.map((c) => ({ ...c, numeric: numericColumns.has(c.key) })), rows)}`);
   await recordAudit({ userId: req.user.id, action: 'REPORT_EXPORTED', entityType: `${type.toUpperCase()}_REPORT`, details: { period, format }, ipAddress: req.ip });
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.type(format === 'pdf' ? 'application/pdf' : 'text/csv').send(body);
@@ -39,5 +40,5 @@ export const reportController = {
 const analyticsPresentation = (analytics) => ({
   summary: [{ label: 'Net revenue', value: `Rs. ${analytics.summary.sales.toFixed(2)}` }, { label: 'Bottle fees', value: `Rs. ${Number(analytics.summary.containerFee || 0).toFixed(2)}` }, { label: 'FIFO cost', value: `Rs. ${analytics.summary.cogs.toFixed(2)}` }, { label: 'Gross profit', value: `Rs. ${analytics.summary.grossProfit.toFixed(2)}` }, { label: 'Gross margin', value: `${analytics.summary.grossMargin.toFixed(2)}%` }],
   chart: { title: 'Daily net revenue', items: analytics.dailySeries.map((item) => ({ label: item.date, value: item.revenue })) },
-  notes: [`${analytics.summary.invoices} invoices, ${analytics.summary.prescriptions} prescriptions and ${analytics.summary.dispensings} dispensing events.`, 'Financial results use FIFO batch purchase costs and allocated discounts.', 'Detailed invoice-product-batch records follow below.'],
+  notes: [`${analytics.summary.invoices} invoices, ${analytics.summary.prescriptions} prescriptions and ${analytics.summary.dispensings} dispensing events.`, 'Credits are dated at refund authorization; stock cost recovery is dated at pharmacist restock review. Cash/bank payouts are reconciled separately.', 'Financial results use FIFO batch purchase costs and allocated discounts.', 'Detailed invoice-product-batch records follow below.'],
 });

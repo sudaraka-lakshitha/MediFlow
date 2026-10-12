@@ -3,6 +3,7 @@ import { logger } from '../config/logger.js';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
 import { operationSettingsService } from './operationSettings.service.js';
+import { exportPages } from '../utils/exportPages.js';
 
 const offsetMs = env.REPORT_TIMEZONE_OFFSET_MINUTES * 60_000;
 const roleCache = new Map();
@@ -249,11 +250,9 @@ export const auditService = {
   },
 
   exportRows(query) {
-    return prisma.auditLog.findMany({
+    return exportPages(prisma.auditLog, {
       where: buildAuditWhere(query),
       include: auditInclude,
-      orderBy: { createdAt: 'desc' },
-      take: 5000,
     });
   },
 

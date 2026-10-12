@@ -7,6 +7,7 @@ const keys = {
   auditTrashRetentionDays: "auditTrashRetentionDays",
   requirePickupPin: "requirePickupPin",
   cashierCanDispenseAtPayment: "cashierCanDispenseAtPayment",
+  cashReservationHours: "cashReservationHours",
 };
 
 const defaults = {
@@ -16,6 +17,7 @@ const defaults = {
   auditTrashRetentionDays: 30,
   requirePickupPin: true,
   cashierCanDispenseAtPayment: false,
+  cashReservationHours: 24,
 };
 
 const settingMap = (rows) =>
@@ -39,6 +41,7 @@ export const operationSettingsService = {
       : defaults.allocationMethod;
     const parsedDays = Number(values[keys.nearExpiryDays]);
     const parsedAuditTrashDays = Number(values[keys.auditTrashRetentionDays]);
+    const parsedCashReservationHours = Number(values[keys.cashReservationHours]);
     return {
       allocationMethod,
       nearExpiryDays:
@@ -63,6 +66,10 @@ export const operationSettingsService = {
         values[keys.cashierCanDispenseAtPayment] === undefined
           ? defaults.cashierCanDispenseAtPayment
           : values[keys.cashierCanDispenseAtPayment] === "true",
+      cashReservationHours:
+        Number.isInteger(parsedCashReservationHours) && parsedCashReservationHours >= 1 && parsedCashReservationHours <= 168
+          ? parsedCashReservationHours
+          : defaults.cashReservationHours,
     };
   },
 
@@ -97,6 +104,11 @@ export const operationSettingsService = {
         where: { key: keys.cashierCanDispenseAtPayment },
         create: { key: keys.cashierCanDispenseAtPayment, value: String(data.cashierCanDispenseAtPayment) },
         update: { value: String(data.cashierCanDispenseAtPayment) },
+      }),
+      prisma.systemSetting.upsert({
+        where: { key: keys.cashReservationHours },
+        create: { key: keys.cashReservationHours, value: String(data.cashReservationHours) },
+        update: { value: String(data.cashReservationHours) },
       }),
     ]);
     return this.get();

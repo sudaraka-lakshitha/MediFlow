@@ -325,6 +325,8 @@ a:hover { color: var(--c-navy-hover); }
   border: 1px solid #B8DECE;
 }
 .live-pill i { font-size: .42rem; color: var(--c-success); }
+.live-pill.offline { color: var(--c-danger); background: #FDECEA; border-color: #F2C4BF; }
+.live-pill.offline i { color: var(--c-danger); }
 
 .topbar-avatar { width: 32px; height: 32px; font-size: .68rem; }
 
@@ -585,6 +587,23 @@ textarea.form-control { min-height: 80px; resize: vertical; }
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
+.scrollable-table-region { position: relative; scrollbar-gutter: stable; }
+.scrollable-table-region:focus-visible { outline: 2px solid var(--c-navy); outline-offset: 2px; }
+.scrollable-table-region::after {
+  position: sticky;
+  right: 6px;
+  bottom: 6px;
+  display: none;
+  float: right;
+  padding: 3px 7px;
+  content: "Scroll for more →";
+  color: var(--c-text-2);
+  background: rgba(255,255,255,.94);
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  font-size: .62rem;
+  pointer-events: none;
+}
 
 .table {
   margin: 0;
@@ -699,6 +718,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 /* Blue — info states */
 .status-retail,
 .status-information,
+.status-slip-submitted,
 .status-dispensed-awaiting {
   background: #E4EFF8;
   color: #1A5A82;
@@ -727,6 +747,8 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 .toolbar > .search-select { flex: 1 1 200px; max-width: 320px; }
 
 .record-count { color: var(--c-text-muted); font-size: .76rem; font-weight: 600; white-space: nowrap; }
+.data-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 14px; color: var(--c-text-muted); font-size: .76rem; }
+.data-pagination > div { display: flex; align-items: center; gap: 10px; }
 
 /* ─── Dropdown / Actions ────────────────────────────────── */
 .dropdown-menu {
@@ -776,6 +798,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 }
 .search-select-menu button:hover,
 .search-select-menu button.selected { background: var(--c-surface-2); color: var(--c-navy); }
+.search-select-menu button:focus-visible { outline: 2px solid var(--c-navy); outline-offset: -2px; }
 
 /* ─── Modals ─────────────────────────────────────────────── */
 .modal-backdrop-custom {
@@ -816,6 +839,46 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 }
 .modal-card > .panel-header h3 { font-size: 1rem; }
 .modal-card .btn-close { opacity: .6; }
+.modal-actions {
+  position: sticky;
+  z-index: 8;
+  bottom: -24px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 24px -24px -24px;
+  padding: 14px 24px;
+  background: rgba(255,255,255,.96);
+  border-top: 1px solid var(--c-border);
+  backdrop-filter: blur(8px);
+}
+
+.route-loading { min-height: 45vh; display: grid; place-items: center; }
+.success-toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 900;
+  display: flex;
+  max-width: min(420px, calc(100vw - 32px));
+  align-items: center;
+  gap: 9px;
+  padding: 12px 14px;
+  color: #125f45;
+  background: #effaf6;
+  border: 1px solid #abd9c8;
+  border-radius: var(--r);
+  box-shadow: var(--shadow-lg);
+  font-size: .82rem;
+  font-weight: 600;
+}
+.success-toast span { flex: 1; }
+.success-toast button { display: grid; place-items: center; padding: 4px; color: inherit; background: transparent; border: 0; border-radius: 4px; }
+.not-found-page { min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: var(--c-bg); }
+.not-found-card { width: min(520px, 100%); padding: 38px; text-align: center; background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--r-xl); box-shadow: var(--shadow-md); }
+.not-found-card h1 { margin: 8px 0 10px; font-size: 1.55rem; }
+.not-found-card > p:not(.eyebrow) { color: var(--c-text-2); }
+.not-found-icon { display: inline-grid; width: 52px; height: 52px; place-items: center; color: var(--c-navy); background: var(--c-surface-2); border-radius: 14px; font-size: 1.35rem; }
 
 /* ─── Alerts ─────────────────────────────────────────────── */
 .alert {
@@ -1677,6 +1740,8 @@ textarea.form-control { min-height: 80px; resize: vertical; }
   .live-pill { display: none; }
   .topbar-profile-copy { display: none; }
   .panel { padding: 14px; }
+  .data-pagination { align-items: stretch; flex-direction: column; }
+  .data-pagination > div { justify-content: space-between; }
   .page-intro { flex-direction: column; align-items: flex-start; gap: 10px; }
   .page-intro > .d-flex, .page-intro > div:last-child { width: 100%; flex-wrap: wrap; }
   .page-intro .btn { flex: 1 1 auto; }
@@ -1697,6 +1762,8 @@ textarea.form-control { min-height: 80px; resize: vertical; }
     padding: 14px 16px;
     border-radius: var(--r-lg) var(--r-lg) 0 0;
   }
+  .modal-actions { bottom: -16px; margin: 20px -16px -16px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
+  .success-toast { right: 12px; bottom: 12px; }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid .full { grid-column: auto; }
   .combined-retail-header { flex-direction: column; align-items: stretch; }
@@ -1711,6 +1778,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
   .inventory-alert-chip { flex: 1 1 100px; }
   .inventory-low-stock-grid { grid-template-columns: 1fr; }
   .table-responsive { border-radius: var(--r-sm); }
+  .scrollable-table-region::after { display: block; }
   .table > :not(caption) > * > * { padding: 9px 10px; }
   .my-activity-toolbar { flex-direction: column; align-items: stretch; }
   .my-activity-presets { width: 100%; }
@@ -1733,7 +1801,10 @@ textarea.form-control { min-height: 80px; resize: vertical; }
   .demo-note-heading small { text-align: left; }
   .demo-account { grid-template-columns: 1fr; gap: 1px; }
   .metric-grid { grid-template-columns: 1fr; }
-  .content { padding-inline: 10px; }
+  /* Must stay >= the Bootstrap row gutter (.row.g-4 pulls itself out by 12px a side),
+     otherwise every grid page hangs a couple of pixels past the viewport and the whole
+     document picks up a horizontal scrollbar. */
+  .content { padding-inline: 12px; }
   .combined-retail-panel { padding: 10px; }
   .inventory-low-stock-item { flex-direction: column; align-items: stretch; }
   .inventory-low-stock-level { text-align: left; }

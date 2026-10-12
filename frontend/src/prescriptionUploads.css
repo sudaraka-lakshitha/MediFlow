@@ -4,7 +4,7 @@
   gap: 12px;
 }
 .upload-filter .form-select {
-  width: 230px;
+  width: 310px;
 }
 .upload-filter span {
   margin-left: auto;
@@ -15,9 +15,11 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+  align-items: start;
 }
-.upload-card {
+.upload-grid > .panel.upload-card {
   margin: 0;
+  align-self: start;
 }
 .upload-card-heading {
   display: grid;
@@ -92,6 +94,139 @@
   margin-bottom: 8px;
   cursor: pointer;
 }
+.recipient-choice-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.recipient-choice-grid .preparation-choice {
+  margin-bottom: 0;
+  height: 100%;
+}
+@media (max-width: 576px) {
+  .recipient-choice-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.recipient-details-card {
+  background: #f8faf9;
+  border: 1px solid #dce6e3;
+  border-radius: 10px;
+}
+.deadline-editor {
+  max-width: 320px;
+  padding: 12px;
+  background: #f7faf9;
+  border: 1px solid #dce6e3;
+  border-radius: 9px;
+}
+.review-modal-actions {
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.review-modal-primary-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.upload-clinical-disclaimer {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  margin: -4px 0 16px;
+  padding: 10px 12px;
+  border: 1px solid #ead7a3;
+  border-radius: 9px;
+  background: #fffaf0;
+  color: #765817;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.upload-clinical-disclaimer i {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+.recipient-details-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #dce6e3;
+}
+.recipient-details-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #176b63;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.recipient-required-badge {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #e7ecea;
+  color: #60706c;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.recipient-identity-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 0.72fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.recipient-name-field {
+  grid-column: 1 / -1;
+}
+.recipient-age-input .form-control {
+  min-width: 0;
+}
+.recipient-age-input .input-group-text {
+  padding-inline: 10px;
+}
+.recipient-clinical-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid #e3ebe8;
+}
+.recipient-clinical-field {
+  padding: 11px;
+  border: 1px solid #e1e9e6;
+  border-radius: 8px;
+  background: #fff;
+}
+.recipient-clinical-field .form-label {
+  min-height: auto;
+}
+.recipient-clinical-field small {
+  line-height: 1.4;
+}
+.recipient-clinical-field--allergy {
+  border-left: 3px solid #dc5861;
+}
+.recipient-clinical-field--condition {
+  border-left: 3px solid #d7a622;
+}
+@media (max-width: 460px) {
+  .recipient-details-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .recipient-identity-grid {
+    grid-template-columns: 1fr;
+  }
+  .recipient-name-field {
+    grid-column: auto;
+  }
+}
 .preparation-choice.selected {
   border-color: #55a89d;
   background: #eef8f5;
@@ -120,7 +255,6 @@
   flex-direction: column;
 }
 .availability-box strong {
-  text-transform: capitalize;
   font-size: 0.88rem;
 }
 .review-note {
@@ -141,12 +275,18 @@
 .prescription-review-form {
   min-width: 0;
 }
-.prescription-document-pane iframe {
+.prescription-document-pane iframe,
+.prescription-document-pane .prescription-document-image {
   width: 100%;
   height: 610px;
   border: 1px solid #dce6e3;
   border-radius: 12px;
   background: #f7f9f8;
+}
+.prescription-document-image {
+  display: block;
+  object-fit: contain;
+  object-position: center top;
 }
 .prescription-popup-heading {
   display: flex;
@@ -378,14 +518,17 @@
   padding-top: 8px;
   margin-top: 2px;
 }
-@media (max-width: 900px) {
+@media (max-width: 1400px) {
   .upload-grid {
     grid-template-columns: 1fr;
   }
+}
+@media (max-width: 900px) {
   .prescription-review-split {
     grid-template-columns: 1fr;
   }
-  .prescription-document-pane iframe {
+  .prescription-document-pane iframe,
+  .prescription-document-pane .prescription-document-image {
     height: 420px;
   }
   .estimate-options {
@@ -438,4 +581,73 @@
   .estimate-stock-list > div > span:last-child {
     align-items: flex-start;
   }
+}
+
+@media (max-width: 460px) {
+  .review-modal-actions {
+    align-items: stretch;
+  }
+  .review-modal-actions > .btn,
+  .review-modal-primary-actions {
+    width: 100%;
+  }
+  .review-modal-primary-actions .btn {
+    flex: 1;
+  }
+}
+
+/* ── Bank transfer payment slip UI ─────────────────────────────────────────── */
+
+.bank-account-list {
+  display: grid;
+  gap: 8px;
+}
+.bank-account-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #cfe0dc;
+  border-radius: 10px;
+  background: #f2fbf8;
+}
+.bank-account-card > i {
+  font-size: 1.2rem;
+  color: #176b63;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.bank-account-card > div {
+  display: flex;
+  flex-direction: column;
+}
+.bank-account-card small {
+  color: #56726d;
+  font-size: 0.72rem;
+}
+
+.slip-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  padding: 5px 10px;
+  border-radius: 9px;
+  margin-top: 6px;
+  font-weight: 500;
+}
+.slip-pending {
+  background: #fff9e6;
+  color: #856404;
+  border: 1px solid #ffe08a;
+}
+.slip-verified {
+  background: #e9f7ef;
+  color: #1a6b47;
+  border: 1px solid #a3d9be;
+}
+.slip-rejected {
+  background: #fdf0f0;
+  color: #8b2222;
+  border: 1px solid #f4b8b8;
 }

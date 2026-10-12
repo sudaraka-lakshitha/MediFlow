@@ -7,4 +7,5 @@ export const operationSettingsSchema = z.object({
   auditTrashRetentionDays: z.coerce.number().int().min(1).max(365),
   requirePickupPin: z.boolean(),
   cashierCanDispenseAtPayment: z.boolean(),
+  cashReservationHours: z.coerce.number().int().min(1).max(168).default(24),
 });

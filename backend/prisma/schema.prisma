@@ -16,9 +16,18 @@ enum Role {
 
 enum PaymentRequestStatus {
   AWAITING_PAYMENT
+  // The customer says they have paid by bank transfer and has uploaded a slip; the
+  // cashier still has to check it against the bank before any stock is committed.
+  SLIP_SUBMITTED
   PAID
   FULFILLED
   CANCELLED
+}
+
+enum PaymentSlipStatus {
+  PENDING
+  VERIFIED
+  REJECTED
 }
 
 enum PaymentRequestType {
@@ -109,6 +118,22 @@ enum UploadReviewStatus {
   PARTIALLY_AVAILABLE
   UNAVAILABLE
   REJECTED
+  // Rough quotation sent for the customer's process / do-not-process decision.
+  QUOTE_SENT
+  // Customer approved the rough quotation; pharmacist must create the final bill.
+  QUOTE_ACCEPTED
+  // Final structured invoice exists and awaits acknowledgement/payment choice.
+  PAYMENT_PENDING
+  // Patient has uploaded a bank-transfer slip; cashier needs to verify it
+  PAYMENT_SUBMITTED
+  // Cashier verified payment — pharmacist should prepare and create the prescription
+  READY_TO_PREPARE
+}
+
+enum UploadSlipStatus {
+  PENDING
+  VERIFIED
+  REJECTED
 }
 
 enum ProductType {
@@ -125,6 +150,7 @@ model User {
   role                        Role                      @default(PATIENT)
   active                      Boolean                   @default(true)
   cashierAccess               Boolean                   @default(false) @map("cashier_access")
+  pharmacyReconciliationAccess Boolean                  @default(false) @map("pharmacy_reconciliation_access")
   mustChangePassword          Boolean                   @default(false) @map("must_change_password")
   tokenVersion                Int                       @default(0) @map("token_version")
   lastLoginAt                 DateTime?                 @map("last_login_at")
@@ -148,8 +174,13 @@ model User {
   createdDiscountRules        DiscountRule[]            @relation("DiscountRuleCreator")
   uploadedPrescriptions       PrescriptionUpload[]      @relation("UploadPatient")
   reviewedUploads             PrescriptionUpload[]      @relation("UploadReviewer")
+  uploadSlipsUploaded         UploadPaymentSlip[]        @relation("UploadSlipUploader")
+  uploadSlipsReviewed         UploadPaymentSlip[]        @relation("UploadSlipReviewer")
   patientNotices              PatientNotice[]            @relation("NoticePatient")
   noticesCreated              PatientNotice[]            @relation("NoticeCreator")
+  bankAccountsCreated         BankAccount[]              @relation("BankAccountCreator")
+  paymentSlipsUploaded        PaymentSlip[]              @relation("SlipUploader")
+  paymentSlipsReviewed        PaymentSlip[]              @relation("SlipReviewer")
   passwordResetOtp            PasswordResetOtp?
   createdAt                   DateTime                  @default(now()) @map("created_at")
   updatedAt                   DateTime                  @updatedAt @map("updated_at")
@@ -371,6 +402,8 @@ model Prescription {
   recipientName           String?                   @map("recipient_name") @db.VarChar(150)
   recipientRelationship   String?                   @map("recipient_relationship") @db.VarChar(100)
   recipientDateOfBirth    DateTime?                 @map("recipient_date_of_birth") @db.Date
+  recipientAllergies      String?                   @map("recipient_allergies") @db.VarChar(500)
+  recipientConditions     String?                   @map("recipient_conditions") @db.VarChar(500)
   notes                   String?
   pickupNote              String?                   @map("pickup_note") @db.VarChar(500)
   plannedPickupAt         DateTime?                 @map("planned_pickup_at") @db.DateTime(3)
@@ -378,6 +411,7 @@ model Prescription {
   refillsAllowed          Int                       @default(0) @map("refills_allowed")
   refillsUsed             Int                       @default(0) @map("refills_used")
   originalPrescriptionId  Int?                      @map("original_prescription_id")
+  isOnline                Boolean                   @default(false) @map("is_online")
   originalPrescription    Prescription?             @relation("PrescriptionRefills", fields: [originalPrescriptionId], references: [id], onDelete: SetNull)
   refills                 Prescription[]            @relation("PrescriptionRefills")
   createdById             Int                       @map("created_by_id")
@@ -417,6 +451,7 @@ model PrescriptionItem {
   calculatedQuantity  Decimal              @map("calculated_quantity") @db.Decimal(12, 3)
   prescribedQuantity  Decimal              @map("prescribed_quantity") @db.Decimal(12, 3)
   dispensedQuantity   Decimal              @default(0) @map("dispensed_quantity") @db.Decimal(12, 3)
+  cancelledQuantity   Decimal              @default(0) @map("cancelled_quantity") @db.Decimal(12, 3)
   quantityOverridden  Boolean              @default(false) @map("quantity_overridden")
   overrideReason      String?              @map("override_reason") @db.VarChar(300)
   dosageInstructions  String               @map("dosage_instructions") @db.VarChar(250)
@@ -505,6 +540,8 @@ model Sale {
   cashier              User?                 @relation("SaleCashier", fields: [cashierId], references: [id])
   paymentRequest       PaymentRequest?       @relation(fields: [paymentRequestId], references: [id])
   items                SaleItem[]
+  refunds              Refund[]
+  payments             SalePayment[]
   discountApplications DiscountApplication[]
   createdAt            DateTime              @default(now()) @map("created_at")
 
@@ -566,16 +603,24 @@ model PrescriptionUpload {
   recipientName     String?            @map("recipient_name") @db.VarChar(150)
   recipientRelationship String?        @map("recipient_relationship") @db.VarChar(100)
   recipientDateOfBirth DateTime?       @map("recipient_date_of_birth") @db.Date
+  recipientAllergies    String?        @map("recipient_allergies") @db.VarChar(500)
+  recipientConditions   String?        @map("recipient_conditions") @db.VarChar(500)
   status            UploadReviewStatus @default(PENDING)
   availabilityNotes String?            @map("availability_notes") @db.VarChar(1000)
   estimatedTotal    Decimal?           @map("estimated_total") @db.Decimal(12, 2)
   estimateDetails   Json?              @map("estimate_details")
+  quoteRevision     Int                @default(0) @map("quote_revision")
+  acknowledgedQuoteRevision Int?       @map("acknowledged_quote_revision")
+  quoteSentAt       DateTime?          @map("quote_sent_at") @db.DateTime(3)
+  quoteAcknowledgedAt DateTime?        @map("quote_acknowledged_at") @db.DateTime(3)
   reviewedById      Int?               @map("reviewed_by_id")
   reviewedAt        DateTime?          @map("reviewed_at")
   deleteAt          DateTime?          @map("delete_at")
+  attachmentRemovedAt DateTime?        @map("attachment_removed_at")
   patient           User               @relation("UploadPatient", fields: [patientId], references: [id])
   reviewedBy        User?              @relation("UploadReviewer", fields: [reviewedById], references: [id])
   prescription      Prescription?
+  paymentSlips      UploadPaymentSlip[]
   createdAt         DateTime           @default(now()) @map("created_at")
   updatedAt         DateTime           @updatedAt @map("updated_at")
 
@@ -583,6 +628,36 @@ model PrescriptionUpload {
   @@index([status, createdAt])
   @@index([deleteAt])
   @@map("prescription_uploads")
+}
+
+// Bank-transfer receipt a patient uploads after the pharmacist has sent a quotation.
+// The cashier verifies it before the pharmacist is asked to prepare the medicines.
+model UploadPaymentSlip {
+  id               Int               @id @default(autoincrement())
+  uploadId         Int               @map("upload_id")
+  uploadedById     Int               @map("uploaded_by_id")
+  bankAccountId    Int?              @map("bank_account_id")
+  originalName     String            @map("original_name") @db.VarChar(180)
+  mimeType         String            @map("mime_type") @db.VarChar(80)
+  fileData         Bytes             @map("file_data") @db.LongBlob
+  declaredAmount   Decimal           @map("declared_amount") @db.Decimal(12, 2)
+  reference        String?           @db.VarChar(120)
+  paidOn           DateTime?         @map("paid_on") @db.Date
+  note             String?           @db.VarChar(500)
+  status           UploadSlipStatus  @default(PENDING)
+  reviewedById     Int?              @map("reviewed_by_id")
+  reviewedAt       DateTime?         @map("reviewed_at")
+  rejectionReason  String?           @map("rejection_reason") @db.VarChar(500)
+  upload           PrescriptionUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  uploadedBy       User              @relation("UploadSlipUploader", fields: [uploadedById], references: [id])
+  reviewedBy       User?             @relation("UploadSlipReviewer", fields: [reviewedById], references: [id])
+  bankAccount      BankAccount?      @relation(fields: [bankAccountId], references: [id])
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  @@index([uploadId, createdAt])
+  @@index([status, createdAt])
+  @@map("upload_payment_slips")
 }
 
 model PaymentRequest {
@@ -599,10 +674,20 @@ model PaymentRequest {
   tax                Decimal              @default(0) @db.Decimal(12, 2)
   total              Decimal              @db.Decimal(12, 2)
   amountPaid         Decimal              @default(0) @map("amount_paid") @db.Decimal(12, 2)
+  refundedAmount     Decimal              @default(0) @map("refunded_amount") @db.Decimal(12, 2)
+  customerCancellationReason String?      @map("customer_cancellation_reason") @db.VarChar(500)
   paymentMethod      PaymentMethod?       @map("payment_method")
   paymentReference   String?              @map("payment_reference") @db.VarChar(120)
   status             PaymentRequestStatus @default(AWAITING_PAYMENT)
   couponCode         String?              @map("coupon_code") @db.VarChar(40)
+  revision           Int                  @default(1)
+  acknowledgedRevision Int?               @map("acknowledged_revision")
+  customerAcknowledgedAt DateTime?        @map("customer_acknowledged_at") @db.DateTime(3)
+  customerPaymentChoice PaymentMethod?    @map("customer_payment_choice")
+  reservationDurationHours Int?           @map("reservation_duration_hours")
+  reservationExpiresAt DateTime?          @map("reservation_expires_at") @db.DateTime(3)
+  pharmacyNote       String?              @map("pharmacy_note") @db.VarChar(500)
+  customerNote       String?              @map("customer_note") @db.VarChar(500)
   pickupPinHash      String?              @map("pickup_pin_hash") @db.VarChar(64)
   pickupPinEncrypted String?              @map("pickup_pin_encrypted") @db.VarChar(200)
   pinAttempts        Int                  @default(0) @map("pin_attempts")
@@ -618,13 +703,161 @@ model PaymentRequest {
   prescription       Prescription?        @relation(fields: [prescriptionId], references: [id])
   items              PaymentRequestItem[]
   reservations       StockReservation[]
+  slips              PaymentSlip[]
+  events             PaymentRequestEvent[]
   sale               Sale?
+  refunds            Refund[]
   createdAt          DateTime             @default(now()) @map("created_at")
   updatedAt          DateTime             @updatedAt @map("updated_at")
 
   @@index([status, createdAt])
   @@index([patientId, createdAt])
+  @@index([reservationExpiresAt])
   @@map("payment_requests")
+}
+
+model Refund {
+  id Int @id @default(autoincrement())
+  saleId Int? @map("sale_id")
+  paymentRequestId Int? @map("payment_request_id")
+  amount Decimal @db.Decimal(12, 2)
+  reason String @db.VarChar(500)
+  status String @default("PENDING") @db.VarChar(20)
+  method String? @db.VarChar(30)
+  reference String? @db.VarChar(120)
+  createdById Int @map("created_by_id")
+  settledById Int? @map("settled_by_id")
+  settledAt DateTime? @map("settled_at") @db.DateTime(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  sale Sale? @relation(fields: [saleId], references: [id])
+  paymentRequest PaymentRequest? @relation(fields: [paymentRequestId], references: [id])
+  lines RefundLine[]
+  @@index([saleId])
+  @@index([paymentRequestId])
+  @@map("refunds")
+}
+
+model SalePayment {
+  id Int @id @default(autoincrement())
+  saleId Int @map("sale_id")
+  amount Decimal @db.Decimal(12,2)
+  method PaymentMethod
+  reference String? @db.VarChar(120)
+  cashierId Int @map("cashier_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  sale Sale @relation(fields: [saleId], references: [id])
+  @@index([createdAt, cashierId])
+  @@map("sale_payments")
+}
+
+model DailyBalanceConfirmation {
+  id Int @id @default(autoincrement())
+  cashierId Int @map("cashier_id")
+  day String @db.VarChar(10)
+  fingerprint String @db.VarChar(64)
+  snapshot Json
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  @@index([cashierId, day])
+  @@map("daily_balance_confirmations")
+}
+
+model PharmacyBalanceConfirmation {
+  id Int @id @default(autoincrement())
+  confirmedById Int @map("confirmed_by_id")
+  day String @db.VarChar(10)
+  fingerprint String @db.VarChar(64)
+  snapshot Json
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  @@index([day, fingerprint])
+  @@index([day, id])
+  @@map("pharmacy_balance_confirmations")
+}
+
+model RefundLine {
+  id Int @id @default(autoincrement())
+  refundId Int @map("refund_id")
+  saleItemId Int @map("sale_item_id")
+  productId Int @map("product_id")
+  batchId Int @map("batch_id")
+  name String @db.VarChar(250)
+  quantity Decimal @db.Decimal(12, 3)
+  amount Decimal @db.Decimal(12, 2)
+  stockStatus String @default("PENDING_REVIEW") @map("stock_status") @db.VarChar(30)
+  stockReason String? @map("stock_reason") @db.VarChar(500)
+  reviewedById Int? @map("reviewed_by_id")
+  reviewedAt DateTime? @map("reviewed_at") @db.DateTime(3)
+  refund Refund @relation(fields: [refundId], references: [id])
+  @@unique([refundId, saleItemId])
+  @@map("refund_lines")
+}
+
+model PaymentRequestEvent {
+  id Int @id @default(autoincrement())
+  paymentRequestId Int @map("payment_request_id")
+  paymentRequest PaymentRequest @relation(fields: [paymentRequestId], references: [id])
+  kind String @db.VarChar(40)
+  amount Decimal @default(0) @db.Decimal(12, 2)
+  revision Int
+  actorId Int? @map("actor_id")
+  details Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt, kind])
+  @@index([paymentRequestId, createdAt])
+  @@map("payment_request_events")
+}
+
+// The pharmacy's own bank accounts, shown to a customer who wants to pay by transfer
+// rather than at the counter. Administrator-maintained so account details can change
+// without a code release.
+model BankAccount {
+  id            Int           @id @default(autoincrement())
+  bankName      String        @map("bank_name") @db.VarChar(120)
+  accountName   String        @map("account_name") @db.VarChar(150)
+  accountNumber String        @map("account_number") @db.VarChar(60)
+  branch        String?       @db.VarChar(120)
+  instructions  String?       @db.VarChar(500)
+  active        Boolean       @default(true)
+  createdById   Int?              @map("created_by_id")
+  createdBy     User?             @relation("BankAccountCreator", fields: [createdById], references: [id])
+  slips         PaymentSlip[]
+  uploadSlips   UploadPaymentSlip[]
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  @@index([active])
+  @@map("bank_accounts")
+}
+
+// Proof-of-payment a customer uploads after a bank transfer. Kept as a list rather than a
+// single field so a rejected slip stays on record and the customer can submit a corrected
+// one against the same bill.
+model PaymentSlip {
+  id               Int               @id @default(autoincrement())
+  paymentRequestId Int               @map("payment_request_id")
+  uploadedById     Int               @map("uploaded_by_id")
+  bankAccountId    Int?              @map("bank_account_id")
+  originalName     String            @map("original_name") @db.VarChar(180)
+  mimeType         String            @map("mime_type") @db.VarChar(80)
+  fileData         Bytes             @map("file_data") @db.LongBlob
+  declaredAmount   Decimal           @map("declared_amount") @db.Decimal(12, 2)
+  reference        String?           @db.VarChar(120)
+  paidOn           DateTime?         @map("paid_on") @db.Date
+  note             String?           @db.VarChar(500)
+  status           PaymentSlipStatus @default(PENDING)
+  reviewedById     Int?              @map("reviewed_by_id")
+  reviewedAt       DateTime?         @map("reviewed_at")
+  rejectionReason  String?           @map("rejection_reason") @db.VarChar(500)
+  paymentRequest   PaymentRequest    @relation(fields: [paymentRequestId], references: [id], onDelete: Cascade)
+  uploadedBy       User              @relation("SlipUploader", fields: [uploadedById], references: [id])
+  reviewedBy       User?             @relation("SlipReviewer", fields: [reviewedById], references: [id])
+  bankAccount      BankAccount?      @relation(fields: [bankAccountId], references: [id])
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  @@index([paymentRequestId, createdAt])
+  @@index([status, createdAt])
+  @@map("payment_slips")
 }
 
 model PaymentRequestItem {

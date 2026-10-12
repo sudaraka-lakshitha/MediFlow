@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { Alert, Empty, Loading, Metric } from '../components/Ui';
 import '../reports.css';
+import { useAuth } from '../auth/useAuth';
+import { StaffActivityReport } from '../components/StaffActivityReport';
 
 type Analytics = {
   summary: { sales: number; grossSales: number; discount: number; cogs: number; grossProfit: number; grossMargin: number; invoices: number; prescriptions: number; dispensings: number };
@@ -25,6 +27,8 @@ const shortDate = (value: string) => new Date(`${value}T00:00:00`).toLocaleDateS
 const statusColours = ['#176b63', '#4f79c8', '#e2a33a', '#c8564f', '#7c66b0', '#78908c'];
 
 export function ReportsPage() {
+  const { user } = useAuth();
+  const [showStaffReport, setShowStaffReport] = useState(false);
   const today = localDate();
   const [from, setFrom] = useState(dateDaysAgo(29));
   const [to, setTo] = useState(today);
@@ -93,8 +97,8 @@ export function ReportsPage() {
     } catch (e) { setError(errorMessage(e)); } finally { setExporting(''); }
   };
 
-  const salesMax = Math.max(...(analytics?.dailySeries.map((item) => item.value) || [0]), 1);
-  const productMax = Math.max(...(analytics?.topProducts.map((item) => item.quantity) || [0]), 1);
+  const salesMax = Math.max(...(analytics?.dailySeries.map((item) => Math.abs(item.value)) || [0]), 1);
+  const productMax = Math.max(...(analytics?.topProducts.map((item) => Math.abs(item.quantity)) || [0]), 1);
   const pharmacistMax = Math.max(...(analytics?.pharmacistActivity.map((item) => item.count) || [0]), 1);
   const statusTotal = analytics?.prescriptionStatuses.reduce((sum, item) => sum + item.count, 0) || 0;
   const customMax = Math.max(...(customReport?.rows.map((item) => Math.abs(Number(item[customMetric]))) || [0]), 1);
@@ -109,6 +113,8 @@ export function ReportsPage() {
 
   return <>
     <div className="page-intro"><div><h2>Reports & analytics</h2><p>Analyse performance for any date range and export the underlying records.</p></div></div>
+    {user?.role === 'ADMIN' && <><button className="btn btn-outline-primary mb-3" aria-expanded={showStaffReport} aria-controls="staff-activity-section" onClick={()=>setShowStaffReport(value=>!value)}>{showStaffReport?'Hide staff activity report':'Staff activity report'}</button><div id="staff-activity-section">{showStaffReport && <StaffActivityReport/>}</div></>}
+    <p className="small text-secondary">Sales use the invoice date; credits use the refund authorization date. Stock cost is recovered only on the pharmacist's restock-review date. Cash/bank payouts are recorded separately in daily reconciliation. Negative values indicate net returns.</p>
     <Alert message={error} />
 
     <div className="panel report-filter-panel">
@@ -137,7 +143,7 @@ export function ReportsPage() {
         <div className="panel-header"><div><h3>Custom field report builder</h3><small className="text-secondary">Choose how to group the selected period, select the chart value, then export the full profitability table.</small></div><span className="badge text-bg-light">FIFO batch costs</span></div>
         <div className="custom-report-controls">
           <div><label className="form-label">Report name</label><input className="form-control" value={customName} maxLength={80} onChange={(event) => setCustomName(event.target.value)} /></div>
-          <div><label className="form-label">Group data by field</label><select className="form-select" value={customGroup} onChange={(event) => setCustomGroup(event.target.value)}><option value="date">Sale date</option><option value="product">Product</option><option value="category">Category</option><option value="batch">Batch</option><option value="pharmacist">Pharmacist</option><option value="patient">Patient</option><option value="paymentMethod">Payment method</option><option value="saleStatus">Sale status</option></select></div>
+          <div><label className="form-label">Group data by field</label><select className="form-select" value={customGroup} onChange={(event) => setCustomGroup(event.target.value)}><option value="date">Activity date</option><option value="product">Product</option><option value="category">Category</option><option value="batch">Batch</option><option value="pharmacist">Pharmacist</option><option value="patient">Patient</option><option value="paymentMethod">Invoice payment method</option><option value="saleStatus">Activity type</option></select></div>
           <div><label className="form-label">Graph value</label><select className="form-select" value={customMetric} onChange={(event) => setCustomMetric(event.target.value as typeof customMetric)}><option value="profit">Gross profit</option><option value="netRevenue">Net revenue</option><option value="cost">FIFO cost</option><option value="quantity">Quantity</option><option value="transactions">Transactions</option></select></div>
           <div className="custom-report-actions"><button className="btn btn-outline-secondary" disabled={customLoading} onClick={loadCustom}><i className="bi bi-arrow-clockwise me-1" />Generate</button><button className="btn btn-outline-primary" disabled={!!exporting || customLoading} onClick={() => downloadCustom('csv')}>CSV</button><button className="btn btn-primary" disabled={!!exporting || customLoading} onClick={() => downloadCustom('pdf')}>PDF</button></div>
         </div>
@@ -150,7 +156,7 @@ export function ReportsPage() {
 
       <div className="row g-4">
         <div className="col-xl-8"><div className="panel h-100"><div className="panel-header"><div><h3>Sales trend</h3><small className="text-secondary">Revenue by day</small></div><span className="chart-total">{money(analytics.summary.sales)}</span></div>
-          {analytics.dailySeries.length ? <div className="sales-chart" role="img" aria-label="Daily sales revenue bar chart">{analytics.dailySeries.map((item) => <div className="sales-bar-column" key={item.date} title={`${item.date}: ${money(item.value)}`}><div className="sales-bar-value">{item.value > 0 ? money(item.value).replace('Rs. ', '') : ''}</div><div className="sales-bar-track"><div className="sales-bar" style={{ height: `${Math.max((item.value / salesMax) * 100, item.value ? 4 : 0)}%` }} /></div><span>{shortDate(item.date)}</span></div>)}</div> : <Empty text="No sales were recorded in this period." />}
+          {analytics.dailySeries.length ? <div className="sales-chart" role="img" aria-label="Daily net revenue; negative returns shown in red with minus signs">{analytics.dailySeries.map((item) => <div className="sales-bar-column" key={item.date} title={`${item.date}: ${money(item.value)}`}><div className="sales-bar-value">{item.value !== 0 ? money(item.value).replace('Rs. ', '') : ''}</div><div className="sales-bar-track"><div className="sales-bar" style={{ background: item.value < 0 ? '#c8564f' : undefined, height: `${Math.max((Math.abs(item.value) / salesMax) * 100, item.value ? 4 : 0)}%` }} /></div><span>{shortDate(item.date)}</span></div>)}</div> : <Empty text="No sales were recorded in this period." />}
         </div></div>
         <div className="col-xl-4"><div className="panel h-100"><div className="panel-header"><div><h3>Prescription status</h3><small className="text-secondary">Workflow distribution</small></div></div>
           {statusTotal ? <div className="status-chart-wrap"><div className="donut-chart" style={{ background: `conic-gradient(${donut})` }}><div><strong>{statusTotal}</strong><small>Total</small></div></div><div className="chart-legend">{analytics.prescriptionStatuses.map((item, index) => <div key={item.status}><span style={{ background: statusColours[index % statusColours.length] }} /><label>{item.status.replaceAll('_', ' ').toLowerCase()}</label><strong>{item.count}</strong></div>)}</div></div> : <Empty text="No prescriptions were created in this period." />}
@@ -159,14 +165,14 @@ export function ReportsPage() {
 
       <div className="row g-4 mt-0">
         <div className="col-xl-7"><div className="panel h-100"><div className="panel-header"><div><h3>Top dispensed medicines</h3><small className="text-secondary">Ranked by quantity sold</small></div></div>
-          {analytics.topProducts.length ? <div className="horizontal-chart">{analytics.topProducts.map((item, index) => <div className="horizontal-row" key={item.name}><span className="chart-rank">{index + 1}</span><div><div className="horizontal-label"><strong>{item.name}</strong><span>{item.quantity.toLocaleString()} units · Revenue {money(item.revenue)} · Profit {money(item.profit)}</span></div><div className="horizontal-track"><div style={{ width: `${(item.quantity / productMax) * 100}%` }} /></div></div></div>)}</div> : <Empty text="No medicine sales are available for this period." />}
+          {analytics.topProducts.length ? <div className="horizontal-chart">{analytics.topProducts.map((item, index) => <div className="horizontal-row" key={item.name}><span className="chart-rank">{index + 1}</span><div><div className="horizontal-label"><strong>{item.name}</strong><span>{item.quantity.toLocaleString()} net units · Revenue {money(item.revenue)} · Profit {money(item.profit)}</span></div><div className="horizontal-track"><div className={item.quantity < 0 ? 'negative' : ''} style={{ width: `${(Math.abs(item.quantity) / productMax) * 100}%` }} /></div></div></div>)}</div> : <Empty text="No medicine sales are available for this period." />}
         </div></div>
         <div className="col-xl-5"><div className="panel h-100"><div className="panel-header"><div><h3>Pharmacist activity</h3><small className="text-secondary">Prescriptions issued by pharmacist</small></div></div>
           {analytics.pharmacistActivity.length ? <div className="activity-chart">{analytics.pharmacistActivity.map((item) => <div key={item.name}><div className="activity-label"><span>{item.name}</span><strong>{item.count}</strong></div><div className="horizontal-track"><div style={{ width: `${(item.count / pharmacistMax) * 100}%` }} /></div></div>)}</div> : <Empty text="No dispensing events are available for this period." />}
         </div></div>
       </div>
 
-      <div className="panel mt-4 mb-0"><div className="panel-header"><div><h3>Monthly stock movement report</h3><small className="text-secondary">Opening, received, dispensed, adjusted and closing stock values for the selected month.</small></div><div className="d-flex align-items-center gap-2"><input type="month" className="form-control form-control-sm" style={{ width: 'auto' }} value={monthlyMonth} max={today.slice(0, 7)} onChange={(event) => setMonthlyMonth(event.target.value)} /><button className="btn btn-sm btn-outline-primary" disabled={!!exporting} onClick={() => download('monthly', 'csv')}>CSV</button><button className="btn btn-sm btn-primary" disabled={!!exporting} onClick={() => download('monthly', 'pdf')}>PDF</button></div></div><span className="badge text-bg-light">Month: {monthlyMonth}</span></div>
+      <div className="panel mt-4 mb-0"><div className="panel-header"><div><h3>Monthly stock movement report</h3><small className="text-secondary">Opening, received, dispensed, adjusted and closing stock values for the selected month.</small></div><div className="d-flex align-items-center gap-2 flex-wrap"><input type="month" className="form-control form-control-sm" style={{ width: 'auto' }} value={monthlyMonth} max={today.slice(0, 7)} onChange={(event) => setMonthlyMonth(event.target.value)} /><button className="btn btn-sm btn-outline-primary" disabled={!!exporting} onClick={() => download('monthly', 'csv')}>CSV</button><button className="btn btn-sm btn-primary" disabled={!!exporting} onClick={() => download('monthly', 'pdf')}>PDF</button></div></div><span className="badge text-bg-light">Month: {monthlyMonth}</span></div>
     </>}
   </>;
 }

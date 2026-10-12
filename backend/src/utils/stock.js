@@ -50,13 +50,40 @@ const consumeReservations = async (tx, paymentRequestId) => {
   const reservations = await tx.stockReservation.findMany({ where: { paymentRequestId }, include: { batch: true } });
   const consumed = [];
   for (const reservation of reservations) {
-    const quantityBefore = reservation.batch.quantityAvailable;
-    const quantityAfter = quantityBefore.sub(reservation.quantity);
-    await tx.inventoryBatch.update({ where: { id: reservation.batchId }, data: { quantityAvailable: quantityAfter, quantityReserved: { decrement: reservation.quantity } } });
+    // Several invoice lines can reserve the same batch. Deduct from the live
+    // balance, then derive movement totals from the updated row rather than the
+    // batch snapshot shared by the reservations loaded above.
+    const updatedBatch = await tx.inventoryBatch.update({
+      where: { id: reservation.batchId },
+      data: {
+        quantityAvailable: { decrement: reservation.quantity },
+        quantityReserved: { decrement: reservation.quantity },
+      },
+    });
+    const quantityAfter = updatedBatch.quantityAvailable;
+    const quantityBefore = quantityAfter.add(reservation.quantity);
     consumed.push({ paymentRequestItemId: reservation.paymentRequestItemId, productId: reservation.batch.productId, batchId: reservation.batchId, quantity: reservation.quantity, quantityBefore, quantityAfter, unitCost: reservation.batch.purchasePrice });
   }
   if (reservations.length) await tx.stockReservation.deleteMany({ where: { paymentRequestId } });
   return consumed;
+};
+
+const reservationsNeedReallocation = (reservations, items, now = new Date()) => {
+  if (!reservations.length) return false;
+  const reservedByItem = new Map();
+  for (const reservation of reservations) {
+    reservedByItem.set(
+      reservation.paymentRequestItemId,
+      (reservedByItem.get(reservation.paymentRequestItemId) || new Prisma.Decimal(0)).add(reservation.quantity),
+    );
+    if (
+      reservation.batch.expiryDate < now
+      || reservation.batch.restricted
+      || reservation.batch.quantityAvailable.lessThan(reservation.quantity)
+      || reservation.batch.quantityReserved.lessThan(reservation.quantity)
+    ) return true;
+  }
+  return items.some((item) => !(reservedByItem.get(item.id) || new Prisma.Decimal(0)).equals(item.quantity));
 };
 
 // Fresh FIFO/FEFO allocation for a single item — the only path used before
@@ -65,7 +92,7 @@ const consumeReservations = async (tx, paymentRequestId) => {
 const allocateFresh = async (tx, paymentRequestItemId, productId, quantity, allocationOrder) => {
   const now = new Date();
   const batches = await tx.inventoryBatch.findMany({ where: { productId, quantityAvailable: { gt: 0 }, expiryDate: { gte: now }, restricted: false }, orderBy: allocationOrder });
-  const available = batches.reduce((sum, batch) => sum.add(batch.quantityAvailable), new Prisma.Decimal(0));
+  const available = usableStockTotal(batches);
   if (available.lessThan(quantity)) {
     const product = await tx.product.findUnique({ where: { id: productId }, select: { genericName: true } });
     throw new AppError(409, `Insufficient usable stock for ${product?.genericName || 'a requested item'}.`);
@@ -74,7 +101,9 @@ const allocateFresh = async (tx, paymentRequestItemId, productId, quantity, allo
   let left = new Prisma.Decimal(quantity);
   for (const batch of batches) {
     if (left.isZero()) break;
-    const take = Prisma.Decimal.min(left, batch.quantityAvailable);
+    const usable = usableQuantity(batch);
+    if (usable.lessThanOrEqualTo(0)) continue;
+    const take = Prisma.Decimal.min(left, usable);
     const quantityAfter = batch.quantityAvailable.sub(take);
     await tx.inventoryBatch.update({ where: { id: batch.id }, data: { quantityAvailable: quantityAfter } });
     consumed.push({ paymentRequestItemId, productId, batchId: batch.id, quantity: take, quantityBefore: batch.quantityAvailable, quantityAfter, unitCost: batch.purchasePrice });
@@ -87,6 +116,14 @@ const allocateFresh = async (tx, paymentRequestItemId, productId, quantity, allo
 // reservations if it has any, otherwise fall back to allocating fresh
 // (a bill paid before reservations existed).
 export const consumePaymentRequestStock = async (tx, paymentRequest, allocationOrder) => {
+  const existing = await tx.stockReservation.findMany({
+    where: { paymentRequestId: paymentRequest.id },
+    include: { batch: true },
+  });
+  if (reservationsNeedReallocation(existing, paymentRequest.items)) {
+    await releaseReservations(tx, paymentRequest.id);
+    await reserveStock(tx, paymentRequest.id, paymentRequest.items, allocationOrder);
+  }
   const reserved = await consumeReservations(tx, paymentRequest.id);
   if (reserved.length) return reserved;
   const consumed = [];

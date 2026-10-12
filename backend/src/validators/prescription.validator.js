@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 const item = z.object({
+  id: z.coerce.number().int().positive().optional(),
   productId: z.coerce.number().int().positive(), quantityPerDose: z.coerce.number().positive(),
   doseInputAmount: z.coerce.number().positive().optional().nullable(), doseInputUnit: z.string().trim().max(20).optional().nullable(),
   concentrationAmount: z.coerce.number().positive().optional().nullable(), concentrationUnit: z.string().trim().max(20).optional().nullable(),
@@ -22,22 +23,31 @@ const retailItem = z.object({
 const recipientBirthDate = z.coerce.date()
   .refine((value) => value <= new Date(), 'Recipient date of birth cannot be in the future.')
   .refine((value) => value.getUTCFullYear() >= 1895, 'Enter a valid recipient date of birth.');
+const prescriptionDate = z.coerce.date()
+  .refine((value) => value <= new Date(Date.now() + 5 * 60 * 1000), 'Prescription date and time cannot be in the future.');
 
 export const prescriptionSchema = z.object({
   patientId: z.coerce.number().int().positive(),
   prescriberTitle: z.enum(['Dr.', 'Prof.', 'Mr.', 'Ms.', 'Mrs.', 'Rev.']).optional().nullable(),
   prescriberName: z.string().trim().min(2).max(150),
   sourceUploadId: z.coerce.number().int().positive().optional().nullable(),
-  prescriberReference: z.string().trim().max(100).optional().nullable(), prescriptionDate: z.coerce.date(),
+  prescriberReference: z.string().trim().max(100).optional().nullable(), prescriptionDate,
   orderedForSelf: z.boolean().default(true), recipientName: z.string().trim().max(150).optional().nullable(),
   recipientRelationship: z.string().trim().max(100).optional().nullable(),
   recipientDateOfBirth: recipientBirthDate.optional().nullable(),
+  recipientAllergies: z.string().trim().max(500).optional().nullable(),
+  recipientConditions: z.string().trim().max(500).optional().nullable(),
   notes: z.string().trim().max(1000).optional().nullable(),
   pickupNote: z.string().trim().max(500).optional().nullable(),
   plannedPickupAt: z.coerce.date().optional().nullable(),
   items: z.array(item).min(1).max(30),
   retailItems: z.array(retailItem).max(50).default([]),
   refillsAllowed: z.coerce.number().int().min(0).max(12).default(0),
+  autoVerify: z.boolean().optional().default(false),
+  sendToCashier: z.boolean().optional().default(false),
+  couponCode: z.string().trim().max(40).optional().nullable(),
+  containerFee: z.coerce.number().nonnegative().optional().default(0),
+  tax: z.coerce.number().nonnegative().optional().default(0),
 }).superRefine((data,context)=>{
   if(!data.orderedForSelf){if(!data.recipientName)context.addIssue({code:'custom',path:['recipientName'],message:'Recipient name is required.'});if(!data.recipientRelationship)context.addIssue({code:'custom',path:['recipientRelationship'],message:'Relationship is required.'});if(!data.recipientDateOfBirth)context.addIssue({code:'custom',path:['recipientDateOfBirth'],message:'Recipient date of birth is required for medicine age checks.'})}
   if(new Set(data.retailItems.map((retail)=>retail.productId)).size!==data.retailItems.length)context.addIssue({code:'custom',path:['retailItems'],message:'Each retail item can appear only once.'});
@@ -45,15 +55,20 @@ export const prescriptionSchema = z.object({
 export const refillSchema = z.object({ notes: z.string().trim().max(1000).optional().nullable() });
 export const rejectSchema = z.object({ reason: z.string().trim().min(3).max(500) });
 const dispensingBase = {
-  items: z.array(z.object({ prescriptionItemId: z.coerce.number().int().positive(), quantity: z.coerce.number().positive() })).min(1),
+  revision: z.coerce.number().int().positive().optional(),
+  revisionReason: z.string().trim().max(500).optional().nullable(),
+  items: z.array(z.object({ prescriptionItemId: z.coerce.number().int().positive(), quantity: z.coerce.number().positive() })),
   retailItems: z.array(z.object({ productId: z.coerce.number().int().positive(), quantity: z.coerce.number().positive() })).max(50).default([]),
   notes: z.string().trim().max(500).optional().nullable(), couponCode: z.string().trim().max(40).optional().nullable(),
   containerFee: z.coerce.number().nonnegative().max(100_000_000).default(0),
   tax: z.coerce.number().nonnegative().default(0),
+  reservationHours: z.coerce.number().int().min(1).max(168).optional().nullable(),
 };
 const uniqueItems = (data) => new Set(data.items.map((itemValue) => itemValue.prescriptionItemId)).size === data.items.length;
+const hasItems = (data) => data.items.length + data.retailItems.length > 0;
 const uniqueRetailItems = (data) => new Set(data.retailItems.map((itemValue) => itemValue.productId)).size === data.retailItems.length;
 export const paymentRequestSchema = z.object(dispensingBase)
+  .refine(hasItems, { path: ['items'], message: 'At least one medicine or retail item is required.' })
   .refine(uniqueItems, { path: ['items'], message: 'Each prescription item can appear only once.' })
   .refine(uniqueRetailItems, { path: ['retailItems'], message: 'Each retail item can appear only once.' });
 export const dispenseQuoteSchema = z.object({
@@ -61,6 +76,7 @@ export const dispenseQuoteSchema = z.object({
   amountPaid: z.coerce.number().nonnegative().default(0),
   paymentMethod: z.enum(['CASH', 'CARD', 'OTHER']).default('CASH'),
 })
+  .refine(hasItems, { path: ['items'], message: 'At least one medicine or retail item is required.' })
   .refine(uniqueItems, { path: ['items'], message: 'Each prescription item can appear only once.' })
   .refine(uniqueRetailItems, { path: ['retailItems'], message: 'Each retail item can appear only once.' });
 export const dispenseSchema = z.object({
@@ -69,5 +85,6 @@ export const dispenseSchema = z.object({
   paymentRequestId: z.coerce.number().int().positive().optional().nullable(),
   pickupPin: z.string().regex(/^\d{6}$/, 'Enter the six-digit PIN from the paid receipt.').optional().nullable(),
 })
+  .refine(hasItems, { path: ['items'], message: 'At least one medicine or retail item is required.' })
   .refine(uniqueItems, { path: ['items'], message: 'Each prescription item can appear only once.' })
   .refine(uniqueRetailItems, { path: ['retailItems'], message: 'Each retail item can appear only once.' });

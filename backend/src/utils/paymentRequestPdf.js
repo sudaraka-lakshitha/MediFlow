@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { createCollectionSlipPdf } from './collectionSlipPdf.js';
 
 const money = (value) => `Rs. ${Number(value || 0).toFixed(2)}`;
 const productName = (product) => `${product.genericName}${product.strength && product.strength !== 'N/A' ? ` ${product.strength}` : ''}`;
@@ -27,16 +28,19 @@ const drawHeader = (doc, request, receipt) => {
   doc.roundedRect(left, 108, contentWidth, 24, 5).fillAndStroke(banner.bg, banner.border);
   doc.font('Helvetica-Bold').fontSize(10).fillColor(banner.fg).text(banner.label, left, 114, { width: contentWidth, align: 'center' });
 
+  const isSplit = request.paymentMethod === 'OTHER' && request.paymentReference?.startsWith('Split:');
   const details = [
     ['Customer', request.patient?.fullName || 'Walk-in customer'],
     [retail ? 'Sale type' : 'Prescription', retail ? 'Retail goods' : request.prescription?.prescriptionNumber],
     ['Prepared by', request.pharmacist.fullName],
     ...(request.cashier ? [['Payment received by', request.cashier.fullName]] : []),
+    ...(request.paymentMethod ? [['Payment method', isSplit ? 'SPLIT PAYMENT' : request.paymentMethod.replace('_', ' ')]] : []),
+    ...(request.paymentReference ? [[isSplit ? 'Split breakdown' : 'Payment reference', request.paymentReference]] : []),
   ];
   let y = 144;
   details.forEach(([label, value]) => {
     doc.font('Helvetica-Bold').fontSize(8).fillColor('#64748b').text(label.toUpperCase(), left, y, { width: 108 });
-    doc.font('Helvetica').fontSize(9.5).fillColor('#111827').text(String(value), left + 112, y - 1, { width: 280 });
+    doc.font('Helvetica').fontSize(9.5).fillColor('#111827').text(String(value), left + 112, y - 1, { width: 380 });
     y += 18;
   });
   return Math.max(y + 8, 222);
@@ -82,6 +86,8 @@ const drawTotals = (doc, request, startY) => {
     ['Tax', money(request.tax)],
     ['Total due', money(request.total)],
     ['Amount paid', money(request.amountPaid)],
+    ['Refunded', money(request.refundedAmount || 0)],
+    ['Net paid', money(Number(request.amountPaid) - Number(request.refundedAmount || 0))],
   ];
   rows.forEach(([label, value], index) => {
     const total = index === 4;
@@ -102,31 +108,72 @@ const drawPin = (doc, pin, startY, retail) => {
   return y + 122;
 };
 
-export const createPaymentRequestPdf = (request, receipt = false) => new Promise((resolve, reject) => {
+// The slip handed to the customer right after paying, while they still need to collect
+// their order. Kept short on purpose - just enough to match it to the order and show the
+// PIN, not the full itemized invoice.
+const drawCompactSlip = (doc, request) => {
+  const retail = request.type === 'RETAIL';
+  doc.font('Helvetica-Bold').fontSize(18).fillColor('#174a45').text('MediFlow Pharmacy', left, 42);
+  doc.font('Helvetica').fontSize(9).fillColor('#64748b').text('Payment receipt - awaiting collection', left, 66);
+  doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text(request.requestNumber, 330, 44, { width: right - 330, align: 'right' });
+  const created = new Date(request.createdAt).toISOString().replace('T', ' ').slice(0, 19);
+  doc.font('Helvetica').fontSize(8).fillColor('#64748b').text(`${created} UTC`, 330, 62, { width: right - 330, align: 'right' });
+  doc.moveTo(left, 86).lineTo(right, 86).lineWidth(1).strokeColor('#cfe0dc').stroke();
+
+  doc.font('Helvetica-Bold').fontSize(8).fillColor('#64748b').text('CUSTOMER', left, 98);
+  doc.font('Helvetica').fontSize(9.5).fillColor('#111827').text(request.patient?.fullName || 'Walk-in customer', left + 70, 97);
+
+  let y = 122;
+  doc.font('Helvetica-Bold').fontSize(8).fillColor('#355b56').text('ITEM', left, y);
+  doc.text('QTY', 380, y, { width: 50, align: 'right' });
+  doc.text('AMOUNT', 466, y, { width: 78, align: 'right' });
+  y += 14;
+  doc.moveTo(left, y).lineTo(right, y).lineWidth(0.7).strokeColor('#dce6e3').stroke();
+  y += 8;
+  request.items.forEach((item) => {
+    if (y > 740) { doc.addPage(); y = 46; }
+    doc.font('Helvetica').fontSize(8.8).fillColor('#111827');
+    doc.text(productName(item.product), left, y, { width: 300, ellipsis: true });
+    doc.text(`${item.quantity} ${item.product.unit}`, 380, y, { width: 50, align: 'right' });
+    doc.text(money(item.lineTotal), 466, y, { width: 78, align: 'right' });
+    y += 16;
+  });
+  y += 6;
+  doc.moveTo(left, y).lineTo(right, y).lineWidth(0.7).strokeColor('#dce6e3').stroke();
+  y += 12;
+  doc.font('Helvetica-Bold').fontSize(11.5).fillColor('#174a45');
+  doc.text('Total paid', 350, y, { width: 90, align: 'right' });
+  doc.text(money(request.amountPaid), 448, y, { width: right - 448, align: 'right' });
+  y += 26;
+
+  y = drawPin(doc, request.pickupPin, y - 18, retail);
+  doc.font('Helvetica').fontSize(7.5).fillColor('#82918e').text('MediFlow', left, 780, { width: contentWidth, align: 'center', lineBreak: false });
+};
+
+export const createPaymentRequestPdf = (request, receipt = false, paperWidth = 80) => {
+  if (receipt && request.status === 'PAID') return createCollectionSlipPdf(request, paperWidth);
+  return new Promise((resolve, reject) => {
   const doc = new PDFDocument({ size: 'A4', margin: 44, bufferPages: true });
   const chunks = [];
   doc.on('data', (chunk) => chunks.push(chunk));
   doc.on('end', () => resolve(Buffer.concat(chunks)));
   doc.on('error', reject);
 
-  let y = drawHeader(doc, request, receipt);
-  const retail = request.type === 'RETAIL';
-  y = drawTable(doc, request, y, retail);
-  const requiredHeight = receipt && request.pickupPin ? 250 : 120;
-  if (y + requiredHeight > 790) {
-    doc.addPage();
-    y = 46;
-  }
-  y = drawTotals(doc, request, y);
-
+  // While a paid order is still awaiting collection, the customer only needs a short slip
+  // to match against the PIN. Once collected (or before payment), the PIN is gone and this
+  // renders the normal full invoice instead - documentData() nulls the PIN in that case.
   if (receipt && request.pickupPin) {
-    y = drawPin(doc, request.pickupPin, y, retail);
-    const fulfilled = request.status === 'FULFILLED';
-    const note = fulfilled
-      ? 'This order has already been collected. This PIN is shown for record purposes only.'
-      : (retail ? 'Payment alone does not release the goods. The pharmacist must verify this PIN before completing the handover.' : 'Payment alone does not dispense medicine. The pharmacist must verify this PIN before completing the clinical handoff.');
-    doc.font('Helvetica').fontSize(8).fillColor('#64748b').text(note, left + 20, y + 18, { width: contentWidth - 40, align: 'center' });
+    drawCompactSlip(doc, request);
   } else {
+    let y = drawHeader(doc, request, receipt);
+    const retail = request.type === 'RETAIL';
+    y = drawTable(doc, request, y, retail);
+    if (y + 120 > 790) {
+      doc.addPage();
+      y = 46;
+    }
+    y = drawTotals(doc, request, y);
+
     const bottomMessages = {
       AWAITING_PAYMENT: retail
         ? 'Present this request at the cashier. Goods can be handed over only after full payment and PIN verification.'
@@ -143,12 +190,13 @@ export const createPaymentRequestPdf = (request, receipt = false) => new Promise
         : { bg: '#f7faf9', border: '#cfe0dc', fg: '#526b67', bold: false };
     doc.roundedRect(left, y + 18, contentWidth, 60, 8).fillAndStroke(boxStyle.bg, boxStyle.border);
     doc.font(boxStyle.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(9).fillColor(boxStyle.fg).text(message, left + 24, y + 37, { width: contentWidth - 48, align: 'center' });
-  }
 
-  const range = doc.bufferedPageRange();
-  for (let index = range.start; index < range.start + range.count; index += 1) {
-    doc.switchToPage(index);
-    doc.font('Helvetica').fontSize(7.5).fillColor('#82918e').text(`MediFlow - Page ${index + 1} of ${range.count}`, left, 780, { width: contentWidth, align: 'center', lineBreak: false });
+    const range = doc.bufferedPageRange();
+    for (let index = range.start; index < range.start + range.count; index += 1) {
+      doc.switchToPage(index);
+      doc.font('Helvetica').fontSize(7.5).fillColor('#82918e').text(`MediFlow - Page ${index + 1} of ${range.count}`, left, 780, { width: contentWidth, align: 'center', lineBreak: false });
+    }
   }
   doc.end();
-});
+  });
+};

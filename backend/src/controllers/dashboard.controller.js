@@ -2,6 +2,9 @@ import { prisma } from '../config/prisma.js';
 import { env } from '../config/env.js';
 import { operationSettingsService } from '../services/operationSettings.service.js';
 import { buildAuditWhere } from '../services/audit.service.js';
+import { localMonthStart } from '../utils/localDate.js';
+import { reconciliationService } from '../services/reconciliation.service.js';
+import { reportEvents, eventSummary } from '../services/reportEvents.js';
 
 const offsetMs = env.REPORT_TIMEZONE_OFFSET_MINUTES * 60_000;
 const localKey = (date) => new Date(date.getTime() + offsetMs).toISOString().slice(0, 10);
@@ -14,14 +17,12 @@ const localStart = (daysAgo = 0) => {
 export const dashboardController = {
   summary: async (req, res) => {
     if (req.user.role === 'CASHIER') {
-      const [awaitingPayment, paidToday, amountToday, directRetailToday, recentRequests] = await Promise.all([
+      const [awaitingPayment, ledger, recentRequests] = await Promise.all([
         prisma.paymentRequest.count({ where: { status: 'AWAITING_PAYMENT' } }),
-        prisma.paymentRequest.count({ where: { cashierId: req.user.id, paidAt: { gte: localStart() } } }),
-        prisma.paymentRequest.aggregate({ where: { cashierId: req.user.id, paidAt: { gte: localStart() } }, _sum: { amountPaid: true } }),
-        prisma.sale.aggregate({ where: { cashierId: req.user.id, paymentRequestId: null, createdAt: { gte: localStart() }, status: { not: 'VOIDED' } }, _sum: { amountPaid: true } }),
+        reconciliationService.summary(localKey(new Date()), req.user),
         prisma.paymentRequest.findMany({ include: { patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } } }, orderBy: { createdAt: 'desc' }, take: 8 }),
       ]);
-      return res.json({ data: { cashier: true, awaitingPayment, paidToday, amountToday: Number(amountToday._sum.amountPaid || 0) + Number(directRetailToday._sum.amountPaid || 0), recentRequests } });
+      return res.json({ data: { cashier: true, awaitingPayment, paidToday: new Set(ledger.entries.filter(entry => entry.direction === 'IN').map(entry => entry.id.replace(/-(cash|other)$/, ''))).size, amountToday: Number(Object.values(ledger.totals).reduce((sum, value) => sum + value.net, 0).toFixed(2)), paymentTotals: ledger.totals, reconciliationWarnings: ledger.warnings, recentRequests } });
     }
     if (req.user.role === 'PATIENT') {
       const profile = await prisma.patientProfile.findUnique({ where: { userId: req.user.id } });
@@ -35,19 +36,19 @@ export const dashboardController = {
       return res.json({ data: { activePrescriptions, completedPrescriptions, invoices, recentPrescriptions, recentInvoices } });
     }
 
-    const today = localStart(); const sevenDays = localStart(6); const monthStart = new Date(today); monthStart.setUTCDate(1);
+    const today = localStart(); const sevenDays = localStart(6); const monthStart = localMonthStart();
+    const [ledger, revenueEvents] = await Promise.all([
+      reconciliationService.summary(localKey(new Date()), req.user, prisma, true),
+      reportEvents({ start: sevenDays, end: new Date(today.getTime() + 86400000) }),
+    ]);
     const operationSettings = await operationSettingsService.get();
     const near = new Date(); near.setDate(near.getDate() + operationSettings.nearExpiryDays);
-    const [pendingPrescriptions, dispensedToday, salesToday, cashCollectedToday, directRetailCollectedToday, expiredBatches, nearExpiryBatches, activeUsers, salesWeek, dispensingWeek, prescriptionStatuses, recentActions, recentPrescriptions, recentSales, products, discountMonth] = await Promise.all([
+    const [pendingPrescriptions, dispensedToday, expiredBatches, nearExpiryBatches, activeUsers, dispensingWeek, prescriptionStatuses, recentActions, recentPrescriptions, recentSales, products, discountMonth] = await Promise.all([
       prisma.prescription.count({ where: { status: 'PENDING' } }),
       prisma.dispensing.count({ where: { dispensedAt: { gte: today } } }),
-      prisma.sale.aggregate({ where: { createdAt: { gte: today }, status: { not: 'VOIDED' } }, _sum: { total: true } }),
-      prisma.paymentRequest.aggregate({ where: { paidAt: { gte: today } }, _sum: { amountPaid: true } }),
-      prisma.sale.aggregate({ where: { paymentRequestId: null, createdAt: { gte: today }, status: { not: 'VOIDED' } }, _sum: { amountPaid: true } }),
       prisma.inventoryBatch.count({ where: { expiryDate: { lt: new Date() }, quantityAvailable: { gt: 0 } } }),
       prisma.inventoryBatch.count({ where: { expiryDate: { gte: new Date(), lte: near }, quantityAvailable: { gt: 0 } } }),
       req.user.role === 'ADMIN' ? prisma.user.count({ where: { active: true } }) : Promise.resolve(undefined),
-      prisma.sale.findMany({ where: { createdAt: { gte: sevenDays }, status: { not: 'VOIDED' } }, select: { total: true, createdAt: true } }),
       prisma.dispensing.findMany({ where: { dispensedAt: { gte: sevenDays } }, select: { dispensedAt: true } }),
       prisma.prescription.groupBy({ by: ['status'], _count: { _all: true } }),
       prisma.auditLog.findMany({ where: { ...buildAuditWhere(), success: true }, include: { user: { select: { fullName: true } } }, orderBy: { createdAt: 'desc' }, take: 8 }),
@@ -59,13 +60,14 @@ export const dashboardController = {
 
     const days = Array.from({ length: 7 }, (_, index) => { const date = new Date(sevenDays); date.setUTCDate(date.getUTCDate() + index); return localKey(date); });
     const salesMap = Object.fromEntries(days.map((day) => [day, 0])); const issueMap = Object.fromEntries(days.map((day) => [day, 0]));
-    salesWeek.forEach((sale) => { const key = localKey(sale.createdAt); salesMap[key] = (salesMap[key] || 0) + Number(sale.total); });
+    revenueEvents.forEach((entry) => { const key = localKey(entry.date); salesMap[key] = (salesMap[key] || 0) + entry.financials.netRevenue; });
     dispensingWeek.forEach((issue) => { const key = localKey(issue.dispensedAt); issueMap[key] = (issueMap[key] || 0) + 1; });
     const lowStock = products.map((product) => ({ id: product.id, name: `${product.genericName} ${product.strength}`, stock: product.batches.reduce((sum, batch) => sum + Number(batch.quantityAvailable) - Number(batch.quantityReserved || 0), 0), reorderLevel: product.reorderLevel })).filter((product) => product.stock <= product.reorderLevel).sort((a, b) => (a.stock / Math.max(1, a.reorderLevel)) - (b.stock / Math.max(1, b.reorderLevel))).slice(0, 6);
 
     res.json({ data: {
-      pendingPrescriptions, dispensedToday, salesToday: Number(salesToday._sum.total || 0),
-      cashCollectedToday: Number(cashCollectedToday._sum.amountPaid || 0) + Number(directRetailCollectedToday._sum.amountPaid || 0),
+      pendingPrescriptions, dispensedToday, salesToday: eventSummary(revenueEvents.filter(entry => entry.date >= today)).netRevenue,
+      cashCollectedToday: ledger.totals.CASH.net,
+      paymentTotals: ledger.totals, reconciliationWarnings: ledger.warnings,
       expiredBatches, nearExpiryBatches, activeUsers,
       operationSettings,
       salesSeries: days.map((date) => ({ date, sales: salesMap[date], dispensings: issueMap[date] })),

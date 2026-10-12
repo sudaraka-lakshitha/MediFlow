@@ -8,6 +8,8 @@ import { Modal, ModalActions } from "../components/Modal";
 import { PasswordField } from "../components/PasswordField";
 import { PredictiveSearchInput } from "../components/PredictiveSearchInput";
 import { Alert, Empty, Loading, Status } from "../components/Ui";
+import { Pagination } from "../components/Pagination";
+import { useClientPagination } from "../utils/useClientPagination";
 
 type UserRow = {
   id: number;
@@ -16,6 +18,7 @@ type UserRow = {
   phone?: string;
   role: "ADMIN" | "PHARMACIST" | "CASHIER";
   cashierAccess: boolean;
+  pharmacyReconciliationAccess: boolean;
   active: boolean;
   mustChangePassword: boolean;
   lastLoginAt?: string | null;
@@ -29,6 +32,7 @@ const empty = {
   password: "",
   role: "PHARMACIST" as UserRow["role"],
   cashierAccess: false,
+  pharmacyReconciliationAccess: false,
 };
 
 export function UsersPage() {
@@ -58,6 +62,7 @@ export function UsersPage() {
     const timer = setTimeout(load, 200);
     return () => clearTimeout(timer);
   }, [load]);
+  const pagination = useClientPagination(rows, 25);
   const openCreate = () => {
     setError("");
     setSelected(null);
@@ -74,6 +79,7 @@ export function UsersPage() {
       password: "",
       role: row.role,
       cashierAccess: row.cashierAccess,
+      pharmacyReconciliationAccess: Boolean(row.pharmacyReconciliationAccess),
     });
     setModal("edit");
   };
@@ -97,6 +103,7 @@ export function UsersPage() {
           phone: form.phone,
           role: form.role,
           cashierAccess: form.cashierAccess,
+          pharmacyReconciliationAccess: form.pharmacyReconciliationAccess,
         });
       if (modal === "reset" && selected)
         await api.post(`/users/${selected.id}/reset-password`, {
@@ -197,7 +204,7 @@ export function UsersPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {pagination.visibleRows.map((row) => (
                 <tr key={row.id}>
                   <td>
                     <strong>{row.fullName}</strong>
@@ -271,6 +278,7 @@ export function UsersPage() {
           </table>
           {!rows.length && <Empty />}
         </div>
+        <Pagination page={pagination.page} pageCount={pagination.pageCount} total={rows.length} pageSize={pagination.pageSize} onPageChange={pagination.setPage} />
       </div>
       {(modal === "create" || modal === "edit") && (
         <Modal
@@ -332,6 +340,7 @@ export function UsersPage() {
                     setForm({
                       ...form,
                       role: e.target.value as UserRow["role"],
+                      pharmacyReconciliationAccess: false,
                     })
                   }
                 >
@@ -357,6 +366,7 @@ export function UsersPage() {
                         setForm({
                           ...form,
                           cashierAccess: event.target.checked,
+                          pharmacyReconciliationAccess: event.target.checked && form.pharmacyReconciliationAccess,
                         })
                       }
                     />
@@ -372,6 +382,11 @@ export function UsersPage() {
                   </div>
                 </div>
               )}
+              {(form.role === 'CASHIER' || (form.role === 'PHARMACIST' && form.cashierAccess)) && <div className="full form-check border rounded-3 p-3">
+                <input id="pharmacyReconciliationAccess" className="form-check-input ms-0 me-2" type="checkbox" checked={form.pharmacyReconciliationAccess} onChange={event => setForm({ ...form, pharmacyReconciliationAccess: event.target.checked })} />
+                <label className="form-check-label" htmlFor="pharmacyReconciliationAccess"><strong>Allow pharmacy-wide daily reconciliation</strong><small className="d-block text-secondary">View all cashiers’ receipts, refunds and bank references, and confirm the pharmacy-wide daily balance. Individual cashier confirmations are still required. Changing permissions signs this user out.</small></label>
+              </div>}
+              {form.role === 'ADMIN' && <p className="full text-secondary small">Administrators automatically have pharmacy-wide reconciliation access.</p>}
               {modal === "create" && (
                 <div className="full">
                   <PasswordField
