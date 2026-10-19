@@ -1,3 +1,4 @@
+import { personNameInputProps } from '../utils/personName';
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
@@ -294,6 +295,7 @@ export function UsersPage() {
                 <input
                   className="form-control"
                   value={form.fullName}
+                  {...personNameInputProps((fullName) => setForm((previous) => ({ ...previous, fullName })))}
                   onChange={(e) =>
                     setForm({ ...form, fullName: e.target.value })
                   }

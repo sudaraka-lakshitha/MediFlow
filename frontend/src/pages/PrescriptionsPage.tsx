@@ -1,3 +1,4 @@
+import { personNameInputProps } from '../utils/personName';
 import {
   useCallback,
   useEffect,
@@ -2260,6 +2261,7 @@ export function PrescriptionsPage() {
                       className="form-control"
                       list="prescriber-options"
                       value={form.prescriberName}
+                      {...personNameInputProps((prescriberName) => setForm({ ...form, prescriberName }))}
                       onChange={(event) =>
                         setForm({
                           ...form,
@@ -2342,6 +2344,7 @@ export function PrescriptionsPage() {
                         <input
                           className="form-control"
                           value={form.recipientName}
+                          {...personNameInputProps((recipientName) => setForm({ ...form, recipientName }))}
                           onChange={(event) =>
                             setForm({
                               ...form,
@@ -4105,6 +4108,7 @@ export function PrescriptionsPage() {
                     inputMode={key === "phone" ? "numeric" : undefined}
                     pattern={key === "phone" ? "0[0-9]{9}" : undefined}
                     maxLength={key === "phone" ? 10 : undefined}
+                    {...(key === "fullName" ? personNameInputProps((fullName) => setPatientForm((previous) => ({ ...previous, fullName }))) : {})}
                     max={key === "dateOfBirth" ? new Date().toISOString().slice(0, 10) : undefined}
                     value={patientForm[key]}
                     onChange={(event) =>

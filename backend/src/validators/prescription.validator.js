@@ -1,3 +1,4 @@
+import { personNameSchema, optionalPersonNameSchema } from './personName.js';
 import { z } from 'zod';
 
 const item = z.object({
@@ -29,10 +30,10 @@ const prescriptionDate = z.coerce.date()
 export const prescriptionSchema = z.object({
   patientId: z.coerce.number().int().positive(),
   prescriberTitle: z.enum(['Dr.', 'Prof.', 'Mr.', 'Ms.', 'Mrs.', 'Rev.']).optional().nullable(),
-  prescriberName: z.string().trim().min(2).max(150),
+  prescriberName: personNameSchema,
   sourceUploadId: z.coerce.number().int().positive().optional().nullable(),
   prescriberReference: z.string().trim().max(100).optional().nullable(), prescriptionDate,
-  orderedForSelf: z.boolean().default(true), recipientName: z.string().trim().max(150).optional().nullable(),
+  orderedForSelf: z.boolean().default(true), recipientName: optionalPersonNameSchema,
   recipientRelationship: z.string().trim().max(100).optional().nullable(),
   recipientDateOfBirth: recipientBirthDate.optional().nullable(),
   recipientAllergies: z.string().trim().max(500).optional().nullable(),

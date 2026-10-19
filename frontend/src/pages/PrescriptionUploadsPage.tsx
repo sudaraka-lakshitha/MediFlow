@@ -1,3 +1,4 @@
+import { personNameInputProps } from '../utils/personName';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api/client";
 import { stockQuantityStep } from "../utils/unitMeasure";
@@ -1345,6 +1346,7 @@ export function PrescriptionUploadsPage() {
                         className="form-control"
                         placeholder="Full name"
                         value={uploadForm.recipientName}
+                        {...personNameInputProps((recipientName) => setUploadForm((previous) => ({ ...previous, recipientName })))}
                         onChange={(event) =>
                           setUploadForm({ ...uploadForm, recipientName: event.target.value })
                         }

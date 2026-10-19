@@ -1,3 +1,4 @@
+import { personNameInputProps } from '../utils/personName';
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api/client";
 import { pagedList } from "../api/pagedList";
@@ -330,6 +331,7 @@ export function PatientsPage() {
                     inputMode={key === "phone" ? "numeric" : undefined}
                     pattern={key === "phone" ? "0[0-9]{9}" : undefined}
                     maxLength={key === "phone" ? 10 : undefined}
+                    {...(key === "fullName" ? personNameInputProps((fullName) => setForm((previous) => ({ ...previous, fullName }))) : {})}
                     value={form[key as keyof typeof form]}
                     onChange={(e) =>
                       setForm({

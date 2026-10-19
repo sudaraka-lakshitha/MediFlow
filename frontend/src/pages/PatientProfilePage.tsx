@@ -1,3 +1,4 @@
+import { personNameInputProps } from '../utils/personName';
 import { useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api/client";
 import { useAuth } from "../auth/useAuth";
@@ -83,6 +84,7 @@ export function PatientProfilePage() {
               <input
                 className="form-control"
                 value={fullName}
+                {...personNameInputProps(setFullName)}
                 onChange={(e) => setFullName(e.target.value)}
                 required
               />

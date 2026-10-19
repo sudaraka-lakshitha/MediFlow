@@ -1,3 +1,4 @@
+import { optionalPersonNameSchema } from './personName.js';
 import { z } from 'zod';
 
 const recipientBirthDate = z.coerce.date()
@@ -11,7 +12,7 @@ export const uploadPrescriptionSchema = z.object({
   patientNote: z.string().trim().max(500).optional().nullable(),
   prepareRequested: z.boolean(),
   orderedForSelf: z.boolean().default(true),
-  recipientName: z.string().trim().max(150).optional().nullable(),
+  recipientName: optionalPersonNameSchema,
   recipientRelationship: z.string().trim().max(100).optional().nullable(),
   recipientDateOfBirth: recipientBirthDate.optional().nullable(),
   recipientAllergies: z.string().trim().max(500).optional().nullable(),

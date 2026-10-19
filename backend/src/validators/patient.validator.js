@@ -1,8 +1,9 @@
+import { personNameSchema } from './personName.js';
 import { z } from 'zod';
 
 const birthDate = z.coerce.date().refine((value) => value <= new Date(), 'Date of birth cannot be in the future.');
 const profileFields = {
-  fullName: z.string().trim().min(2).max(150),
+  fullName: personNameSchema,
   email: z.string().email().max(190),
   phone: z.string().trim().regex(/^0\d{9}$/, 'Phone number must contain exactly 10 digits and start with 0.').optional().nullable().or(z.literal('')),
   dateOfBirth: birthDate.optional().nullable(),
@@ -26,7 +27,7 @@ export const updatePatientSchema = z.object({
   email: z.string().email().max(190).optional(),
 });
 export const updateOwnProfileSchema = z.object({
-  fullName: z.string().trim().min(2).max(150).optional(),
+  fullName: personNameSchema.optional(),
   phone: z.string().trim().regex(/^0\d{9}$/, 'Phone number must contain exactly 10 digits and start with 0.').optional().nullable().or(z.literal('')),
   dateOfBirth: birthDate.optional().nullable(),
   address: z.string().trim().max(300).optional().nullable(),
