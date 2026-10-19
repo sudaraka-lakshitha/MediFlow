@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 import { Alert, Empty, Loading, Metric, Status } from "../components/Ui";
+import { DashboardActivity } from "../components/DashboardActivity";
 
 const money = (value: number) =>
   `Rs. ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -247,6 +248,7 @@ export function DashboardPage() {
             <Empty text="No cashier requests have been created." />
           )}
         </div>
+        <DashboardActivity items={data?.recentActions} />
       </>
     );
   if (patient)
@@ -534,30 +536,7 @@ export function DashboardPage() {
           </div>
         </div>
         <div className="col-xl-4">
-          <div className="panel h-100">
-            <div className="panel-header">
-              <div>
-                <h3>Recent system actions</h3>
-                <small className="text-secondary">Audit-backed activity</small>
-              </div>
-            </div>
-            {data?.recentActions?.map((item: any) => (
-              <div className="dashboard-list-row compact" key={item.id}>
-                <div>
-                  <strong>
-                    {item.action.replaceAll("_", " ").toLowerCase()}
-                  </strong>
-                  <small>
-                    {item.user?.fullName || "System"} —{" "}
-                    {new Date(item.createdAt).toLocaleString()}
-                  </small>
-                </div>
-                <i
-                  className={`bi bi-${item.success ? "check-circle text-success" : "x-circle text-danger"}`}
-                />
-              </div>
-            ))}
-          </div>
+          <DashboardActivity items={data?.recentActions} pharmacyWide={user!.role === "ADMIN"} />
         </div>
       </div>
       <div className="row g-4 mt-0">

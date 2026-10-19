@@ -14,15 +14,27 @@ const localStart = (daysAgo = 0) => {
   return new Date(Date.UTC(year, month - 1, day - daysAgo) - offsetMs);
 };
 
+const recentActivity = (user) => prisma.auditLog.findMany({
+  where: {
+    ...buildAuditWhere(),
+    success: true,
+    ...(user.role === 'ADMIN' ? {} : { userId: user.id }),
+  },
+  select: { id: true, action: true, createdAt: true, success: true, user: { select: { fullName: true } } },
+  orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+  take: 8,
+});
+
 export const dashboardController = {
   summary: async (req, res) => {
     if (req.user.role === 'CASHIER') {
-      const [awaitingPayment, ledger, recentRequests] = await Promise.all([
+      const [awaitingPayment, ledger, recentRequests, recentActions] = await Promise.all([
         prisma.paymentRequest.count({ where: { status: 'AWAITING_PAYMENT' } }),
         reconciliationService.summary(localKey(new Date()), req.user),
         prisma.paymentRequest.findMany({ include: { patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } } }, orderBy: { createdAt: 'desc' }, take: 8 }),
+        recentActivity(req.user),
       ]);
-      return res.json({ data: { cashier: true, awaitingPayment, paidToday: new Set(ledger.entries.filter(entry => entry.direction === 'IN').map(entry => entry.id.replace(/-(cash|other)$/, ''))).size, amountToday: Number(Object.values(ledger.totals).reduce((sum, value) => sum + value.net, 0).toFixed(2)), paymentTotals: ledger.totals, reconciliationWarnings: ledger.warnings, recentRequests } });
+      return res.json({ data: { cashier: true, awaitingPayment, paidToday: new Set(ledger.entries.filter(entry => entry.direction === 'IN').map(entry => entry.id.replace(/-(cash|other)$/, ''))).size, amountToday: Number(Object.values(ledger.totals).reduce((sum, value) => sum + value.net, 0).toFixed(2)), paymentTotals: ledger.totals, reconciliationWarnings: ledger.warnings, recentRequests, recentActions } });
     }
     if (req.user.role === 'PATIENT') {
       const profile = await prisma.patientProfile.findUnique({ where: { userId: req.user.id } });
@@ -51,7 +63,7 @@ export const dashboardController = {
       req.user.role === 'ADMIN' ? prisma.user.count({ where: { active: true } }) : Promise.resolve(undefined),
       prisma.dispensing.findMany({ where: { dispensedAt: { gte: sevenDays } }, select: { dispensedAt: true } }),
       prisma.prescription.groupBy({ by: ['status'], _count: { _all: true } }),
-      prisma.auditLog.findMany({ where: { ...buildAuditWhere(), success: true }, include: { user: { select: { fullName: true } } }, orderBy: { createdAt: 'desc' }, take: 8 }),
+      recentActivity(req.user),
       prisma.prescription.findMany({ include: { patient: { include: { user: { select: { fullName: true } } } } }, orderBy: { createdAt: 'desc' }, take: 6 }),
       prisma.sale.findMany({ include: { patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } }, discountApplications: true }, orderBy: { createdAt: 'desc' }, take: 6 }),
       prisma.product.findMany({ where: { active: true }, include: { batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: new Date() }, restricted: false }, select: { quantityAvailable: true, quantityReserved: true } } } }),
