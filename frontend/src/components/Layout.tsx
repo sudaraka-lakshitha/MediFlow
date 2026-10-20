@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useState, type FormEvent } from 'react';
+import { Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { api, errorMessage } from '../api/client';
 import { type Role } from '../auth/AuthSession';
@@ -42,6 +42,9 @@ export function Layout() {
   const [busy, setBusy] = useState(false);
   const [attention, setAttention] = useState<AttentionSummary>({});
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [mobileViewport, setMobileViewport] = useState(() => window.matchMedia('(max-width: 900px)').matches);
+  const navigationRef = useRef<HTMLElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const [online, setOnline] = useState(true);
   const [successMessage, setSuccessMessage] = useState('');
   const forcedPasswordChange = Boolean(user?.mustChangePassword);
@@ -49,12 +52,44 @@ export function Layout() {
   useEffect(() => { if (forcedPasswordChange) setPasswordOpen(true); }, [forcedPasswordChange]);
   useEffect(() => { setMobileNavOpen(false); }, [location.pathname]);
   useEffect(() => {
-    if (!mobileNavOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') setMobileNavOpen(false); };
+    const media = window.matchMedia('(max-width: 900px)');
+    const changed = () => {
+      setMobileViewport(media.matches);
+      setMobileNavOpen(false);
+    };
+    media.addEventListener('change', changed);
+    return () => media.removeEventListener('change', changed);
+  }, []);
+  useEffect(() => {
+    if (!mobileNavOpen || !mobileViewport) return;
+    const navigation = navigationRef.current;
+    const opener = menuButtonRef.current;
+    if (!navigation) return;
+    const focusable = () => Array.from(navigation.querySelectorAll<HTMLElement>('a[href], button:not([disabled])'))
+      .filter(element => element.getClientRects().length > 0);
+    const focusMenu = () => focusable()[0]?.focus();
+    const onFocus = (event: FocusEvent) => {
+      if (!navigation.contains(event.target as Node)) focusMenu();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); setMobileNavOpen(false); }
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      const first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
     document.body.classList.add('mobile-nav-active');
     window.addEventListener('keydown', onKeyDown);
-    return () => { document.body.classList.remove('mobile-nav-active'); window.removeEventListener('keydown', onKeyDown); };
-  }, [mobileNavOpen]);
+    document.addEventListener('focusin', onFocus);
+    focusMenu();
+    return () => {
+      document.body.classList.remove('mobile-nav-active');
+      window.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('focusin', onFocus);
+      if (opener?.isConnected && opener.getClientRects().length) opener.focus();
+    };
+  }, [mobileNavOpen, mobileViewport]);
   useEffect(() => {
     let successTimer = 0;
     const connectivity = (event: Event) => setOnline(Boolean((event as CustomEvent<boolean>).detail));
@@ -100,6 +135,7 @@ export function Layout() {
   const initials = user!.fullName.split(' ').map((part) => part[0]).slice(0, 2).join('');
   const today = new Intl.DateTimeFormat('en-LK', { weekday: 'short', day: '2-digit', month: 'short' }).format(new Date());
   const openPassword = () => {
+    setMobileNavOpen(false);
     setPasswords({ currentPassword: '', newPassword: '', confirmPassword: '' });
     setPasswordError(''); setPasswordMessage(''); setPasswordOpen(true);
   };
@@ -117,7 +153,7 @@ export function Layout() {
   };
 
   return <div className="app-shell">
-    <aside className={`sidebar ${mobileNavOpen ? 'mobile-open' : ''}`} id="mobile-navigation" aria-label="Workspace navigation">
+    <aside ref={navigationRef} className={`sidebar ${mobileNavOpen ? 'mobile-open' : ''}`} id="mobile-navigation" role={mobileViewport && mobileNavOpen ? 'dialog' : undefined} aria-modal={mobileViewport && mobileNavOpen ? true : undefined} aria-label="Workspace navigation" inert={mobileViewport && !mobileNavOpen}>
       <div className="brand">
         <span className="brand-mark"><i className="bi bi-plus-lg" /></span>
         <div><strong>MediFlow</strong><small>Pharmacy operations</small></div>
@@ -128,15 +164,15 @@ export function Layout() {
         {visible.map((item) => {
           const itemAttention = item.attentionKey ? attention[item.attentionKey] : undefined;
           return (
-            <NavLink key={item.to} to={item.to} end={item.to === '/'} title={itemAttention?.count ? itemAttention.label : undefined}>
-              <span className="nav-icon"><i className={`bi bi-${item.icon}`} /></span>
+            <NavLink key={item.to} to={item.to} end={item.to === '/'} title={itemAttention?.count ? itemAttention.label : undefined} onClick={() => setMobileNavOpen(false)}>
+              <span className="nav-icon" aria-hidden="true"><i className={`bi bi-${item.icon}`} /></span>
               <span className="nav-label">{item.label}</span>
               {Boolean(itemAttention?.count) && (
                 <span className={`nav-attention nav-attention-${itemAttention!.tone}`} aria-label={`${itemAttention!.count} items need attention`}>
                   {itemAttention!.count > 99 ? '99+' : itemAttention!.count}
                 </span>
               )}
-              <i className="bi bi-chevron-right nav-chevron" />
+              <i className="bi bi-chevron-right nav-chevron" aria-hidden="true" />
             </NavLink>
           );
         })}
@@ -153,9 +189,9 @@ export function Layout() {
         </span>
       </div>
     </aside>
-    <main className="main-content">
+    <main className="main-content" inert={mobileViewport && mobileNavOpen}>
       <header className="topbar">
-        <button className="mobile-menu-button" type="button" aria-label="Open navigation menu" aria-controls="mobile-navigation" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(true)}>
+        <button ref={menuButtonRef} className="mobile-menu-button" type="button" aria-label="Open navigation menu" aria-controls="mobile-navigation" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(true)}>
           <i className="bi bi-list" />
         </button>
         <div className="topbar-context">
@@ -182,7 +218,7 @@ export function Layout() {
       </div>
     </main>
     {successMessage && <div className="success-toast" role="status" aria-live="polite"><i className="bi bi-check-circle-fill" aria-hidden="true" /><span>{successMessage}</span><button type="button" aria-label="Dismiss notification" onClick={() => setSuccessMessage('')}><i className="bi bi-x-lg" /></button></div>}
-    {mobileNavOpen && <button className="mobile-nav-backdrop" type="button" aria-label="Close navigation menu" onClick={() => setMobileNavOpen(false)} />}
+    {mobileNavOpen && <button className="mobile-nav-backdrop" type="button" tabIndex={-1} aria-label="Close navigation menu" onClick={() => setMobileNavOpen(false)} />}
     {passwordOpen && <Modal title={forcedPasswordChange ? 'Replace temporary password' : 'Change my password'} onClose={() => !forcedPasswordChange && setPasswordOpen(false)} size="sm" closable={!forcedPasswordChange}><form onSubmit={changePassword}><Alert message={passwordError} />{passwordMessage && <div className="alert alert-success py-2">{passwordMessage}</div>}<div className="d-grid gap-3"><PasswordField label="Current password" value={passwords.currentPassword} onChange={(currentPassword) => setPasswords({ ...passwords, currentPassword })} autoComplete="current-password" /><PasswordField label="New password" value={passwords.newPassword} onChange={(newPassword) => setPasswords({ ...passwords, newPassword })} /><PasswordField label="Confirm new password" value={passwords.confirmPassword} onChange={(confirmPassword) => setPasswords({ ...passwords, confirmPassword })} /></div><ModalActions onClose={() => setPasswordOpen(false)} submitLabel="Change password" busy={busy} showCancel={!forcedPasswordChange} /></form></Modal>}
     {activityOpen && canReviewOwnActivity && <MyActivityModal user={user!} onClose={() => setActivityOpen(false)} />}
   </div>;

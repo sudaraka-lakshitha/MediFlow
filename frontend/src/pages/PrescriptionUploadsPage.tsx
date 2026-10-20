@@ -1524,8 +1524,8 @@ export function PrescriptionUploadsPage() {
             </div>
             <form onSubmit={submitReview} className="prescription-review-form">
               {!review.orderedForSelf && (
-                <div className={`alert ${review.recipientAllergies || review.recipientConditions ? "alert-warning" : "alert-info"} small mb-3`}>
-                  <div className="d-flex align-items-center justify-content-between mb-1">
+                <div className={`recipient-clinical-summary alert ${review.recipientAllergies || review.recipientConditions ? "alert-warning" : "alert-info"} small mb-3`}>
+                  <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-1">
                     <strong className="d-flex align-items-center gap-1">
                       <i className="bi bi-person-heart" />
                       Recipient: {review.recipientName} ({review.recipientRelationship})

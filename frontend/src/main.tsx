@@ -13,3 +13,14 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 )
+
+// Registration happens after the initial page load and never blocks the UI.
+// Keep API and clinical data online-only; the worker caches public build files.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  const registerUiCache = () => {
+    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+      .catch(() => { /* Browser caching still works if offline cache is unavailable. */ });
+  };
+  if (document.readyState === 'complete') registerUiCache();
+  else window.addEventListener('load', registerUiCache, { once: true });
+}

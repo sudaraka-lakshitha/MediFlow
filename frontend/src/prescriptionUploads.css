@@ -3,6 +3,14 @@
   align-items: center;
   gap: 12px;
 }
+.recipient-clinical-summary.alert {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.recipient-clinical-summary .badge {
+  white-space: normal;
+  text-align: left;
+}
 .upload-filter .form-select {
   width: 310px;
 }
