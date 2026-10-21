@@ -182,11 +182,43 @@ model User {
   paymentSlipsUploaded        PaymentSlip[]              @relation("SlipUploader")
   paymentSlipsReviewed        PaymentSlip[]              @relation("SlipReviewer")
   passwordResetOtp            PasswordResetOtp?
+  authSessions                AuthSession[]
   createdAt                   DateTime                  @default(now()) @map("created_at")
   updatedAt                   DateTime                  @updatedAt @map("updated_at")
 
   @@index([role, active])
   @@map("users")
+}
+
+model WorkflowLease {
+  resourceKey String   @id @map("resource_key") @db.VarChar(80)
+  token       String   @db.VarChar(36)
+  userId      Int      @map("user_id")
+  sessionId   String   @map("session_id") @db.VarChar(36)
+  clientId    String   @map("client_id") @db.VarChar(36)
+  expiresAt   DateTime @map("expires_at")
+  processing  Boolean  @default(false)
+
+  @@index([expiresAt])
+  @@map("workflow_leases")
+}
+
+model AuthSession {
+  id             String    @id @db.VarChar(36)
+  userId         Int       @map("user_id")
+  generation     Int       @default(0)
+  lastActiveAt   DateTime  @default(now()) @map("last_active_at")
+  expiresAt      DateTime  @map("expires_at")
+  lockedAt       DateTime? @map("locked_at")
+  revokedAt      DateTime? @map("revoked_at")
+  unlockAttempts Int       @default(0) @map("unlock_attempts")
+  retryAfter     DateTime? @map("retry_after")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("auth_sessions")
 }
 
 model PasswordResetOtp {

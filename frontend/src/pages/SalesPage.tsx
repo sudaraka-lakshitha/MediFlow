@@ -71,6 +71,7 @@ function BankAccountDetails({
   );
 }
 
+import { WorkflowGuard } from '../components/WorkflowGuard';
 export function SalesPage() {
   const { user } = useAuth();
   const staff = user!.role !== "PATIENT";
@@ -410,8 +411,11 @@ export function SalesPage() {
       ),
     });
   if (loading) return <Loading />;
+  const workflowInvoice = payOnline?.invoice || invoiceAck?.invoice || declineTarget?.invoice || cancelRequestTarget?.invoice || handover;
+  const workflowSale = payment || voidTarget;
   return (
-    <>
+    <WorkflowGuard resource={workflowInvoice?.id ? `payment/${workflowInvoice.id}` : workflowSale?.id ? `sale/${workflowSale.id}` : null}
+      onCancel={() => { setPayOnline(null); setInvoiceAck(null); setDeclineTarget(null); setCancelRequestTarget(null); setHandover(null); setPayment(null); setVoidTarget(null); }}>
       <div className="page-intro">
         <div>
           <h2>{staff ? "Sales & billing" : "My invoices"}</h2>
@@ -1557,6 +1561,6 @@ export function SalesPage() {
           </form>
         </Modal>
       )}
-    </>
+    </WorkflowGuard>
   );
 }

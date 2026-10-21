@@ -8,6 +8,7 @@ const keys = {
   requirePickupPin: "requirePickupPin",
   cashierCanDispenseAtPayment: "cashierCanDispenseAtPayment",
   cashReservationHours: "cashReservationHours",
+  sessionIdleMinutes: "sessionIdleMinutes",
 };
 
 const defaults = {
@@ -18,6 +19,7 @@ const defaults = {
   requirePickupPin: true,
   cashierCanDispenseAtPayment: false,
   cashReservationHours: 24,
+  sessionIdleMinutes: 15,
 };
 
 const settingMap = (rows) =>
@@ -43,6 +45,8 @@ export const operationSettingsService = {
     const parsedAuditTrashDays = Number(values[keys.auditTrashRetentionDays]);
     const parsedCashReservationHours = Number(values[keys.cashReservationHours]);
     return {
+      sessionIdleMinutes: Number.isInteger(Number(values[keys.sessionIdleMinutes])) && Number(values[keys.sessionIdleMinutes]) >= 5 && Number(values[keys.sessionIdleMinutes]) <= 60
+        ? Number(values[keys.sessionIdleMinutes]) : defaults.sessionIdleMinutes,
       allocationMethod,
       nearExpiryDays:
         Number.isInteger(parsedDays) && parsedDays >= 7 && parsedDays <= 365
@@ -75,6 +79,11 @@ export const operationSettingsService = {
 
   async update(data) {
     await prisma.$transaction([
+      prisma.systemSetting.upsert({
+        where: { key: keys.sessionIdleMinutes },
+        create: { key: keys.sessionIdleMinutes, value: String(data.sessionIdleMinutes ?? defaults.sessionIdleMinutes) },
+        update: { value: String(data.sessionIdleMinutes ?? defaults.sessionIdleMinutes) },
+      }),
       prisma.systemSetting.upsert({
         where: { key: keys.allocationMethod },
         create: { key: keys.allocationMethod, value: data.allocationMethod },

@@ -64,7 +64,8 @@ export const invoiceAcknowledgementSchema = z.object({
   paymentChoice: z.enum(['CASH', 'BANK_TRANSFER']),
   customerNote: z.string().trim().max(500).optional().nullable(),
 });
-export const paymentRequestController = {
+import { protectWorkflowController } from '../middleware/workflowLease.js';
+export const paymentRequestController = protectWorkflowController({
   preview: async (req,res) => {
     const bill = await paymentRequestService.get(Number(req.params.id),req.user);
     res.setHeader('Cache-Control','no-store');
@@ -237,4 +238,4 @@ export const paymentRequestController = {
     res.setHeader('Cache-Control', 'no-store');
     res.type('application/pdf').send(await createPaymentRequestPdf(data, true, Number(req.query.width) === 58 ? 58 : 80));
   },
-};
+});

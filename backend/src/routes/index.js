@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { refundRoutes } from './refund.routes.js';
+import { workflowLeaseRoutes } from './workflowLease.routes.js';
 import { reconciliationRoutes } from './reconciliation.routes.js';
 import { z } from 'zod';
 import { authRoutes } from './auth.routes.js';
@@ -32,6 +33,7 @@ import { navigationAttentionController } from '../controllers/navigationAttentio
 import { cleanupExpiredCashReservations } from '../utils/reservationExpiry.js';
 
 export const apiRoutes = Router();
+apiRoutes.use('/workflow-locks', workflowLeaseRoutes);
 apiRoutes.use('/staff-activity-report', staffActivityReportRoutes);
 // Refresh stock holds before any authenticated availability or order operation.
 apiRoutes.use(['/catalog', '/inventory', '/prescriptions', '/prescription-uploads', '/payment-requests', '/sales', '/cashier', '/dashboard', '/reports'], authenticate, asyncHandler(async (_req, _res, next) => {

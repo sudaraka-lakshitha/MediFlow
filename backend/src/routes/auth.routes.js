@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import { authController } from '../controllers/auth.controller.js';
-import { authenticate } from '../middleware/authenticate.js';
+import { authenticate, authenticateSessionControl } from '../middleware/authenticate.js';
+import { z } from 'zod';
+import { sessionService } from '../services/session.service.js';
+import { recordRequestAudit } from '../services/audit.service.js';
 import { validate } from '../middleware/validate.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { changePasswordSchema, forgotPasswordSchema, loginSchema, registerSchema, selfResetPasswordSchema, verifyResetOtpSchema } from '../validators/auth.validator.js';
@@ -45,5 +48,31 @@ authRoutes.post('/forgot-password', resetRequestLimiter, validate({ body: forgot
 authRoutes.post('/verify-reset-otp', resetVerificationLimiter, validate({ body: verifyResetOtpSchema }), asyncHandler(authController.verifyResetOtp));
 authRoutes.post('/reset-password', validate({ body: selfResetPasswordSchema }), asyncHandler(authController.selfResetPassword));
 authRoutes.get('/me', authenticate, asyncHandler(authController.me));
+authRoutes.get('/session', authenticateSessionControl, (req, res) => res.json({ session: req.sessionView }));
+authRoutes.post('/session/activity', authenticateSessionControl, asyncHandler(async (req, res) => {
+  res.json({ session: await sessionService.activity(req.authSession) });
+}));
+authRoutes.post('/session/lock', authenticateSessionControl, asyncHandler(async (req, res) => {
+  await sessionService.lock(req.authSession);
+  await recordRequestAudit(req, { action: 'SESSION_LOCKED', entityType: 'USER', entityId: req.user.id });
+  res.json({ message: 'Workspace locked.' });
+}));
+authRoutes.post('/session/unlock', authenticateSessionControl,
+  validate({ body: z.object({ password: z.string().min(1).max(256) }) }),
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await sessionService.unlock(req.authSession, req.body.password, req.user);
+      await recordRequestAudit(req, { action: 'SESSION_UNLOCKED', entityType: 'USER', entityId: req.user.id });
+      res.json(result);
+    } catch (error) {
+      await recordRequestAudit(req, { action: 'SESSION_UNLOCK_FAILED', entityType: 'USER', entityId: req.user.id, success: false });
+      throw error;
+    }
+  }));
+authRoutes.post('/session/logout', authenticateSessionControl, asyncHandler(async (req, res) => {
+  await sessionService.revoke(req.authSession);
+  await recordRequestAudit(req, { action: 'LOGOUT', entityType: 'USER', entityId: req.user.id });
+  res.json({ message: 'Signed out.' });
+}));
 authRoutes.post('/change-password', authenticate, validate({ body: changePasswordSchema }), asyncHandler(authController.changePassword));
 authRoutes.patch('/profile', authenticate, validate({ body: updateOwnProfileSchema }), asyncHandler(authController.updateProfile));

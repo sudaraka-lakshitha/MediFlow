@@ -1,0 +1,4 @@
+.session-shield { position: fixed; inset: 0; z-index: 2147483640; background: #eef4f6; }
+.session-shield .modal-backdrop-custom { background: #eef4f6; }
+.session-warning { position: sticky; top: 0; z-index: 2147483639; width: min(720px, calc(100% - 24px)); margin: 12px auto; padding: 14px; border: 1px solid #d29a34; border-radius: 12px; background: #fff6df; color: #45320d; box-shadow: 0 4px 24px #0002; }
+.session-warning p { margin: 6px 0 12px; }

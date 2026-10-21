@@ -29,7 +29,7 @@ export interface AuthValue {
   register(data: object): Promise<void>;
   passwordChanged(): void;
   acceptSession(data: { token: string; user: User }): void;
-  logout(): void;
+  logout(): Promise<void>;
 }
 
 export const AuthContext = createContext<AuthValue | null>(null);

@@ -2,7 +2,8 @@ import { prescriptionUploadService } from '../services/prescriptionUpload.servic
 import { recordAudit } from '../services/audit.service.js';
 import { listPagination } from '../utils/listPagination.js';
 
-export const prescriptionUploadController = {
+import { protectWorkflowController } from '../middleware/workflowLease.js';
+export const prescriptionUploadController = protectWorkflowController({
   list: async (req, res) => { const pagination = listPagination(req.query); const data = await prescriptionUploadService.list(req.user,pagination); res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } }); },
   create: async (req, res) => {
     const data = await prescriptionUploadService.create(req.body, req.user.id);
@@ -106,4 +107,4 @@ export const prescriptionUploadController = {
     res.setHeader('Content-Disposition', `inline; filename="${slip.originalName}"`);
     res.type(slip.mimeType).send(slip.fileData);
   },
-};
+});

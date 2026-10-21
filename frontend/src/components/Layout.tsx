@@ -7,6 +7,8 @@ import { Modal, ModalActions } from './Modal';
 import { PasswordField } from './PasswordField';
 import { Alert, Loading } from './Ui';
 import { MyActivityModal } from './MyActivityModal';
+import { ConfirmModal } from './ConfirmModal';
+import { SessionGuard } from '../auth/SessionGuard';
 
 type AttentionKey = 'prescriptions' | 'prescriptionUploads' | 'cashier' | 'inventory' | 'sales' | 'audit';
 type AttentionSummary = Partial<Record<AttentionKey, { count: number; label: string; tone: 'danger' | 'warning' | 'info' | 'neutral' }>>;
@@ -36,6 +38,9 @@ export function Layout() {
   const location = useLocation();
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const [logoutError, setLogoutError] = useState('');
+  const [logoutBusy, setLogoutBusy] = useState(false);
   const [passwords, setPasswords] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [passwordError, setPasswordError] = useState('');
   const [passwordMessage, setPasswordMessage] = useState('');
@@ -113,7 +118,6 @@ export function Layout() {
         const response = await api.get('/navigation/attention');
         if (active) setAttention(response.data.data);
       } catch {
-        if (active) setOnline(false);
         // Navigation counts are helpful but should never interrupt the workspace.
       }
     };
@@ -152,7 +156,7 @@ export function Layout() {
     } catch (error) { setPasswordError(errorMessage(error)); } finally { setBusy(false); }
   };
 
-  return <div className="app-shell">
+  return <SessionGuard><div className="app-shell">
     <aside ref={navigationRef} className={`sidebar ${mobileNavOpen ? 'mobile-open' : ''}`} id="mobile-navigation" role={mobileViewport && mobileNavOpen ? 'dialog' : undefined} aria-modal={mobileViewport && mobileNavOpen ? true : undefined} aria-label="Workspace navigation" inert={mobileViewport && !mobileNavOpen}>
       <div className="brand">
         <span className="brand-mark"><i className="bi bi-plus-lg" /></span>
@@ -185,7 +189,7 @@ export function Layout() {
         </div>
         <span className="sidebar-actions">
           <button title="Change password" aria-label="Change password" onClick={openPassword}><i className="bi bi-key" /></button>
-          <button title="Sign out" aria-label="Sign out" onClick={logout}><i className="bi bi-box-arrow-right" /></button>
+          <button type="button" title="Sign out" aria-label="Sign out" onClick={() => { setMobileNavOpen(false); setLogoutOpen(true); }}><i className="bi bi-box-arrow-right" /></button>
         </span>
       </div>
     </aside>
@@ -221,5 +225,6 @@ export function Layout() {
     {mobileNavOpen && <button className="mobile-nav-backdrop" type="button" tabIndex={-1} aria-label="Close navigation menu" onClick={() => setMobileNavOpen(false)} />}
     {passwordOpen && <Modal title={forcedPasswordChange ? 'Replace temporary password' : 'Change my password'} onClose={() => !forcedPasswordChange && setPasswordOpen(false)} size="sm" closable={!forcedPasswordChange}><form onSubmit={changePassword}><Alert message={passwordError} />{passwordMessage && <div className="alert alert-success py-2">{passwordMessage}</div>}<div className="d-grid gap-3"><PasswordField label="Current password" value={passwords.currentPassword} onChange={(currentPassword) => setPasswords({ ...passwords, currentPassword })} autoComplete="current-password" /><PasswordField label="New password" value={passwords.newPassword} onChange={(newPassword) => setPasswords({ ...passwords, newPassword })} /><PasswordField label="Confirm new password" value={passwords.confirmPassword} onChange={(confirmPassword) => setPasswords({ ...passwords, confirmPassword })} /></div><ModalActions onClose={() => setPasswordOpen(false)} submitLabel="Change password" busy={busy} showCancel={!forcedPasswordChange} /></form></Modal>}
     {activityOpen && canReviewOwnActivity && <MyActivityModal user={user!} onClose={() => setActivityOpen(false)} />}
-  </div>;
+    {logoutOpen && <ConfirmModal title="Sign out of MediFlow?" message={logoutError || 'Are you sure you want to sign out? Any unsaved changes will be lost.'} confirmLabel="Sign out" danger={false} busy={logoutBusy} onClose={() => { if (!logoutBusy) { setLogoutOpen(false); setLogoutError(''); } }} onConfirm={() => { setLogoutBusy(true); void logout().catch(error => setLogoutError(errorMessage(error))).finally(() => setLogoutBusy(false)); }} />}
+  </div></SessionGuard>;
 }

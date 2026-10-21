@@ -8,4 +8,5 @@ export const operationSettingsSchema = z.object({
   requirePickupPin: z.boolean(),
   cashierCanDispenseAtPayment: z.boolean(),
   cashReservationHours: z.coerce.number().int().min(1).max(168).default(24),
+  sessionIdleMinutes: z.coerce.number().int().min(5).max(60).default(15),
 });

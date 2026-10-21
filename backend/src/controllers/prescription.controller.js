@@ -3,7 +3,8 @@ import { recordAudit } from '../services/audit.service.js';
 import { AppError } from '../utils/AppError.js';
 import { listPagination } from '../utils/listPagination.js';
 
-export const prescriptionController = {
+import { protectWorkflowController } from '../middleware/workflowLease.js';
+export const prescriptionController = protectWorkflowController({
   list: async (req, res) => { const pagination = listPagination(req.query); const data = await prescriptionService.list(req.user,pagination); res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } }); },
   get: async (req, res) => {
     const data = await prescriptionService.get(Number(req.params.id), req.user);
@@ -57,4 +58,4 @@ export const prescriptionController = {
     await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_REFILLED', entityType: 'PRESCRIPTION', entityId: data.id, details: { originalPrescriptionId: id, prescriptionNumber: data.prescriptionNumber, refillsUsed: data.refillsUsed }, ipAddress: req.ip });
     res.status(201).json({ data });
   },
-};
+});

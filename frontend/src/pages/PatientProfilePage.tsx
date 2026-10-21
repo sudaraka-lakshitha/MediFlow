@@ -2,6 +2,7 @@ import { personNameInputProps } from '../utils/personName';
 import { useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api/client";
 import { useAuth } from "../auth/useAuth";
+import { sessionToken } from "../auth/authStorage";
 import { Alert } from "../components/Ui";
 
 export function PatientProfilePage() {
@@ -32,7 +33,7 @@ export function PatientProfilePage() {
         chronicConditions
       });
       
-      const token = localStorage.getItem("mediflow_token") || "";
+      const token = sessionToken() || "";
       acceptSession({ token, user: response.data.user });
       setSuccess("Profile updated successfully!");
     } catch (caught) {

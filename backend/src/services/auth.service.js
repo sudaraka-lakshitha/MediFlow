@@ -7,6 +7,7 @@ import { AppError } from '../utils/AppError.js';
 import { userRepository } from '../repositories/user.repository.js';
 import { mailService } from './mail.service.js';
 import { logger } from '../config/logger.js';
+import { sessionService } from './session.service.js';
 
 const safeUser = (user) => ({
   id: user.id,
@@ -20,11 +21,7 @@ const safeUser = (user) => ({
   lastLoginAt: user.lastLoginAt,
   passwordChangedAt: user.passwordChangedAt,
 });
-const sign = (user) => jwt.sign(
-  { role: user.role, version: user.tokenVersion },
-  env.JWT_SECRET,
-  { subject: String(user.id), expiresIn: env.JWT_EXPIRES_IN },
-);
+const sign = (user) => sessionService.issue(user);
 
 export const authService = {
   async register(data) {
@@ -41,7 +38,7 @@ export const authService = {
       });
       return created;
     });
-    return { token: sign(user), user: safeUser(user) };
+    return { token: await sign(user), user: safeUser(user) };
   },
 
   async login(email, password) {
@@ -53,7 +50,7 @@ export const authService = {
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
     });
-    return { token: sign(loggedInUser), user: safeUser(loggedInUser) };
+    return { token: await sign(loggedInUser), user: safeUser(loggedInUser) };
   },
   async changePassword(userId, currentPassword, newPassword) {
     const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -75,7 +72,7 @@ export const authService = {
     });
     return {
       message: 'Password changed successfully. Other signed-in sessions have been revoked.',
-      token: sign(updated),
+      token: await sign(updated),
       user: safeUser(updated),
     };
   },

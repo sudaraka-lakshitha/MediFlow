@@ -158,6 +158,7 @@ const emptyEstimate = () => ({
   containerFee: 0,
 });
 
+import { WorkflowGuard } from '../components/WorkflowGuard';
 export function PrescriptionUploadsPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -795,7 +796,8 @@ export function PrescriptionUploadsPage() {
   if (loading) return <Loading />;
 
   return (
-    <>
+    <WorkflowGuard resource={review?.id || slipUploadItem?.id || slipReviewItem?.upload.id || cancelModal?.upload.id || deadlineEditingId ? `upload/${review?.id || slipUploadItem?.id || slipReviewItem?.upload.id || cancelModal?.upload.id || deadlineEditingId}` : null}
+      onCancel={() => { closeReview(); setSlipUploadItem(null); setSlipReviewItem(null); setCancelModal(null); setDeadlineEditingId(null); }}>
       <div className="page-intro">
         <div>
           <h2>Uploaded prescriptions</h2>
@@ -2221,7 +2223,7 @@ export function PrescriptionUploadsPage() {
               <Alert message={error} />
               <div className="modal-actions review-modal-actions">
                 {review.status === "PENDING" && (
-                  <button type="button" className="btn btn-outline-danger" disabled={busy} onClick={rejectUpload}>
+                  <button type="button" className="btn btn-outline-danger" disabled={busy || estimateBusy} onClick={rejectUpload}>
                     <i className="bi bi-x-octagon me-2" />Reject upload
                   </button>
                 )}
@@ -2229,7 +2231,7 @@ export function PrescriptionUploadsPage() {
                   <button type="button" className="btn btn-light" disabled={busy} onClick={closeReview}>
                     Cancel
                   </button>
-                  <button type="submit" className="btn btn-primary" disabled={busy}>
+                  <button type="submit" className="btn btn-primary" disabled={busy || estimateBusy}>
                     {busy ? "Saving…" : review.status === "PENDING" ? "Save review" : "Save notes"}
                   </button>
                 </div>
@@ -2483,7 +2485,7 @@ export function PrescriptionUploadsPage() {
           </form>
         </Modal>
       )}
-    </>
+    </WorkflowGuard>
   );
 }
 

@@ -29,6 +29,7 @@ const emptyRetail = () => ({
   items: [{ productId: "", quantity: 1 }],
 });
 
+import { WorkflowGuard } from '../components/WorkflowGuard';
 export function CashierPage() {
   const [documentPreview, setDocumentPreview] = useState<DocumentTarget | null>(null);
   const { user } = useAuth();
@@ -422,8 +423,9 @@ export function CashierPage() {
     }
   };
   if (loading) return <Loading />;
+  const workflowRequest = payment || pinReset || revoke || cancelBill || partialCancel || slipReview?.row || cancellationOverride;
   return (
-    <>
+    <WorkflowGuard resource={workflowRequest?.id ? `payment/${workflowRequest.id}` : null} onCancel={() => { setPayment(null); setPinReset(null); setRevoke(null); setCancelBill(null); setPartialCancel(null); setSlipReview(null); setCancellationOverride(null); }}>
       <div className="page-intro">
         <div>
           <h2>Cashier payment desk</h2>
@@ -2165,6 +2167,6 @@ export function CashierPage() {
       {documentPreview && <DocumentPreview document={documentPreview} onClose={() => setDocumentPreview(null)} />}
       <div className="mt-4"><Link className="btn btn-outline-primary" to="/sales">Find a completed invoice / create a refund</Link></div>
       <RefundWorkspace refreshToken={rows} />
-    </>
+    </WorkflowGuard>
   );
 }

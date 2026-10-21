@@ -6,33 +6,31 @@ import {
 } from "react";
 import { api } from "../api/client";
 import { AuthContext, type AuthValue, type User } from "./AuthSession";
-const storedUser = () => {
-  try {
-    return JSON.parse(localStorage.getItem("mediflow_user") || "null");
-  } catch {
-    return null;
-  }
-};
+import { clearSession, saveSession, sessionToken, sessionUser } from "./authStorage";
+import { setWorkspaceLocked } from './workspaceLock';
+const storedUser = () => sessionUser<User>();
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(storedUser);
   const accept = (data: { token: string; user: User }) => {
-    localStorage.setItem("mediflow_token", data.token);
-    localStorage.setItem("mediflow_user", JSON.stringify(data.user));
+    const changed = data.token !== sessionToken();
+    saveSession(data.token, data.user);
     setUser(data.user);
+    if (changed) { setWorkspaceLocked(false); window.dispatchEvent(new Event('mediflow:session-refresh')); }
   };
   useEffect(() => {
-    if (!localStorage.getItem("mediflow_token")) return;
+    const token = sessionToken();
+    if (!token) return;
+    let active = true;
     api
       .get("/auth/me")
       .then((response) => {
-        localStorage.setItem(
-          "mediflow_user",
-          JSON.stringify(response.data.user),
-        );
+        if (!active || sessionToken() !== token) return;
+        saveSession(token, response.data.user);
         setUser(response.data.user);
       })
       .catch(() => undefined);
+    return () => { active = false; };
   }, []);
   const value = useMemo<AuthValue>(
     () => ({
@@ -44,14 +42,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       passwordChanged: () => {
         if (user)
           accept({
-            token: localStorage.getItem("mediflow_token") || "",
+            token: sessionToken() || "",
             user: { ...user, mustChangePassword: false },
           });
       },
       acceptSession: accept,
-      logout: () => {
-        localStorage.removeItem("mediflow_token");
-        localStorage.removeItem("mediflow_user");
+      logout: async () => {
+        await api.post('/auth/session/logout');
+        clearSession();
+        setWorkspaceLocked(false);
         setUser(null);
       },
     }),

@@ -304,6 +304,7 @@ const instructionOpening = (route: string, quantity: number, unit: string) => {
   return `Take ${dose} by mouth`;
 };
 
+import { WorkflowGuard } from '../components/WorkflowGuard';
 export function PrescriptionsPage() {
   const [documentPreview, setDocumentPreview] = useState<DocumentTarget | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1427,9 +1428,11 @@ export function PrescriptionsPage() {
     }
   };
   if (loading) return <Loading />;
+  const workflowRx = editor?.rx || (action?.type !== 'history' ? action?.rx : null) || declineInvoice?.rx || requestCancel?.rx || confirm || refillTarget || collectionModal || reverify;
+  const workflowResource = workflowRx?.id ? `prescription/${workflowRx.id}` : editor && form.sourceUploadId ? `upload/${form.sourceUploadId}` : null;
 
   return (
-    <>
+    <WorkflowGuard resource={workflowResource} onCancel={() => { setEditor(null); setAction(null); setDeclineInvoice(null); setRequestCancel(null); setConfirm(null); setRefillTarget(null); setCollectionModal(null); setReverify(null); }}>
       <datalist id="retail-quantity-options">
         <option value="1" />
         <option value="2" />
@@ -4366,7 +4369,7 @@ export function PrescriptionsPage() {
         </Modal>
       )}
       {documentPreview && <DocumentPreview document={documentPreview} onClose={() => setDocumentPreview(null)} />}
-    </>
+    </WorkflowGuard>
   );
 }
 

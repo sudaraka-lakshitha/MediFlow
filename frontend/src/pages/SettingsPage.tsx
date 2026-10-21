@@ -22,6 +22,7 @@ export function SettingsPage() {
     requirePickupPin: true,
     cashierCanDispenseAtPayment: false,
     cashReservationHours: 24,
+    sessionIdleMinutes: 15,
   });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -114,6 +115,13 @@ export function SettingsPage() {
       <Alert message={error} />
       {message && <div className="alert alert-success py-2">{message}</div>}
       <form className="panel operation-settings" onSubmit={save}>
+        <div className="form-section">
+          <div className="form-section-title">Workspace security</div>
+          <label htmlFor="session-idle-minutes" className="form-label">Inactivity warning after (minutes)</label>
+          <input id="session-idle-minutes" className="form-control" type="number" min={5} max={60} step={1} required value={form.sessionIdleMinutes}
+            onChange={event => setForm({ ...form, sessionIdleMinutes: Number(event.target.value) })} />
+          <p className="text-secondary mt-2">Allowed: 5–60 minutes. A 60-second warning appears before password locking. Unsaved forms stay in memory. Sessions require password verification after at most 8 hours, with a warning 5 minutes beforehand. Existing shorter token limits still apply.</p>
+        </div>
         <div className="panel-header">
           <div>
             <h3>Batch allocation policy</h3>
