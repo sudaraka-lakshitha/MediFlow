@@ -35,6 +35,8 @@ const slipSelect = {
 };
 
 const include = {
+  delivery: { select: { status: true, trackingReference: true } },
+  deliveryFeeFor: { select: { paymentRequestId: true, status: true } },
   refunds: { include: { lines: true }, orderBy: { createdAt: 'asc' } },
   events: { orderBy: { createdAt: 'asc' } },
   patient: { select: { id: true, fullName: true, email: true, phone: true } },
@@ -126,6 +128,7 @@ export const paymentRequestService = {
       include: { patient: true, items: true, paymentRequest: true },
     });
     if (!prescription) throw new AppError(404, 'Prescription not found.');
+    if (prescription.paymentRequest && await tx.deliveryRequest?.findUnique({ where: { paymentRequestId: prescription.paymentRequest.id } })) throw new AppError(409, 'This invoice is linked to delivery history and cannot be replaced. Record a new prescription for any further supply.');
     if (!['VERIFIED', 'PARTIALLY_DISPENSED'].includes(prescription.status)) throw new AppError(409, 'Verify the prescription before sending it to the cashier.');
     if (prescription.paymentRequest && !['CANCELLED', 'FULFILLED'].includes(prescription.paymentRequest.status)) {
       throw new AppError(409, 'This prescription already has an active cashier payment request.');
@@ -633,10 +636,11 @@ export const paymentRequestService = {
     // (or when PIN checks are switched off entirely) printing it is noise the customer would
     // reasonably mistake for something they still have to present.
     const { requirePickupPin } = await operationSettingsService.get();
-    const showPin = requirePaid && record.status === 'PAID' && requirePickupPin;
+    const showPin = requirePaid && record.status === 'PAID' && requirePickupPin && !record.deliveryFeeFor && (!record.delivery || record.delivery.status === 'CANCELLED');
     return { ...record, pickupPin: showPin ? decryptPickupPin(record.pickupPinEncrypted) : null };
   },
   async fulfillRetail(id, pickupPin, pharmacistId) {
+    if (await prisma.deliveryRequest?.findUnique({ where: { feePaymentRequestId: id } })) throw new AppError(409, 'Delivery fees are completed through the delivery dispatch workflow, not retail collection.');
     const request = await prisma.paymentRequest.findUnique({ where: { id }, include: { items: { include: { product: true } } } });
     if (!request || request.type !== 'RETAIL') throw new AppError(404, 'Retail payment request not found.');
     if (request.status !== 'PAID') throw new AppError(402, 'Cashier payment has not been completed for this retail request.');

@@ -38,7 +38,8 @@ prescriptionUploadRoutes.put('/:id/accept', authorize('PATIENT'), validate({ par
 prescriptionUploadRoutes.post('/:id/cancel', authorize('PATIENT', 'ADMIN', 'PHARMACIST'), validate({ params: idParams, body: cancelUploadSchema }), asyncHandler(prescriptionUploadController.cancel));
 
 // Serve the prescription file
-prescriptionUploadRoutes.get('/:id/file', authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams }), asyncHandler(prescriptionUploadController.file));
+prescriptionUploadRoutes.get('/:id/attachments', authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams }), asyncHandler(prescriptionUploadController.attachments));
+prescriptionUploadRoutes.get('/:id/file', authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams, query: z.object({ attachmentId: z.coerce.number().int().positive().optional() }) }), asyncHandler(prescriptionUploadController.file));
 
 // Pharmacist / Admin: build and save an estimate quote
 prescriptionUploadRoutes.post('/:id/estimate-quote', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: uploadEstimateQuoteSchema }), asyncHandler(prescriptionUploadController.estimateQuote));

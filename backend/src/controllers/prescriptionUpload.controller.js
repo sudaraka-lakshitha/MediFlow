@@ -4,6 +4,7 @@ import { listPagination } from '../utils/listPagination.js';
 
 import { protectWorkflowController } from '../middleware/workflowLease.js';
 export const prescriptionUploadController = protectWorkflowController({
+  attachments: async (req, res) => res.json({ data: await prescriptionUploadService.attachments(Number(req.params.id), req.user) }),
   list: async (req, res) => { const pagination = listPagination(req.query); const data = await prescriptionUploadService.list(req.user,pagination); res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } }); },
   create: async (req, res) => {
     const data = await prescriptionUploadService.create(req.body, req.user.id);
@@ -11,7 +12,7 @@ export const prescriptionUploadController = protectWorkflowController({
     res.status(201).json({ data });
   },
   file: async (req, res) => {
-    const data = await prescriptionUploadService.file(Number(req.params.id), req.user);
+    const data = await prescriptionUploadService.file(Number(req.params.id), req.user, req.query.attachmentId ? Number(req.query.attachmentId) : undefined);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Disposition', `inline; filename="${data.originalName}"`);
     res.type(data.mimeType).send(data.fileData);

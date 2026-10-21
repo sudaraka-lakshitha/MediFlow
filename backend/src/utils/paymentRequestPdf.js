@@ -18,7 +18,8 @@ const statusBanners = {
 const drawHeader = (doc, request, receipt) => {
   doc.font('Helvetica-Bold').fontSize(22).fillColor('#174a45').text('MediFlow Pharmacy', left, 42);
   const retail = request.type === 'RETAIL';
-  doc.font('Helvetica').fontSize(10).fillColor('#64748b').text(receipt ? `${retail ? 'Retail' : 'Prescription'} cashier payment receipt` : `${retail ? 'Retail goods' : 'Prescription'} cashier payment request`, left, 72);
+  const category = request.deliveryFeeFor ? 'Home delivery service' : retail ? 'Retail' : 'Prescription';
+  doc.font('Helvetica').fontSize(10).fillColor('#64748b').text(`${category} ${receipt ? 'payment receipt' : 'payment request'}`, left, 72);
   doc.font('Helvetica-Bold').fontSize(12).fillColor('#111827').text(request.requestNumber, 330, 46, { width: right - 330, align: 'right' });
   const created = new Date(request.createdAt).toISOString().replace('T', ' ').slice(0, 19);
   doc.font('Helvetica').fontSize(8).fillColor('#64748b').text(`Created: ${created} UTC`, 330, 68, { width: right - 330, align: 'right' });
@@ -26,12 +27,12 @@ const drawHeader = (doc, request, receipt) => {
 
   const banner = statusBanners[request.status] || statusBanners.AWAITING_PAYMENT;
   doc.roundedRect(left, 108, contentWidth, 24, 5).fillAndStroke(banner.bg, banner.border);
-  doc.font('Helvetica-Bold').fontSize(10).fillColor(banner.fg).text(banner.label, left, 114, { width: contentWidth, align: 'center' });
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(banner.fg).text(request.delivery ? `DELIVERY ${request.delivery.status}` : request.deliveryFeeFor && ['PAID', 'FULFILLED'].includes(request.status) ? 'DELIVERY FEE PAID' : banner.label, left, 114, { width: contentWidth, align: 'center' });
 
   const isSplit = request.paymentMethod === 'OTHER' && request.paymentReference?.startsWith('Split:');
   const details = [
     ['Customer', request.patient?.fullName || 'Walk-in customer'],
-    [retail ? 'Sale type' : 'Prescription', retail ? 'Retail goods' : request.prescription?.prescriptionNumber],
+    [retail ? 'Sale type' : 'Prescription', request.deliveryFeeFor ? 'Home delivery service' : retail ? 'Retail goods' : request.prescription?.prescriptionNumber],
     ['Prepared by', request.pharmacist.fullName],
     ...(request.cashier ? [['Payment received by', request.cashier.fullName]] : []),
     ...(request.paymentMethod ? [['Payment method', isSplit ? 'SPLIT PAYMENT' : request.paymentMethod.replace('_', ' ')]] : []),
@@ -60,6 +61,11 @@ const drawTableHeader = (doc, y) => {
 
 const drawTable = (doc, request, startY, retail) => {
   let y = drawTableHeader(doc, startY);
+  if (request.deliveryFeeFor && !request.items.length) {
+    doc.font('Helvetica').fontSize(9).fillColor('#111827').text('Home delivery service', left + 8, y + 9, { width: 238 });
+    doc.text('1', 300, y + 9); doc.text(money(request.subtotal), 382, y + 9); doc.text(money(request.subtotal), 466, y + 9);
+    y += 32;
+  }
   request.items.forEach((item) => {
     if (y > 710) {
       doc.addPage();

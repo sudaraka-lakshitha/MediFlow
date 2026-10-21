@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { deliveryRoutes } from './delivery.routes.js';
 import { refundRoutes } from './refund.routes.js';
 import { workflowLeaseRoutes } from './workflowLease.routes.js';
 import { reconciliationRoutes } from './reconciliation.routes.js';
@@ -33,6 +34,7 @@ import { navigationAttentionController } from '../controllers/navigationAttentio
 import { cleanupExpiredCashReservations } from '../utils/reservationExpiry.js';
 
 export const apiRoutes = Router();
+apiRoutes.use(deliveryRoutes);
 apiRoutes.use('/workflow-locks', workflowLeaseRoutes);
 apiRoutes.use('/staff-activity-report', staffActivityReportRoutes);
 // Refresh stock holds before any authenticated availability or order operation.

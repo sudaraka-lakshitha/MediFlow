@@ -1,4 +1,5 @@
 import { personNameInputProps } from '../utils/personName';
+import { UploadAttachmentSelector } from '../components/UploadAttachmentSelector';
 import {
   useCallback,
   useEffect,
@@ -329,6 +330,11 @@ export function PrescriptionsPage() {
   const [sourceFileUrl, setSourceFileUrl] = useState("");
   const [sourceFileText, setSourceFileText] = useState("");
   const [sourceFileMimeType, setSourceFileMimeType] = useState("");
+  const loadSourceAttachment = async (blob: Blob) => {
+    if (sourceFileUrl) URL.revokeObjectURL(sourceFileUrl);
+    setSourceFileUrl(URL.createObjectURL(blob)); setSourceFileMimeType(blob.type);
+    setSourceFileText(blob.type === 'text/plain' ? await blob.text() : '');
+  };
   const [sourceViewerHeight, setSourceViewerHeight] = useState(620);
   const [action, setAction] = useState<{
     type: "reject" | "dispense" | "history" | "withdraw";
@@ -2136,6 +2142,7 @@ export function PrescriptionsPage() {
           <div className={sourceFileUrl ? "prescription-editor-split" : ""}>
             {sourceFileUrl && (
               <aside className="prescription-source-pane">
+                {form.sourceUploadId && <UploadAttachmentSelector uploadId={form.sourceUploadId} onLoad={loadSourceAttachment} />}
                 <div className="document-viewer-toolbar">
                   <strong>Customer-submitted prescription</strong>
                   <div className="btn-group btn-group-sm" aria-label="Document size">
@@ -3312,6 +3319,7 @@ export function PrescriptionsPage() {
           >
             {action.rx.sourceUpload && (
               <aside className="prescription-source-pane">
+                <UploadAttachmentSelector uploadId={action.rx.sourceUpload.id} onLoad={loadSourceAttachment} />
                 <div className="document-viewer-toolbar">
                   <strong>Customer-submitted prescription</strong>
                   <div className="btn-group btn-group-sm" aria-label="Document size">

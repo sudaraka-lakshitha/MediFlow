@@ -653,6 +653,7 @@ model PrescriptionUpload {
   reviewedBy        User?              @relation("UploadReviewer", fields: [reviewedById], references: [id])
   prescription      Prescription?
   paymentSlips      UploadPaymentSlip[]
+  attachments       PrescriptionUploadAttachment[]
   createdAt         DateTime           @default(now()) @map("created_at")
   updatedAt         DateTime           @updatedAt @map("updated_at")
 
@@ -660,6 +661,17 @@ model PrescriptionUpload {
   @@index([status, createdAt])
   @@index([deleteAt])
   @@map("prescription_uploads")
+}
+
+model PrescriptionUploadAttachment {
+  id Int @id @default(autoincrement())
+  uploadId Int @map("upload_id")
+  originalName String @map("original_name") @db.VarChar(180)
+  mimeType String @map("mime_type") @db.VarChar(80)
+  fileData Bytes @map("file_data") @db.LongBlob
+  upload PrescriptionUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  @@index([uploadId])
+  @@map("prescription_upload_attachments")
 }
 
 // Bank-transfer receipt a patient uploads after the pharmacist has sent a quotation.
@@ -693,6 +705,8 @@ model UploadPaymentSlip {
 }
 
 model PaymentRequest {
+  delivery DeliveryRequest? @relation("MedicineDelivery")
+  deliveryFeeFor DeliveryRequest? @relation("DeliveryFee")
   id                 Int                  @id @default(autoincrement())
   requestNumber      String               @unique @map("request_number") @db.VarChar(40)
   type               PaymentRequestType   @default(PRESCRIPTION)
@@ -746,6 +760,24 @@ model PaymentRequest {
   @@index([patientId, createdAt])
   @@index([reservationExpiresAt])
   @@map("payment_requests")
+}
+
+model DeliveryRequest {
+  id Int @id @default(autoincrement())
+  paymentRequestId Int @unique @map("payment_request_id")
+  feePaymentRequestId Int? @unique @map("fee_payment_request_id")
+  address String @db.VarChar(500)
+  phone String @db.VarChar(40)
+  status String @default("REQUESTED") @db.VarChar(30)
+  trackingReference String? @map("tracking_reference") @db.VarChar(160)
+  courierService String? @map("courier_service") @db.VarChar(120)
+  dispatchedAt DateTime? @map("dispatched_at") @db.DateTime(3)
+  deliveredAt DateTime? @map("delivered_at") @db.DateTime(3)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  paymentRequest PaymentRequest @relation("MedicineDelivery", fields: [paymentRequestId], references: [id])
+  feePaymentRequest PaymentRequest? @relation("DeliveryFee", fields: [feePaymentRequestId], references: [id])
+  @@map("delivery_requests")
 }
 
 model Refund {

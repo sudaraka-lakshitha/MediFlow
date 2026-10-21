@@ -15,6 +15,7 @@ import { Alert, Empty, Loading, Status } from "../components/Ui";
 import { InvoiceChanges } from "../components/InvoiceChanges";
 import { DocumentPreview, type DocumentTarget } from "../components/DocumentPreview";
 import { RefundWorkspace } from "../components/RefundWorkspace";
+import { Link } from 'react-router-dom';
 
 const emptyRetail = () => ({
   patientId: "",
@@ -505,7 +506,7 @@ export function SalesPage() {
                     <InvoiceChanges invoice={invoice} />
 
                     {["CANCELLED", "FULFILLED"].includes(invoice.status) ? (
-                      <div className="text-secondary mt-3">{invoice.status === "FULFILLED" ? "Order collected." : "Invoice closed — no payment is due."}</div>
+                      <div className="text-secondary mt-3">{invoice.status === "FULFILLED" ? (invoice.delivery ? `Delivery ${invoice.delivery.status.toLowerCase()}.` : invoice.deliveryFeeFor ? 'Delivery service paid.' : 'Order collected.') : "Invoice closed — no payment is due."}</div>
                     ) : pendingSlip ? (
                       <div className="alert alert-info mt-3 mb-0">
                         <strong>Your bank slip is being checked.</strong>
@@ -722,7 +723,7 @@ export function SalesPage() {
                             Cashier slip
                           </button>
                         )}
-                        {request.status === "PAID" && (
+                        {request.status === "PAID" && !request.deliveryFeeFor && (
                           <>
                             <button
                               className="btn btn-sm btn-primary"
@@ -1102,6 +1103,7 @@ export function SalesPage() {
         </Modal>
       )}
       {documentPreview && <DocumentPreview document={documentPreview} onClose={() => setDocumentPreview(null)} />}
+      <div className="panel"><Link to="/deliveries" className="btn btn-outline-primary">Home deliveries — request or track delivery</Link></div>
       <RefundWorkspace sales={rows} />
       {invoiceAck && (
         <Modal

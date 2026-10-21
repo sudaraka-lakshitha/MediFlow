@@ -18,6 +18,7 @@ const slipSelect = {
 };
 
 const summarySelect = {
+  attachments: { select: { id: true, originalName: true, mimeType: true }, orderBy: { id: 'asc' } },
   id: true, originalName: true, mimeType: true, patientNote: true, prepareRequested: true, orderedForSelf: true, recipientName: true, recipientRelationship: true, recipientDateOfBirth: true, recipientAllergies: true, recipientConditions: true, status: true, availabilityNotes: true,
   estimatedTotal: true, estimateDetails: true, reviewedAt: true, createdAt: true, updatedAt: true, deleteAt: true, attachmentRemovedAt: true,
   quoteRevision: true, acknowledgedQuoteRevision: true, quoteSentAt: true, quoteAcknowledgedAt: true,
@@ -76,6 +77,7 @@ export const prescriptionUploadService = {
       },
       data: { fileData: Buffer.alloc(0), attachmentRemovedAt: new Date() },
     });
+    await db.prescriptionUploadAttachment.deleteMany({ where: { upload: { attachmentRemovedAt: { not: null } } } });
     return result.count;
   },
   async retention() { const setting = await prisma.systemSetting.findUnique({ where: { key: 'prescriptionUploadRetentionDays' } }); return { days: Number(setting?.value || 30) }; },
@@ -85,11 +87,19 @@ export const prescriptionUploadService = {
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize,
   }); },
   async create(data, userId) {
+    if ((data.additionalAttachments || []).length > 4) throw new AppError(400, 'Upload at most five files per request.');
+    const attachments = (data.additionalAttachments || []).map(file => {
+      const fileData = Buffer.from(file.fileBase64, 'base64');
+      if (!fileData.length || fileData.length > 2_500_000) throw new AppError(413, 'Each attachment must be 2.5 MB or smaller.');
+      if (!validSignature(fileData, file.mimeType)) throw new AppError(400, 'An attachment does not match its file type.');
+      return { originalName: file.originalName.replace(/[\\/\r\n"]/g, '_'), mimeType: file.mimeType, fileData };
+    });
     const fileData = Buffer.from(data.fileBase64, 'base64');
     if (!fileData.length || fileData.length > 2_500_000) throw new AppError(413, 'Prescription files must be 2.5 MB or smaller.');
     if (!validSignature(fileData, data.mimeType)) throw new AppError(400, 'The file content does not match the selected PDF or image type.');
     const retention = await this.retention(); const deleteAt = new Date(); deleteAt.setDate(deleteAt.getDate() + retention.days);
     return prisma.prescriptionUpload.create({ data: {
+      attachments: { create: attachments },
       patientId: userId, originalName: data.originalName.replace(/[\\/\r\n"]/g, '_'), mimeType: data.mimeType,
       fileData, patientNote: data.patientNote || null, prepareRequested: data.prepareRequested,
       orderedForSelf: data.orderedForSelf, recipientName: data.orderedForSelf ? null : data.recipientName,
@@ -100,11 +110,22 @@ export const prescriptionUploadService = {
       deleteAt,
     }, select: summarySelect });
   },
-  async file(id, user) {
+  async file(id, user, attachmentId) {
     const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true, patientId: true, originalName: true, mimeType: true, fileData: true } });
     ensureAccess(record, user);
     if (!record.fileData?.length) throw new AppError(410, 'This attachment was removed under the retention policy. The order and payment history are still available.');
+    if (attachmentId) {
+      const attachment = await prisma.prescriptionUploadAttachment.findFirst({ where: { id: attachmentId, uploadId: id } });
+      if (!attachment) throw new AppError(404, 'Attachment not found.');
+      return attachment;
+    }
     return record;
+  },
+  async attachments(id, user) {
+    const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { patientId: true, originalName: true, mimeType: true, attachmentRemovedAt: true, attachments: { select: { id: true, originalName: true, mimeType: true }, orderBy: { id: 'asc' } } } });
+    ensureAccess(record, user);
+    if (record.attachmentRemovedAt) throw new AppError(410, 'Attachments have expired under the retention policy.');
+    return [{ id: null, originalName: record.originalName, mimeType: record.mimeType }, ...record.attachments];
   },
   async edit(id, data, user) {
     if (user.role !== 'PATIENT') throw new AppError(403, 'Only the patient can edit their upload.');

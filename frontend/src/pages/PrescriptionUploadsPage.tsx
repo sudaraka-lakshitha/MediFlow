@@ -32,6 +32,7 @@ type UploadSlip = {
 };
 
 type Upload = {
+  attachments?: { id: number; originalName: string; mimeType: string }[];
   id: number;
   quoteRevision: number;
   originalName: string;
@@ -175,8 +176,9 @@ export function PrescriptionUploadsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [additionalFiles, setAdditionalFiles] = useState<File[]>([]);
   const [editingUpload, setEditingUpload] = useState<Upload | null>(null);
-  const closeUpload = () => { setUploadOpen(false); setEditingUpload(null); };
+  const closeUpload = () => { setUploadOpen(false); setEditingUpload(null); setAdditionalFiles([]); };
   const [review, setReview] = useState<Upload | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
@@ -441,6 +443,9 @@ export function PrescriptionUploadsPage() {
     const file =
       uploadForm.file ||
       (typedText ? new File([typedText], `typed-prescription-${Date.now()}.txt`, { type: "text/plain" }) : null);
+    const extraFiles = editingUpload ? [] : additionalFiles;
+    if (extraFiles.length > 4 || extraFiles.some(item => item.size > 2_500_000 || !['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(item.type)))
+      return setError('Select up to five PDF or image files, each 2.5 MB or smaller.');
     if (file && file.size > 2_500_000)
       return setError("Prescription files must be 2.5 MB or smaller.");
     if (
@@ -465,6 +470,13 @@ export function PrescriptionUploadsPage() {
         reader.readAsDataURL(file);
       }) : null;
       const payload = {
+        ...(!editingUpload ? { additionalAttachments: await Promise.all(extraFiles.map(async item => ({
+          originalName: item.name, mimeType: item.type,
+          fileBase64: await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]);
+            reader.onerror = () => reject(reader.error); reader.readAsDataURL(item);
+          }),
+        }))) } : {}),
         ...(file && dataUrl ? { originalName: file.name, mimeType: file.type, fileBase64: dataUrl.split(",")[1] } : {}),
         patientNote: patientNote || null,
         prepareRequested: uploadForm.prepareRequested,
@@ -478,6 +490,7 @@ export function PrescriptionUploadsPage() {
       if (editingUpload) await api.put(`/prescription-uploads/${editingUpload.id}`, { ...payload, updatedAt: editingUpload.updatedAt });
       else await api.post('/prescription-uploads', payload);
       closeUpload();
+      setAdditionalFiles([]);
       setUploadForm({
         file: null,
         prescriptionText: "",
@@ -498,16 +511,17 @@ export function PrescriptionUploadsPage() {
     }
   };
 
-  const openFile = async (item: Upload) => {
+  const openFile = async (item: Upload, attachment?: { id: number; originalName: string; mimeType: string }) => {
     try {
       fitDocumentViewer();
       const response = await api.get(`/prescription-uploads/${item.id}/file`, {
+        params: attachment ? { attachmentId: attachment.id } : {},
         responseType: "blob",
       });
       const url = URL.createObjectURL(response.data);
-      const text = item.mimeType === "text/plain" ? await response.data.text() : undefined;
+      const text = (attachment?.mimeType || item.mimeType) === "text/plain" ? await response.data.text() : undefined;
       if (preview) URL.revokeObjectURL(preview.url);
-      setPreview({ item, url, text });
+      setPreview({ item: attachment ? { ...item, originalName: attachment.originalName, mimeType: attachment.mimeType } : item, url, text });
     } catch (caught) {
       setError(errorMessage(caught));
     }
@@ -912,6 +926,9 @@ export function PrescriptionUploadsPage() {
       <div className="upload-grid">
         {filtered.map((item) => (
           <article className="panel upload-card" key={item.id}>
+            {!!item.attachments?.length && <div className="d-flex flex-wrap gap-2 mb-2" aria-label="Additional prescription attachments">
+              {item.attachments.map((attachment, index) => <button type="button" className="btn btn-sm btn-outline-secondary" key={attachment.id} onClick={() => openFile(item, attachment)}>Attachment {index + 2}: {attachment.originalName}</button>)}
+            </div>}
             <div className="upload-card-heading">
               <div className="upload-file-icon">
                 <i
@@ -1300,8 +1317,13 @@ export function PrescriptionUploadsPage() {
                 authoritative pharmacist validation.
               </span>
             </div>
-            <label className="form-label">Prescription file (optional)</label>
-            <input className="form-control" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => setUploadForm({ ...uploadForm, file: event.target.files?.[0] || null })} />
+            <label className="form-label">{editingUpload ? 'Replace first attachment (other attachments are kept)' : 'Prescription files (up to five, 2.5 MB each)'}</label>
+            <input className="form-control" type="file" multiple={!editingUpload} accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => {
+              const files = Array.from(event.target.files || []);
+              if (files.length > 5 || files.some(file => file.size > 2_500_000)) { setError('Select at most five files, each 2.5 MB or smaller.'); event.target.value = ''; setUploadForm({ ...uploadForm, file: null }); setAdditionalFiles([]); return; }
+              setError(''); setUploadForm({ ...uploadForm, file: files[0] || null }); setAdditionalFiles(files.slice(1));
+            }} />
+            {!editingUpload && additionalFiles.length > 0 && <small className="d-block text-secondary">{additionalFiles.length + 1} attachments will be saved together as one request.</small>}
             <label className="form-label mt-3">Type prescription / retail items (optional)</label>
             <textarea className="form-control" rows={6} maxLength={5000} value={uploadForm.prescriptionText} onChange={(event) => setUploadForm({ ...uploadForm, prescriptionText: event.target.value })} placeholder={'Type each prescribed medicine and direction on a new line.\n\nRetail items (optional): include product name and quantity.'} />
             <small className="text-secondary">Provide a file, type the details, or both — include medicine names, strengths, directions, and any non-prescription retail products with quantities.</small>
@@ -1527,6 +1549,9 @@ export function PrescriptionUploadsPage() {
         >
           <div className="prescription-review-split">
             <div className="prescription-document-pane">
+              {!!review.attachments?.length && <div className="d-flex flex-wrap gap-2 mb-2">
+                {review.attachments.map((attachment, index) => <button type="button" className="btn btn-sm btn-outline-secondary" key={attachment.id} onClick={() => openFile(review, attachment)}>View attachment {index + 2}: {attachment.originalName}</button>)}
+              </div>}
               <div className="d-flex justify-content-between align-items-center gap-2 mb-2 flex-wrap">
                 <strong>Submitted prescription</strong>
                 <div className="btn-group btn-group-sm" aria-label="Document size">

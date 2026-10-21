@@ -21,6 +21,7 @@ app.use(auditReadAccess);
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({ origin: env.NODE_ENV === 'production' ? false : env.FRONTEND_URL, exposedHeaders: ['Content-Disposition', 'X-Request-Id'] }));
 // Bulk catalogue uploads can legitimately be larger than ordinary API requests.
+app.use('/api/prescription-uploads', express.json({ limit: '18mb' }));
 app.use(express.json({ limit: '5mb' }));
 app.use(morgan('combined', { stream: { write: (message) => logger.http(message.trim()) } }));
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'mediflow-api' }));

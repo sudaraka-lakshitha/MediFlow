@@ -252,6 +252,7 @@ describe('administrator PIN recovery', () => {
 
 describe('attachment retention', () => {
   it('clears only attachments for eligible terminal records and preserves payment evidence', async () => {
+    db.prescriptionUploadAttachment = { deleteMany: vi.fn() };
     db.prescriptionUpload.updateMany.mockResolvedValue({ count: 2 });
     expect(await prescriptionUploadService.cleanupExpired()).toBe(2);
     const { where, data } = db.prescriptionUpload.updateMany.mock.calls[0][0];
@@ -260,6 +261,7 @@ describe('attachment retention', () => {
     expect(where.paymentSlips).toEqual({ none: { status: 'PENDING' } });
     expect(where.OR[1].prescription.is.status.in).toEqual(['DISPENSED', 'REJECTED', 'CANCELLED']);
     expect(data).not.toHaveProperty('paymentSlips');
+    expect(db.prescriptionUploadAttachment.deleteMany).toHaveBeenCalledWith({ where: { upload: { attachmentRemovedAt: { not: null } } } });
   });
   it('reports a removed attachment without returning empty file content', async () => {
     db.prescriptionUpload.findUnique.mockResolvedValue({ id: 1, patientId: 2, fileData: Buffer.alloc(0) });

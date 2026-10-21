@@ -19,7 +19,9 @@ export const createCollectionSlipPdf = (request, paperWidth = 80) => new Promise
   const height = margin * 2 + customerHeight + referenceHeight + 150;
   doc.addPage({ size: [width, height], margins: { top: margin, bottom: margin, left: margin, right: margin } });
   doc.fillColor('black').font('Helvetica-Bold').fontSize(12).text('MediFlow', { align: 'center' });
-  doc.font('Helvetica').fontSize(9).text('Collection slip - not an invoice', { align: 'center' });
+  const delivery = request.delivery && request.delivery.status !== 'CANCELLED';
+  const service = Boolean(request.deliveryFeeFor);
+  doc.font('Helvetica').fontSize(9).text(delivery || service ? 'Delivery payment confirmation' : 'Collection slip - not an invoice', { align: 'center' });
   doc.moveDown(0.7);
   doc.fontSize(8).text('CUSTOMER NAME');
   doc.font('Helvetica-Bold').fontSize(11).text(customer);
@@ -30,8 +32,8 @@ export const createCollectionSlipPdf = (request, paperWidth = 80) => new Promise
   if (request.pickupPin) {
     doc.font('Helvetica').fontSize(9).text('COLLECTION PIN', { align: 'center' });
     doc.font('Helvetica-Bold').fontSize(27).text(request.pickupPin, { align: 'center' });
-  } else doc.font('Helvetica-Bold').fontSize(11).text('Collect at the pharmacy', { align: 'center' });
+  } else doc.font('Helvetica-Bold').fontSize(11).text(service ? 'Delivery fee paid' : delivery ? `Delivery: ${request.delivery.status.replaceAll('_', ' ')}` : 'Collect at the pharmacy', { align: 'center' });
   doc.moveDown(0.5);
-  doc.font('Helvetica').fontSize(8).text('Show this slip only when collecting your order.', { align: 'center' });
+  doc.font('Helvetica').fontSize(8).text(delivery || service ? 'Track your order under Home deliveries.' : 'Show this slip only when collecting your order.', { align: 'center' });
   doc.end();
 });

@@ -9,7 +9,9 @@ import { batchAllocationOrder, operationSettingsService } from '../services/oper
 // Shared by the pharmacist's manual "verify PIN and dispense" endpoint and the
 // cashier's "dispense at payment" flow: both end with the exact same stock
 // consumption, Dispensing/Sale creation, and prescription status update.
-export const performPrescriptionDispense = async (tx, { prescriptionId, paymentRequestId, performedById, notes, expectedPickupPinHash }) => {
+export const performPrescriptionDispense = async (tx, { prescriptionId, paymentRequestId, performedById, notes, expectedPickupPinHash, deliveryDispatch = false }) => {
+  const delivery = await tx.deliveryRequest?.findUnique({ where: { paymentRequestId } });
+  if (!deliveryDispatch && delivery && delivery.status !== 'CANCELLED') throw new AppError(409, 'This order has a delivery request. Use the delivery dispatch workflow.');
   const paidRequest = await tx.paymentRequest.findFirst({ where: { id: paymentRequestId, prescriptionId }, include: { items: { include: { product: true } } } });
   if (!paidRequest || paidRequest.status !== 'PAID') throw new AppError(402, 'Cashier payment has not been completed for this prescription.');
   if (paidRequest.customerCancellationReason) throw new AppError(409, 'Resolve the customer cancellation request before dispensing this order.');

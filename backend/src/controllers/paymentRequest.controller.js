@@ -74,7 +74,7 @@ export const paymentRequestController = protectWorkflowController({
   collectionSlip: async (req, res) => {
     const data = await paymentRequestService.documentData(Number(req.params.id), req.user, true);
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ data: { customerName: data.patient?.fullName || 'Walk-in customer', referenceNumber: data.requestNumber, pin: data.pickupPin, status: data.status, saleId: data.sale?.id || null } });
+    res.json({ data: { customerName: data.patient?.fullName || 'Walk-in customer', referenceNumber: data.requestNumber, pin: data.pickupPin, status: data.status, saleId: data.sale?.id || null, delivery: data.delivery || null, deliveryFee: Boolean(data.deliveryFeeFor) } });
   },
   resolveCancellation: async (req, res) => res.json({ data: await paymentRequestService.resolveCancellation(Number(req.params.id), req.body, req.user) }),
   changePaymentChoice: async (req, res) => res.json({ data: await paymentRequestService.acknowledge(Number(req.params.id), req.body, req.user, true) }),

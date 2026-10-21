@@ -5,7 +5,14 @@ const recipientBirthDate = z.coerce.date()
   .refine((value) => value <= new Date(), 'Recipient date of birth cannot be in the future.')
   .refine((value) => value.getUTCFullYear() >= 1895, 'Enter a valid recipient date of birth.');
 
+const attachmentSchema = z.object({
+  originalName: z.string().trim().min(1).max(180),
+  mimeType: z.enum(['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'text/plain']),
+  fileBase64: z.string().min(8).max(3_600_000).regex(/^[A-Za-z0-9+/]+={0,2}$/),
+});
+
 export const uploadPrescriptionSchema = z.object({
+  additionalAttachments: z.array(attachmentSchema).max(4).optional(),
   originalName: z.string().trim().min(1).max(180),
   mimeType: z.enum(['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'text/plain']),
   fileBase64: z.string().min(8).max(3_600_000).regex(/^[A-Za-z0-9+/]+={0,2}$/, 'The uploaded file is not valid base64 data.'),
@@ -24,6 +31,7 @@ export const uploadPrescriptionSchema = z.object({
 });
 
 export const editUploadSchema = uploadPrescriptionSchema.safeExtend({
+  additionalAttachments: z.undefined().optional(),
   originalName: uploadPrescriptionSchema.shape.originalName.optional(),
   mimeType: uploadPrescriptionSchema.shape.mimeType.optional(),
   fileBase64: uploadPrescriptionSchema.shape.fileBase64.optional(),

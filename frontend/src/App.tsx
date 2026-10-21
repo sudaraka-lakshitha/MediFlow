@@ -57,6 +57,7 @@ const SalesPage = lazy(() =>
     default: module.SalesPage,
   })),
 );
+const DeliveriesPage = lazy(() => import('./pages/DeliveriesPage').then(module => ({ default: module.DeliveriesPage })));
 const ReportsPage = lazy(() =>
   import("./pages/ReportsPage").then((module) => ({
     default: module.ReportsPage,
@@ -140,6 +141,7 @@ export default function App() {
                   element={<PrescriptionUploadsPage />}
                 />
                 <Route path="sales" element={<SalesPage />} />
+                <Route path="deliveries" element={<DeliveriesPage />} />
               </Route>
             </Route>
 
