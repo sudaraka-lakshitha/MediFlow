@@ -30,7 +30,7 @@ const origin = process.env.TEST_ORIGIN || 'http://127.0.0.1:5178';
         else { mode = 'active'; body = { token: `renewed-${Date.now()}`, session: snapshot() }; }
       } else if (path.endsWith('/auth/session')) body = { session: snapshot() };
       else if (path.endsWith('/auth/profile') && req.method() === 'PATCH') {
-        writeCount++; await new Promise(resolve => { releaseWrite = resolve; }); body = { user };
+        writeCount++; user.fullName = req.postDataJSON().fullName; await new Promise(resolve => { releaseWrite = resolve; }); body = { user };
       } else body = { data: {} };
       await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
     });
@@ -38,6 +38,7 @@ const origin = process.env.TEST_ORIGIN || 'http://127.0.0.1:5178';
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     await page.goto(`${origin}/profile`);
     const name = page.getByLabel('Full Name', { exact: true });
+    await page.getByRole('button', { name: 'Edit profile' }).click();
     await name.waitFor({ state: 'visible', timeout: 10000 }).catch(async error => { console.error(await page.locator('body').innerText(), errors); throw error; });
     await name.fill('Unsaved Draft');
     const refresh = () => page.evaluate(() => window.dispatchEvent(new Event('mediflow:session-refresh')));

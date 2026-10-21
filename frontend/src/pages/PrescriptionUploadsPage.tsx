@@ -62,6 +62,7 @@ type Upload = {
   };
   reviewedAt?: string;
   createdAt: string;
+  updatedAt: string;
   deleteAt?: string;
   attachmentRemovedAt?: string | null;
   patient: {
@@ -174,7 +175,12 @@ export function PrescriptionUploadsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [editingUpload, setEditingUpload] = useState<Upload | null>(null);
+  const closeUpload = () => { setUploadOpen(false); setEditingUpload(null); };
   const [review, setReview] = useState<Upload | null>(null);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectionReason, setRejectionReason] = useState("");
+  const [rejectionError, setRejectionError] = useState("");
   const [reviewUrl, setReviewUrl] = useState("");
   const [reviewText, setReviewText] = useState("");
   const [documentViewerHeight, setDocumentViewerHeight] = useState(620);
@@ -428,17 +434,17 @@ export function PrescriptionUploadsPage() {
   const submitUpload = async (event: FormEvent) => {
     event.preventDefault();
     const typedText = uploadForm.prescriptionText.trim();
-    if (!uploadForm.file && !typedText)
+    if (!editingUpload && !uploadForm.file && !typedText)
       return setError("Upload a prescription file, type the prescription and retail items, or both.");
-    if (!uploadForm.file && typedText.length < 10)
+    if (!uploadForm.file && typedText && typedText.length < 10)
       return setError("Type at least 10 characters describing the prescription or requested retail items.");
     const file =
       uploadForm.file ||
-      new File([typedText], `typed-prescription-${Date.now()}.txt`, { type: "text/plain" });
-    if (file.size > 2_500_000)
+      (typedText ? new File([typedText], `typed-prescription-${Date.now()}.txt`, { type: "text/plain" }) : null);
+    if (file && file.size > 2_500_000)
       return setError("Prescription files must be 2.5 MB or smaller.");
     if (
-      !["application/pdf", "image/jpeg", "image/png", "image/webp", "text/plain"].includes(
+      file && !["application/pdf", "image/jpeg", "image/png", "image/webp", "text/plain"].includes(
         file.type,
       )
     )
@@ -452,16 +458,14 @@ export function PrescriptionUploadsPage() {
     setBusy(true);
     setError("");
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
+      const dataUrl = file ? await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result));
         reader.onerror = () => reject(reader.error);
         reader.readAsDataURL(file);
-      });
-      await api.post("/prescription-uploads", {
-        originalName: file.name,
-        mimeType: file.type,
-        fileBase64: dataUrl.split(",")[1],
+      }) : null;
+      const payload = {
+        ...(file && dataUrl ? { originalName: file.name, mimeType: file.type, fileBase64: dataUrl.split(",")[1] } : {}),
         patientNote: patientNote || null,
         prepareRequested: uploadForm.prepareRequested,
         orderedForSelf: uploadForm.orderedForSelf,
@@ -470,8 +474,10 @@ export function PrescriptionUploadsPage() {
         recipientDateOfBirth: uploadForm.orderedForSelf ? null : uploadForm.recipientDateOfBirth,
         recipientAllergies: uploadForm.orderedForSelf ? null : (uploadForm.recipientAllergies.trim() || null),
         recipientConditions: uploadForm.orderedForSelf ? null : (uploadForm.recipientConditions.trim() || null),
-      });
-      setUploadOpen(false);
+      };
+      if (editingUpload) await api.put(`/prescription-uploads/${editingUpload.id}`, { ...payload, updatedAt: editingUpload.updatedAt });
+      else await api.post('/prescription-uploads', payload);
+      closeUpload();
       setUploadForm({
         file: null,
         prescriptionText: "",
@@ -512,6 +518,9 @@ export function PrescriptionUploadsPage() {
   };
 
   const closeReview = () => {
+    setRejectOpen(false);
+    setRejectionReason("");
+    setRejectionError("");
     if (reviewUrl) URL.revokeObjectURL(reviewUrl);
     setReviewUrl("");
     setReviewText("");
@@ -770,22 +779,22 @@ export function PrescriptionUploadsPage() {
   };
   const rejectUpload = async () => {
     if (!review) return;
-    if (reviewForm.availabilityNotes.trim().length < 3) {
-      setError("Enter a rejection reason in the notes before rejecting this upload.");
+    if (rejectionReason.trim().length < 3) {
+      setRejectionError("Enter a rejection reason of at least 3 characters.");
       return;
     }
     setBusy(true);
-    setError("");
+    setRejectionError("");
     try {
       await api.put(`/prescription-uploads/${review.id}/review`, {
         status: "REJECTED",
-        availabilityNotes: reviewForm.availabilityNotes.trim(),
+        availabilityNotes: rejectionReason.trim(),
         estimatedTotal: null,
       });
       closeReview();
       await load();
     } catch (caught) {
-      setError(errorMessage(caught));
+      setRejectionError(errorMessage(caught));
     } finally {
       setBusy(false);
     }
@@ -796,8 +805,8 @@ export function PrescriptionUploadsPage() {
   if (loading) return <Loading />;
 
   return (
-    <WorkflowGuard resource={review?.id || slipUploadItem?.id || slipReviewItem?.upload.id || cancelModal?.upload.id || deadlineEditingId ? `upload/${review?.id || slipUploadItem?.id || slipReviewItem?.upload.id || cancelModal?.upload.id || deadlineEditingId}` : null}
-      onCancel={() => { closeReview(); setSlipUploadItem(null); setSlipReviewItem(null); setCancelModal(null); setDeadlineEditingId(null); }}>
+    <WorkflowGuard resource={editingUpload?.id || review?.id || slipUploadItem?.id || slipReviewItem?.upload.id || cancelModal?.upload.id || deadlineEditingId ? `upload/${editingUpload?.id || review?.id || slipUploadItem?.id || slipReviewItem?.upload.id || cancelModal?.upload.id || deadlineEditingId}` : null}
+      onCancel={() => { closeUpload(); closeReview(); setSlipUploadItem(null); setSlipReviewItem(null); setCancelModal(null); setDeadlineEditingId(null); }}>
       <div className="page-intro">
         <div>
           <h2>Uploaded prescriptions</h2>
@@ -825,6 +834,8 @@ export function PrescriptionUploadsPage() {
                 recipientConditions: "",
               });
               setUploadOpen(true);
+              setEditingUpload(null);
+              setUploadForm({ file: null, prescriptionText: '', patientNote: '', prepareRequested: true, orderedForSelf: true, recipientName: '', recipientRelationship: '', recipientDateOfBirth: '', recipientAllergies: '', recipientConditions: '' });
             }}
           >
             <i className="bi bi-cloud-arrow-up me-2" />
@@ -925,7 +936,7 @@ export function PrescriptionUploadsPage() {
             )}
             {!item.orderedForSelf && (
               <div className="alert alert-light border small mt-2 mb-0 py-2">
-                <div className="d-flex align-items-center justify-content-between">
+                <div className="d-flex flex-wrap gap-2 align-items-center justify-content-between">
                   <span className="fw-semibold text-primary">
                     <i className="bi bi-person-fill me-1" />
                     Recipient: {item.recipientName} ({item.recipientRelationship})
@@ -1212,6 +1223,15 @@ export function PrescriptionUploadsPage() {
                   Review availability
                 </button>
               )}
+              {patient && item.status === 'PENDING' && !item.prescription && !item.attachmentRemovedAt && (
+                <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => {
+                  setError(''); setEditingUpload(item);
+                  setUploadForm({ file: null, prescriptionText: '', patientNote: item.patientNote || '', prepareRequested: item.prepareRequested,
+                    orderedForSelf: item.orderedForSelf, recipientName: item.recipientName || '', recipientRelationship: item.recipientRelationship || '',
+                    recipientDateOfBirth: item.recipientDateOfBirth?.slice(0, 10) || '', recipientAllergies: item.recipientAllergies || '', recipientConditions: item.recipientConditions || '' });
+                  setUploadOpen(true);
+                }}>Edit upload</button>
+              )}
               {!patient && !cashier && ["AVAILABLE", "PARTIALLY_AVAILABLE", "QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status) && !item.prescription && (
                 <button
                   className="btn btn-sm btn-outline-success"
@@ -1263,11 +1283,13 @@ export function PrescriptionUploadsPage() {
 
       {uploadOpen && (
         <Modal
-          title="Upload prescription"
-          onClose={() => setUploadOpen(false)}
+          title={editingUpload ? 'Edit uploaded prescription' : 'Upload prescription'}
+          onClose={closeUpload}
+          closable={!busy}
           size="sm"
         >
           <form onSubmit={submitUpload}>
+            {editingUpload && <div className="alert alert-info small">Current file: {editingUpload.originalName}. Leave both file and typed details empty to keep it. Choosing a file or entering typed details replaces the current attachment. Editing is available only before pharmacy review.</div>}
             <div className="alert alert-info small">
               Upload a clear PDF/image, type the prescription and retail-item request, or both. The pharmacy will review it; the estimate is not a final invoice.
             </div>
@@ -1490,8 +1512,8 @@ export function PrescriptionUploadsPage() {
             </fieldset>
             <Alert message={error} />
             <ModalActions
-              onClose={() => setUploadOpen(false)}
-              submitLabel="Upload prescription"
+              onClose={closeUpload}
+              submitLabel={editingUpload ? 'Save changes' : 'Upload prescription'}
               busy={busy}
             />
           </form>
@@ -2223,7 +2245,7 @@ export function PrescriptionUploadsPage() {
               <Alert message={error} />
               <div className="modal-actions review-modal-actions">
                 {review.status === "PENDING" && (
-                  <button type="button" className="btn btn-outline-danger" disabled={busy || estimateBusy} onClick={rejectUpload}>
+                  <button type="button" className="btn btn-outline-danger" disabled={busy || estimateBusy} onClick={() => { setRejectionReason(""); setRejectionError(""); setError(""); setRejectOpen(true); }}>
                     <i className="bi bi-x-octagon me-2" />Reject upload
                   </button>
                 )}
@@ -2238,6 +2260,24 @@ export function PrescriptionUploadsPage() {
               </div>
             </form>
           </div>
+        </Modal>
+      )}
+      {review && rejectOpen && (
+        <Modal title="Reject prescription upload" size="sm" closable={!busy} onClose={() => setRejectOpen(false)}>
+          <form onSubmit={event => { event.preventDefault(); void rejectUpload(); }}>
+            <p>Explain why this upload cannot be accepted. The patient will see this reason.</p>
+            <label className="form-label" htmlFor="upload-rejection-reason">Rejection reason</label>
+            <textarea id="upload-rejection-reason" className="form-control" rows={4} required minLength={3} maxLength={1000}
+              placeholder="For example: The prescription image is unreadable. Please upload a clearer photo."
+              value={rejectionReason} onChange={event => setRejectionReason(event.target.value)} disabled={busy} />
+            <Alert message={rejectionError} />
+            <div className="modal-actions">
+              <button type="button" className="btn btn-light" disabled={busy} onClick={() => setRejectOpen(false)}>Back to review</button>
+              <button type="submit" className="btn btn-danger" disabled={busy || estimateBusy || rejectionReason.trim().length < 3}>
+                {busy ? 'Rejecting…' : 'Confirm rejection'}
+              </button>
+            </div>
+          </form>
         </Modal>
       )}
       {preview && (

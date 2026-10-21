@@ -2,7 +2,8 @@ import { personNameSchema } from './personName.js';
 import { z } from 'zod';
 
 const password = z.string().min(8, 'Password requires at least 8 characters.').max(72).regex(/[a-z]/, 'Password requires a lowercase letter.').regex(/[A-Z]/, 'Password requires an uppercase letter.').regex(/\d/, 'Password requires a number.').regex(/[^A-Za-z0-9]/, 'Password requires a symbol.');
-const phone = z.string().trim().regex(/^0\d{9}$/, 'Phone number must contain exactly 10 digits and start with 0.');
+const phone = z.string().trim().regex(/^(?:0\d{9}|\+94\d{9})$/, 'Use 0701234567 or +94701234567 (no spaces or hyphens).')
+  .transform(value => value.startsWith('+94') ? `0${value.slice(3)}` : value);
 const birthDate = z.coerce.date().refine((value) => value <= new Date(), 'Date of birth cannot be in the future.');
 export const loginSchema = z.object({ email: z.string().email().max(190), password: z.string().min(1) });
 export const registerSchema = z.object({

@@ -1,5 +1,5 @@
 import { personNameInputProps } from '../utils/personName';
-import { useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 import { sessionToken } from "../auth/authStorage";
@@ -17,9 +17,18 @@ export function PatientProfilePage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const restore = useCallback(() => {
+    setFullName(user?.fullName || ''); setPhone(user?.phone || '');
+    setDateOfBirth(user?.patientProfile?.dateOfBirth?.slice(0, 10) || '');
+    setAddress(user?.patientProfile?.address || ''); setAllergies(user?.patientProfile?.allergies || '');
+    setChronicConditions(user?.patientProfile?.chronicConditions || '');
+  }, [user]);
+  useEffect(() => { if (!editing) restore(); }, [restore, editing]);
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
+    if (!editing || busy) return;
     setBusy(true);
     setError("");
     setSuccess("");
@@ -35,6 +44,7 @@ export function PatientProfilePage() {
       
       const token = sessionToken() || "";
       acceptSession({ token, user: response.data.user });
+      setEditing(false);
       setSuccess("Profile updated successfully!");
     } catch (caught) {
       setError(errorMessage(caught));
@@ -61,6 +71,7 @@ export function PatientProfilePage() {
         </div>
         
         <form onSubmit={save} className="p-3">
+          <fieldset disabled={!editing || busy}>
           <div className="row g-3">
             <div className="col-md-6">
               <label className="form-label text-secondary">Patient Number</label>
@@ -81,8 +92,9 @@ export function PatientProfilePage() {
             </div>
 
             <div className="col-md-6">
-              <label className="form-label">Full Name</label>
+              <label className="form-label" htmlFor="profile-full-name">Full Name</label>
               <input
+                id="profile-full-name"
                 className="form-control"
                 value={fullName}
                 {...personNameInputProps(setFullName)}
@@ -92,8 +104,9 @@ export function PatientProfilePage() {
             </div>
 
             <div className="col-md-6">
-              <label className="form-label">Phone Number</label>
+              <label className="form-label" htmlFor="profile-phone">Phone Number</label>
               <input
+                id="profile-phone"
                 className="form-control"
                 type="tel"
                 value={phone}
@@ -143,7 +156,10 @@ export function PatientProfilePage() {
             </div>
           </div>
 
-          <div className="d-flex justify-content-end mt-4">
+          </fieldset>
+          <div className="d-flex justify-content-end gap-2 mt-4">
+            {!editing ? <button type="button" className="btn btn-primary" onClick={() => { restore(); setError(''); setSuccess(''); setEditing(true); }}>Edit profile</button> : <>
+            <button type="button" className="btn btn-light" disabled={busy} onClick={() => { restore(); setError(''); setEditing(false); }}>Cancel</button>
             <button
               className="btn btn-primary"
               type="submit"
@@ -151,6 +167,7 @@ export function PatientProfilePage() {
             >
               {busy ? "Saving Changes..." : "Save Changes"}
             </button>
+            </>}
           </div>
         </form>
       </div>

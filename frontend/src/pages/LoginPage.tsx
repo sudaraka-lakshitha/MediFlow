@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { errorMessage } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 import { Alert } from "../components/Ui";
@@ -15,6 +15,8 @@ const demoAccounts = [
 export function LoginPage() {
   const { user, login } = useAuth();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const sessionEnded = params.get('reason') === 'session-ended';
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -55,6 +57,7 @@ export function LoginPage() {
           <p className="eyebrow">Welcome back</p>
           <h2>Sign in to MediFlow</h2>
           <p className="text-secondary">Use your pharmacy account to continue.</p>
+          {sessionEnded && <div className="alert alert-info" role="status">Your session has ended. Enter your email and password below to regain access. Check the latest request status before resubmitting any interrupted work.</div>}
           <Alert message={error} />
           <label className="form-label">Email address</label>
           <input
@@ -69,7 +72,7 @@ export function LoginPage() {
             <PasswordField value={password} onChange={setPassword} autoComplete="current-password" />
           </div>
           <button className="btn btn-primary w-100 mt-4" disabled={busy}>
-            {busy ? "Signing in…" : "Sign in"}
+            {busy ? "Signing in…" : sessionEnded ? "Sign in again to regain access" : "Sign in"}
           </button>
           <p className="auth-link"><Link to="/forgot-password">Forgot password?</Link></p>
           <p className="auth-link">New patient? <Link to="/register">Create an account</Link></p>

@@ -4,7 +4,7 @@ const origin = process.env.TEST_ORIGIN || 'http://127.0.0.1:5178';
 (async () => {
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   try {
-    let owner = null, token = null, writes = 0;
+    let owner = null, token = null, writes = 0, expired = false;
     const setup = async identity => {
       const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
       await context.addInitScript(identity => localStorage.setItem('mediflow_token', identity), identity);
@@ -15,7 +15,7 @@ const origin = process.env.TEST_ORIGIN || 'http://127.0.0.1:5178';
         let status = 200, body = {};
         if (path.startsWith('/api/workflow-locks/')) {
           if (request.method() === 'DELETE') { if (client === owner) { owner = null; token = null; } }
-          else if (!owner || owner === client) { owner = client; token ||= '11111111-1111-4111-8111-111111111111'; body = { data: { token } }; }
+          else if (!expired && (!owner || owner === client)) { owner = client; token ||= '11111111-1111-4111-8111-111111111111'; body = { data: { token } }; }
           else { status = 409; body = { message: 'This request is being edited by another user.', details: { code: 'WORKFLOW_BUSY' } }; }
         } else if (path.endsWith('/review')) {
           assert.equal(client, owner); assert.equal(request.headers()['x-workflow-lease'], token);
@@ -30,6 +30,11 @@ const origin = process.env.TEST_ORIGIN || 'http://127.0.0.1:5178';
     await staff.goto(`${origin}/tests/workflow-fixture.html?kind=payment`);
     await patient.getByRole('button', { name: 'Edit request' }).click();
     await patient.getByLabel('Draft').fill('Patient draft');
+    await patient.evaluate(() => window.dispatchEvent(new CustomEvent('mediflow:workflow-conflict', { detail: 'Access interrupted while session was locked.' })));
+    await patient.getByRole('button', { name: 'Regain editing access' }).click();
+    await patient.getByLabel('Draft').waitFor();
+    assert.equal(await patient.getByLabel('Draft').inputValue(), 'Patient draft');
+    assert.equal(writes, 0, 'Regaining access must not replay a save');
     await staff.getByRole('button', { name: 'Edit request' }).click();
     await staff.getByRole('heading', { name: 'Request is unavailable' }).waitFor();
     assert.equal(await staff.getByLabel('Draft').isVisible(), false);
@@ -45,6 +50,12 @@ const origin = process.env.TEST_ORIGIN || 'http://127.0.0.1:5178';
     await patient.getByRole('heading', { name: 'Request is unavailable' }).waitFor();
     assert.equal(await patient.getByLabel('Draft').isVisible(), false);
     assert.equal(writes, 1);
+    expired = true;
+    await staff.evaluate(() => window.dispatchEvent(new CustomEvent('mediflow:workflow-conflict', { detail: 'Editing access expired.' })));
+    await staff.getByRole('button', { name: 'Regain editing access' }).click();
+    await staff.getByText('This request is being edited by another user.', { exact: true }).waitFor();
+    assert.equal(await staff.getByLabel('Draft').isVisible(), false);
+    assert.equal(writes, 1, 'Expired editing access must not submit stale data');
     console.log('PASS: patient blocks staff across linked resources; cancel releases; staff blocks patient; only owner saves.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

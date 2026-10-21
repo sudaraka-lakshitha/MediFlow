@@ -53,7 +53,7 @@ api.interceptors.response.use((response) => {
     if (!redirectingToLogin && token && error.config?.headers?.Authorization === `Bearer ${token}`) {
       redirectingToLogin = true;
       clearSession();
-      window.location.replace('/login');
+      window.location.replace('/login?reason=session-ended');
     }
   }
   return Promise.reject(error);

@@ -18,7 +18,7 @@ const actions = [
 ];
 
 beforeEach(() => {
-  for (const model of ['paymentRequest', 'prescription', 'sale', 'dispensing', 'inventoryBatch', 'user', 'product']) {
+  for (const model of ['paymentRequest', 'prescription', 'prescriptionUpload', 'sale', 'dispensing', 'inventoryBatch', 'user', 'product']) {
     db[model] = { count: vi.fn(async () => 0), findMany: vi.fn(async () => []), groupBy: vi.fn(async () => []) };
   }
   db.patientProfile = { findUnique: vi.fn(async () => ({ id: 10 })) };
@@ -35,6 +35,12 @@ async function dashboard(user, query = {}) {
 }
 
 describe('dashboard activity permissions', () => {
+  it('includes unprocessed uploads without double-counting linked prescriptions', async () => {
+    db.prescriptionUpload.count.mockResolvedValue(3);
+    const data = await dashboard({ id: 1, role: 'ADMIN' });
+    expect(data.prescriptionStatuses).toContainEqual({ status: 'UPLOADS_AWAITING_REVIEW', count: 3 });
+    expect(db.prescriptionUpload.count).toHaveBeenCalledWith({ where: { status: 'PENDING', prescription: { is: null }, attachmentRemovedAt: null } });
+  });
   it('allows administrators to see successful active actions across staff', async () => {
     const data = await dashboard({ id: 1, role: 'ADMIN' });
     expect(data.recentActions.map(row => row.id)).toEqual([1, 2, 3]);

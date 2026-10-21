@@ -106,6 +106,32 @@ export const prescriptionUploadService = {
     if (!record.fileData?.length) throw new AppError(410, 'This attachment was removed under the retention policy. The order and payment history are still available.');
     return record;
   },
+  async edit(id, data, user) {
+    if (user.role !== 'PATIENT') throw new AppError(403, 'Only the patient can edit their upload.');
+    const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { patientId: true } });
+    ensureAccess(record, user);
+    const replacement = {};
+    if (data.fileBase64 !== undefined) {
+      const fileData = Buffer.from(data.fileBase64, 'base64');
+      if (!fileData.length || fileData.length > 2_500_000) throw new AppError(413, 'Prescription files must be 2.5 MB or smaller.');
+      if (!validSignature(fileData, data.mimeType)) throw new AppError(400, 'The file content does not match its type.');
+      Object.assign(replacement, { fileData, originalName: data.originalName.replace(/[\\/\r\n"]/g, '_'), mimeType: data.mimeType });
+    }
+    const result = await prisma.prescriptionUpload.updateMany({
+      where: { id, patientId: user.id, status: 'PENDING', prescription: { is: null }, attachmentRemovedAt: null, updatedAt: new Date(data.updatedAt) },
+      data: {
+        ...replacement, patientNote: data.patientNote || null, prepareRequested: data.prepareRequested,
+        orderedForSelf: data.orderedForSelf, recipientName: data.orderedForSelf ? null : data.recipientName,
+        recipientRelationship: data.orderedForSelf ? null : data.recipientRelationship,
+        recipientDateOfBirth: data.orderedForSelf ? null : data.recipientDateOfBirth,
+        recipientAllergies: data.orderedForSelf ? null : data.recipientAllergies || null,
+        recipientConditions: data.orderedForSelf ? null : data.recipientConditions || null,
+        estimateDetails: Prisma.DbNull, estimatedTotal: null, availabilityNotes: null,
+      },
+    });
+    if (result.count !== 1) throw new AppError(409, 'This upload changed or pharmacy review has started. Close the form and refresh before continuing.');
+    return prisma.prescriptionUpload.findUnique({ where: { id }, select: summarySelect });
+  },
   async review(id, data, userId) {
     const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true, status: true, attachmentRemovedAt: true } });
     if (!record) throw new AppError(404, 'Uploaded prescription not found.');

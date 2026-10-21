@@ -23,6 +23,16 @@ export const uploadPrescriptionSchema = z.object({
   if (!data.orderedForSelf && !data.recipientDateOfBirth) context.addIssue({ code: 'custom', path: ['recipientDateOfBirth'], message: 'Recipient date of birth is required for medicine age checks.' });
 });
 
+export const editUploadSchema = uploadPrescriptionSchema.safeExtend({
+  originalName: uploadPrescriptionSchema.shape.originalName.optional(),
+  mimeType: uploadPrescriptionSchema.shape.mimeType.optional(),
+  fileBase64: uploadPrescriptionSchema.shape.fileBase64.optional(),
+  updatedAt: z.iso.datetime(),
+}).superRefine((data, context) => {
+  const parts = [data.originalName, data.mimeType, data.fileBase64].filter(value => value !== undefined).length;
+  if (parts !== 0 && parts !== 3) context.addIssue({ code: 'custom', path: ['fileBase64'], message: 'Provide the replacement file, its name and type together.' });
+});
+
 export const reviewUploadSchema = z.object({
   status: z.enum(['AVAILABLE', 'PARTIALLY_AVAILABLE', 'UNAVAILABLE', 'REJECTED']),
   availabilityNotes: z.string().trim().max(1000).optional().nullable(),

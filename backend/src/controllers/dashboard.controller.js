@@ -55,7 +55,7 @@ export const dashboardController = {
     ]);
     const operationSettings = await operationSettingsService.get();
     const near = new Date(); near.setDate(near.getDate() + operationSettings.nearExpiryDays);
-    const [pendingPrescriptions, dispensedToday, expiredBatches, nearExpiryBatches, activeUsers, dispensingWeek, prescriptionStatuses, recentActions, recentPrescriptions, recentSales, products, discountMonth] = await Promise.all([
+    const [pendingPrescriptions, dispensedToday, expiredBatches, nearExpiryBatches, activeUsers, dispensingWeek, prescriptionStatuses, recentActions, recentPrescriptions, recentSales, products, discountMonth, pendingUploads] = await Promise.all([
       prisma.prescription.count({ where: { status: 'PENDING' } }),
       prisma.dispensing.count({ where: { dispensedAt: { gte: today } } }),
       prisma.inventoryBatch.count({ where: { expiryDate: { lt: new Date() }, quantityAvailable: { gt: 0 } } }),
@@ -68,6 +68,7 @@ export const dashboardController = {
       prisma.sale.findMany({ include: { patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } }, discountApplications: true }, orderBy: { createdAt: 'desc' }, take: 6 }),
       prisma.product.findMany({ where: { active: true }, include: { batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: new Date() }, restricted: false }, select: { quantityAvailable: true, quantityReserved: true } } } }),
       prisma.discountApplication.aggregate({ where: { createdAt: { gte: monthStart } }, _sum: { amount: true }, _count: { _all: true } }),
+      prisma.prescriptionUpload.count({ where: { status: 'PENDING', prescription: { is: null }, attachmentRemovedAt: null } }),
     ]);
 
     const days = Array.from({ length: 7 }, (_, index) => { const date = new Date(sevenDays); date.setUTCDate(date.getUTCDate() + index); return localKey(date); });
@@ -83,7 +84,11 @@ export const dashboardController = {
       expiredBatches, nearExpiryBatches, activeUsers,
       operationSettings,
       salesSeries: days.map((date) => ({ date, sales: salesMap[date], dispensings: issueMap[date] })),
-      prescriptionStatuses: prescriptionStatuses.map((entry) => ({ status: entry.status, count: entry._count._all })),
+      pendingUploads,
+      prescriptionStatuses: [
+        ...(pendingUploads ? [{ status: 'UPLOADS_AWAITING_REVIEW', count: pendingUploads }] : []),
+        ...prescriptionStatuses.map((entry) => ({ status: entry.status, count: entry._count._all })),
+      ],
       discountMonth: { amount: Number(discountMonth._sum.amount || 0), applications: discountMonth._count._all },
       lowStock, recentActions, recentPrescriptions, recentSales,
     } });

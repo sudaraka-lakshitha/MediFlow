@@ -21,7 +21,7 @@ const reject = error => api.interceptors.response.handlers[0].rejected(error).ca
 it('redirects once and stops further requests after session expiry', async () => {
   await reject(failure());
   await reject(failure());
-  expect(replace).toHaveBeenCalledExactlyOnceWith('/login');
+  expect(replace).toHaveBeenCalledExactlyOnceWith('/login?reason=session-ended');
   expect(localStorage.getItem('mediflow_token')).toBeNull();
   await expect(api.interceptors.request.handlers[0].fulfilled({ headers: {} })).rejects.toThrow('Session ended');
 });

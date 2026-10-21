@@ -8,6 +8,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { idParams, slipParams } from '../validators/common.validator.js';
 import {
   reviewUploadSchema,
+  editUploadSchema,
   uploadEstimateQuoteSchema,
   uploadPrescriptionSchema,
   uploadSlipSchema,
@@ -28,6 +29,7 @@ prescriptionUploadRoutes.put('/retention', authorize('ADMIN'), validate({ body: 
 
 // Patient: upload a prescription
 prescriptionUploadRoutes.post('/', authorize('PATIENT'), validate({ body: uploadPrescriptionSchema }), asyncHandler(prescriptionUploadController.create));
+prescriptionUploadRoutes.put('/:id', authorize('PATIENT'), validate({ params: idParams, body: editUploadSchema }), asyncHandler(prescriptionUploadController.edit));
 
 // Patient: accept the estimate (no-prepare → prepare)
 prescriptionUploadRoutes.put('/:id/accept', authorize('PATIENT'), validate({ params: idParams, body: z.object({ revision: z.coerce.number().int().nonnegative() }) }), asyncHandler(prescriptionUploadController.acceptEstimate));

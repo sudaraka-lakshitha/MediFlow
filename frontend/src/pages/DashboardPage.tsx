@@ -418,7 +418,7 @@ export function DashboardPage() {
               <div>
                 <h3>Prescription workflow</h3>
                 <small className="text-secondary">
-                  Current status distribution
+                  Prescriptions and uploads awaiting review
                 </small>
               </div>
             </div>

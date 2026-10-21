@@ -32,9 +32,12 @@ export const errorHandler = (error, req, res, _next) => {
     }
   }
 
-  const log = status >= 500 ? logger.error.bind(logger) : logger.warn.bind(logger);
+  // A locked workspace rejecting a background read is expected, not an audit incident.
+  // Keep failed writes, authentication failures and genuine server errors visible.
+  const routineLockedRead = status === 423 && details?.code === 'SESSION_LOCKED' && ['GET', 'HEAD'].includes(req.method);
+  const log = routineLockedRead ? logger.debug.bind(logger) : status >= 500 ? logger.error.bind(logger) : logger.warn.bind(logger);
   log(message, { error, requestId: req.requestId, method: req.method, path: req.originalUrl, status });
-  if (req.user) {
+  if (req.user && !routineLockedRead) {
     void recordAudit({
       userId: req.user.id,
       action: 'REQUEST_FAILED',

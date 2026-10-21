@@ -21,6 +21,12 @@ export const prescriptionUploadController = protectWorkflowController({
     await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOAD_REVIEWED', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id, details: { status: data.status, estimatedTotal: data.estimatedTotal }, ipAddress: req.ip });
     res.json({ data });
   },
+  edit: async (req, res) => {
+    const data = await prescriptionUploadService.edit(Number(req.params.id), req.body, req.user);
+    await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOAD_EDITED', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id,
+      details: { attachmentReplaced: Boolean(req.body.fileBase64) }, ipAddress: req.ip });
+    res.json({ data });
+  },
   sendQuotation: async (req, res) => {
     const data = await prescriptionUploadService.sendQuotation(Number(req.params.id), req.user.id);
     await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOAD_QUOTATION_SENT', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id, details: { estimatedTotal: data.estimatedTotal }, ipAddress: req.ip });
