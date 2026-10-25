@@ -20,8 +20,10 @@ export const refundService = {
     return prisma.refund.findMany({ where: user.role === 'PATIENT' ? { OR: [{ sale: { patientId: user.id } }, { paymentRequest: { patientId: user.id } }] } : {}, include, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
   },
   async saleQuote(tx, saleId, input) {
-    const sale = await tx.sale.findUnique({ where: { id: saleId }, include: { items: { include: { product: true } }, refunds: { include: { lines: true } } } });
+    const sale = await tx.sale.findUnique({ where: { id: saleId }, include: { items: { include: { product: true } }, refunds: { include: { lines: true } }, paymentRequest: { select: { delivery: { select: { status: true } } } } } });
     if (!sale || sale.status !== 'PAID') throw new AppError(409, 'Only a paid, completed sale can be refunded here.');
+    const delivery = sale.paymentRequest?.delivery;
+    if (delivery && !['RETURNED', 'DELIVERED', 'CANCELLED'].includes(delivery.status)) throw new AppError(409, 'Resolve the active shipment or reshipment first. Product refunds are available after confirmed return or delivery.');
     if (input.expectedRefundCount !== sale.refunds.length) throw new AppError(409, 'Refund history changed. Refresh the preview before continuing.');
     const requested = new Map(input.items.map((item) => [item.saleItemId, money(item.quantity)]));
     if (!requested.size || requested.size !== input.items.length) throw new AppError(400, 'Choose each sale line once.');
@@ -68,6 +70,7 @@ export const refundService = {
     return serializable(async (tx) => {
       const refund = await tx.refund.findUnique({ where: { id } });
       if (!refund || refund.status !== 'PENDING') throw new AppError(409, 'This refund is no longer awaiting payout.');
+      if (refund.category === 'DELIVERY_FEE' && (!refund.approvedById || refund.approvedById === refund.createdById)) throw new AppError(409, 'A different authorized staff member must approve this delivery-fee refund before payout.');
       const claim = await tx.refund.updateMany({ where: { id, status: 'PENDING' }, data: { status: 'SETTLED', method: input.method, reference: input.reference.trim(), settledById: user.id, settledAt: new Date() } });
       if (claim.count !== 1) throw new AppError(409, 'This refund has already been settled.');
       if (refund.paymentRequestId) {

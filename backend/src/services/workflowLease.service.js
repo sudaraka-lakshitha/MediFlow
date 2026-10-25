@@ -25,8 +25,9 @@ export const workflowLeaseService = {
       return record.sourceUploadId ? `upload:${record.sourceUploadId}` : `prescription:${id}`;
     }
     if (kind === 'payment') {
-      const record = await prisma.paymentRequest.findUnique({ where: { id }, select: { prescriptionId: true, patientId: true } });
+      const record = await prisma.paymentRequest.findUnique({ where: { id }, select: { prescriptionId: true, patientId: true, deliveryFeeFor: { select: { paymentRequestId: true } } } });
       if (!record) throw missing(); authorize(record.patientId, user);
+      if (record.deliveryFeeFor) return this.resource('payment', record.deliveryFeeFor.paymentRequestId, user);
       return record.prescriptionId ? this.resource('prescription', record.prescriptionId, user) : `payment:${id}`;
     }
     if (kind === 'sale') {
@@ -76,6 +77,13 @@ export const workflowLeaseService = {
       throw conflict();
     }
     return { ...lease, transient };
+  },
+  async pinForTransaction(tx, lease, owner) {
+    const now = new Date();
+    // Updating these rows inside the business transaction also locks them until
+    // commit, so another worker cannot reclaim a lease mid-import.
+    const pinned = await tx.workflowLease.updateMany({ where: { resourceKey: lease.resourceKey, ...owner, token: lease.token, processing: true, expiresAt: { gt: now } }, data: { expiresAt: new Date(now.getTime() + TTL) } });
+    if (!pinned.count) throw conflict();
   },
   async finish(lease, owner) {
     if (lease.transient) await prisma.workflowLease.deleteMany({ where: { resourceKey: lease.resourceKey, ...owner, token: lease.token } });

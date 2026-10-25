@@ -1,11 +1,15 @@
-// Keep sign-in across tab/browser closure; the server controls token expiry.
+// Tab-scoped credentials. Do not revive older persistent logins.
+if (typeof localStorage !== 'undefined') {
+  localStorage.removeItem('mediflow_token');
+  localStorage.removeItem('mediflow_user');
+}
 
-export const sessionToken = () => localStorage.getItem('mediflow_token');
+export const sessionToken = () => sessionStorage.getItem('mediflow_token');
 
 export function sessionUser<T>(): T | null {
   if (!sessionToken()) return null;
   try {
-    return JSON.parse(localStorage.getItem('mediflow_user') || 'null') as T | null;
+    return JSON.parse(sessionStorage.getItem('mediflow_user') || 'null') as T | null;
   } catch {
     clearSession();
     return null;
@@ -13,11 +17,11 @@ export function sessionUser<T>(): T | null {
 }
 
 export function saveSession(token: string, user: unknown) {
-  localStorage.setItem('mediflow_token', token);
-  localStorage.setItem('mediflow_user', JSON.stringify(user));
+  sessionStorage.setItem('mediflow_token', token);
+  sessionStorage.setItem('mediflow_user', JSON.stringify(user));
 }
 
 export function clearSession() {
-  localStorage.removeItem('mediflow_token');
-  localStorage.removeItem('mediflow_user');
+  sessionStorage.removeItem('mediflow_token');
+  sessionStorage.removeItem('mediflow_user');
 }

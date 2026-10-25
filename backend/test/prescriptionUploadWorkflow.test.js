@@ -4,7 +4,7 @@ import { reviewUploadSchema, uploadPrescriptionSchema } from '../src/validators/
 describe('prescription upload workflow validation', () => {
   it('accepts typed prescription and retail-item requests', () => {
     const text = 'Amoxicillin 500 mg twice daily\nRetail: thermometer x 1';
-    const result = uploadPrescriptionSchema.safeParse({
+    const result = uploadPrescriptionSchema.safeParse({ submissionKey: '11111111-1111-4111-8111-111111111111',
       originalName: 'typed-prescription.txt',
       mimeType: 'text/plain',
       fileBase64: Buffer.from(text).toString('base64'),
@@ -24,7 +24,7 @@ describe('prescription upload workflow validation', () => {
   });
 
   it('requires a recipient birth date when medicines are for someone else', () => {
-    const result = uploadPrescriptionSchema.safeParse({
+    const result = uploadPrescriptionSchema.safeParse({ submissionKey: '11111111-1111-4111-8111-111111111111',
       originalName: 'child-prescription.txt',
       mimeType: 'text/plain',
       fileBase64: Buffer.from('Paracetamol prescription').toString('base64'),
@@ -39,7 +39,7 @@ describe('prescription upload workflow validation', () => {
   });
 
   it('accepts third-party uploads with recipient age, allergies, and chronic conditions', () => {
-    const result = uploadPrescriptionSchema.safeParse({
+    const result = uploadPrescriptionSchema.safeParse({ submissionKey: '11111111-1111-4111-8111-111111111111',
       originalName: 'child-prescription.txt',
       mimeType: 'text/plain',
       fileBase64: Buffer.from('Paracetamol prescription').toString('base64'),

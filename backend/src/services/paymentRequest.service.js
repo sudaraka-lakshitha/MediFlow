@@ -1,5 +1,7 @@
 import { invoiceSnapshot, invoiceMaterialChanged } from '../utils/invoiceRevision.js';
 import { queueRefund } from './refund.service.js';
+import { assertUnusedBankReference } from '../utils/bankReference.js';
+import { synchronizeDeliveryCancellation } from '../utils/deliveryCancellation.js';
 import { cleanupExpiredCashReservations } from '../utils/reservationExpiry.js';
 import { cancellationQuote } from '../utils/cancellationQuote.js';
 import { env } from '../config/env.js';
@@ -59,6 +61,10 @@ const visibleDirections = (record, user) => user.role === 'PATIENT' && !['PAID',
 // end in exactly the same state: a PIN issued and the stock held in reserve. Keeping that
 // in one place stops the two routes drifting apart.
 const settleAsPaid = async (tx, { id, fromStatus, paymentMethod, paymentReference, cashierId, amountPaid, splitDetails = null }) => {
+  if (paymentMethod === 'BANK_TRANSFER') paymentReference = await assertUnusedBankReference(tx, paymentReference);
+  if (splitDetails?.isSplit && splitDetails.nonCashMethod === 'BANK_TRANSFER' && Number(splitDetails.nonCashAmount) > 0) {
+    splitDetails = { ...splitDetails, nonCashReference: await assertUnusedBankReference(tx, splitDetails.nonCashReference) };
+  }
   const pin = generatePickupPin();
   const claimed = await tx.paymentRequest.updateMany({
     where: { id, status: fromStatus },
@@ -159,6 +165,11 @@ export const paymentRequestService = {
       include,
     }));
     if (created.prescription?.sourceUploadId) {
+      const upload = await tx.prescriptionUpload.findUnique({ where: { id: created.prescription.sourceUploadId }, select: { deliveryRequested: true, deliveryAddress: true, deliveryPhone: true, deliveryRecipientName: true } });
+      if (upload?.deliveryRequested) {
+        await tx.deliveryRequest.create({ data: { paymentRequestId: created.id, recipientName: upload.deliveryRecipientName || created.prescription?.recipientName || null, address: upload.deliveryAddress, phone: upload.deliveryPhone } });
+        await tx.paymentRequestEvent.create({ data: { paymentRequestId: created.id, revision: created.revision, actorId: pharmacistId, kind: 'DELIVERY_REQUESTED', details: { sourceUploadId: created.prescription.sourceUploadId } } });
+      }
       await tx.prescriptionUpload.update({ where: { id: created.prescription.sourceUploadId }, data: { status: 'PAYMENT_PENDING' } });
     }
     return created;
@@ -214,7 +225,7 @@ export const paymentRequestService = {
   },
   async cancel(id, reason, user, tx = null) {
     if (!tx) return serializable((transaction) => this.cancel(id, reason, user, transaction));
-      const current = await tx.paymentRequest.findUnique({ where: { id }, include: { prescription: { select: { sourceUploadId: true, isOnline: true } } } });
+      const current = await tx.paymentRequest.findUnique({ where: { id }, include: { delivery: true, deliveryFeeFor: true, prescription: { select: { sourceUploadId: true, isOnline: true } } } });
       const policy = billCancellationPolicy(current, user);
       if (!policy.allowed) throw new AppError(policy.statusCode, policy.message);
       const claimed = await tx.paymentRequest.updateMany({
@@ -222,6 +233,7 @@ export const paymentRequestService = {
         data: { status: 'CANCELLED', cancellationReason: reason, cancelledById: user.id, cancelledAt: new Date() },
       });
       if (claimed.count !== 1) throw new AppError(409, 'This bill was just processed by someone else. Refresh to see its latest status.');
+      await synchronizeDeliveryCancellation(tx, current, user, reason, this.cancel.bind(this));
       await releaseReservations(tx, id);
       const refund = current.status === 'PAID' ? current.amountPaid.sub(current.refundedAmount || 0) : new Prisma.Decimal(0);
       await tx.paymentRequest.update({ where: { id }, data: { refundedAmount: { increment: refund } } });
@@ -575,8 +587,6 @@ export const paymentRequestService = {
         const received = Number(decision.verifiedAmount);
         if (!Number.isFinite(received) || received <= 0 || !decision.verifiedReference?.trim()) throw new AppError(400, 'Record the bank-verified amount and transaction reference.');
         if (!new Prisma.Decimal(received).equals(slip.paymentRequest.total) || !new Prisma.Decimal(received).equals(slip.declaredAmount)) throw new AppError(409, 'The verified transfer, declared amount and invoice total must match. Reconcile the difference before approving; this invoice has not been marked paid.');
-        const duplicate = await tx.paymentRequest.findFirst({ where: { id: { not: id }, paymentMethod: 'BANK_TRANSFER', paymentReference: decision.verifiedReference.trim(), paidAt: { not: null } }, select: { id: true } });
-        if (duplicate) throw new AppError(409, 'This bank transaction reference has already been used for a payment.');
       }
       const claim = await tx.paymentSlip.updateMany({
         where: { id: slipId, status: 'PENDING' },
@@ -624,6 +634,8 @@ export const paymentRequestService = {
       if (claimed.count !== 1) throw new AppError(409, 'This invoice was just updated. Refresh to see its latest status.');
       await releaseReservations(tx, id);
       await tx.paymentRequestEvent.create({ data: { paymentRequestId: id, kind: 'CANCELLED', revision, actorId: user.id, details: { reason: `Declined by the customer: ${reason}` } } });
+      const cancelled = await tx.paymentRequest.findUnique({ where: { id }, include: { delivery: true, deliveryFeeFor: true } });
+      await synchronizeDeliveryCancellation(tx, cancelled, user, `Declined by the customer: ${reason}`, this.cancel.bind(this));
       const data = await tx.paymentRequest.findUnique({ where: { id }, include });
       return safeRecord(data);
     });

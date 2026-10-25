@@ -20,6 +20,7 @@ type UserRow = {
   role: "ADMIN" | "PHARMACIST" | "CASHIER";
   cashierAccess: boolean;
   pharmacyReconciliationAccess: boolean;
+  deliveryRefundApprovalAccess: boolean;
   active: boolean;
   mustChangePassword: boolean;
   lastLoginAt?: string | null;
@@ -34,6 +35,7 @@ const empty = {
   role: "PHARMACIST" as UserRow["role"],
   cashierAccess: false,
   pharmacyReconciliationAccess: false,
+  deliveryRefundApprovalAccess: false,
 };
 
 export function UsersPage() {
@@ -81,6 +83,7 @@ export function UsersPage() {
       role: row.role,
       cashierAccess: row.cashierAccess,
       pharmacyReconciliationAccess: Boolean(row.pharmacyReconciliationAccess),
+      deliveryRefundApprovalAccess: Boolean(row.deliveryRefundApprovalAccess),
     });
     setModal("edit");
   };
@@ -105,6 +108,7 @@ export function UsersPage() {
           role: form.role,
           cashierAccess: form.cashierAccess,
           pharmacyReconciliationAccess: form.pharmacyReconciliationAccess,
+          deliveryRefundApprovalAccess: form.deliveryRefundApprovalAccess,
         });
       if (modal === "reset" && selected)
         await api.post(`/users/${selected.id}/reset-password`, {
@@ -389,6 +393,7 @@ export function UsersPage() {
                 <label className="form-check-label" htmlFor="pharmacyReconciliationAccess"><strong>Allow pharmacy-wide daily reconciliation</strong><small className="d-block text-secondary">View all cashiers’ receipts, refunds and bank references, and confirm the pharmacy-wide daily balance. Individual cashier confirmations are still required. Changing permissions signs this user out.</small></label>
               </div>}
               {form.role === 'ADMIN' && <p className="full text-secondary small">Administrators automatically have pharmacy-wide reconciliation access.</p>}
+              <div className="full form-check border rounded-3 p-3"><input id="deliveryRefundApprovalAccess" type="checkbox" className="form-check-input ms-0 me-2" checked={form.deliveryRefundApprovalAccess} onChange={event => setForm({ ...form, deliveryRefundApprovalAccess: event.target.checked })} /><label htmlFor="deliveryRefundApprovalAccess">Allow exceptional delivery-fee refund approval<small className="d-block text-secondary">Administrators have this permission automatically. Approvers cannot approve their own requests. Payout still requires cashier access.</small></label></div>
               {modal === "create" && (
                 <div className="full">
                   <PasswordField

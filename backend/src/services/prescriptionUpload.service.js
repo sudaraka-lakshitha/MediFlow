@@ -1,4 +1,5 @@
 import { serializable } from '../utils/serializable.js';
+import crypto from 'node:crypto';
 import { invoiceMaterialChanged } from '../utils/invoiceRevision.js';
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
@@ -18,6 +19,7 @@ const slipSelect = {
 };
 
 const summarySelect = {
+  deliveryRequested: true, deliveryAddress: true, deliveryPhone: true, deliveryRecipientName: true,
   attachments: { select: { id: true, originalName: true, mimeType: true }, orderBy: { id: 'asc' } },
   id: true, originalName: true, mimeType: true, patientNote: true, prepareRequested: true, orderedForSelf: true, recipientName: true, recipientRelationship: true, recipientDateOfBirth: true, recipientAllergies: true, recipientConditions: true, status: true, availabilityNotes: true,
   estimatedTotal: true, estimateDetails: true, reviewedAt: true, createdAt: true, updatedAt: true, deleteAt: true, attachmentRemovedAt: true,
@@ -87,6 +89,16 @@ export const prescriptionUploadService = {
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize,
   }); },
   async create(data, userId) {
+    const { submissionKey, ...content } = data;
+    const submissionHash = submissionKey ? crypto.createHash('sha256').update(JSON.stringify(content)).digest('hex') : null;
+    const existingSubmission = async () => {
+      const existing = await prisma.prescriptionUpload.findUnique({ where: { patientId_submissionKey: { patientId: userId, submissionKey } }, select: { ...summarySelect, submissionHash: true } });
+      if (!existing) return null;
+      if (existing.submissionHash !== submissionHash) throw new AppError(409, 'This upload attempt was already used with different details. Refresh your requests before submitting again.');
+      const { submissionHash: ignored, ...record } = existing;
+      return { ...record, replayed: true };
+    };
+    if (submissionKey) { const existing = await existingSubmission(); if (existing) return existing; }
     if ((data.additionalAttachments || []).length > 4) throw new AppError(400, 'Upload at most five files per request.');
     const attachments = (data.additionalAttachments || []).map(file => {
       const fileData = Buffer.from(file.fileBase64, 'base64');
@@ -98,7 +110,9 @@ export const prescriptionUploadService = {
     if (!fileData.length || fileData.length > 2_500_000) throw new AppError(413, 'Prescription files must be 2.5 MB or smaller.');
     if (!validSignature(fileData, data.mimeType)) throw new AppError(400, 'The file content does not match the selected PDF or image type.');
     const retention = await this.retention(); const deleteAt = new Date(); deleteAt.setDate(deleteAt.getDate() + retention.days);
-    return prisma.prescriptionUpload.create({ data: {
+    try { return await prisma.prescriptionUpload.create({ data: {
+      ...(submissionKey ? { submissionKey, submissionHash } : {}),
+      deliveryRequested: Boolean(data.deliveryRequested), deliveryRecipientName: data.deliveryRequested ? data.deliveryRecipientName : null, deliveryAddress: data.deliveryRequested ? data.deliveryAddress : null, deliveryPhone: data.deliveryRequested ? data.deliveryPhone : null,
       attachments: { create: attachments },
       patientId: userId, originalName: data.originalName.replace(/[\\/\r\n"]/g, '_'), mimeType: data.mimeType,
       fileData, patientNote: data.patientNote || null, prepareRequested: data.prepareRequested,
@@ -109,6 +123,10 @@ export const prescriptionUploadService = {
       recipientConditions: data.orderedForSelf ? null : (data.recipientConditions || null),
       deleteAt,
     }, select: summarySelect });
+    } catch (error) {
+      if (submissionKey && error.code === 'P2002') { const existing = await existingSubmission(); if (existing) return existing; }
+      throw error;
+    }
   },
   async file(id, user, attachmentId) {
     const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true, patientId: true, originalName: true, mimeType: true, fileData: true } });
@@ -142,6 +160,7 @@ export const prescriptionUploadService = {
       where: { id, patientId: user.id, status: 'PENDING', prescription: { is: null }, attachmentRemovedAt: null, updatedAt: new Date(data.updatedAt) },
       data: {
         ...replacement, patientNote: data.patientNote || null, prepareRequested: data.prepareRequested,
+        ...(data.deliveryRequested === undefined ? {} : { deliveryRequested: data.deliveryRequested, deliveryRecipientName: data.deliveryRequested ? data.deliveryRecipientName : null, deliveryAddress: data.deliveryRequested ? data.deliveryAddress : null, deliveryPhone: data.deliveryRequested ? data.deliveryPhone : null }),
         orderedForSelf: data.orderedForSelf, recipientName: data.orderedForSelf ? null : data.recipientName,
         recipientRelationship: data.orderedForSelf ? null : data.recipientRelationship,
         recipientDateOfBirth: data.orderedForSelf ? null : data.recipientDateOfBirth,

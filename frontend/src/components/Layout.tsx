@@ -190,6 +190,7 @@ export function Layout() {
         </div>
         <span className="sidebar-actions">
           <button title="Change password" aria-label="Change password" onClick={openPassword}><i className="bi bi-key" /></button>
+          <button type="button" title="Session preferences" aria-label="Session preferences" onClick={() => { setMobileNavOpen(false); window.dispatchEvent(new Event('mediflow:session-preferences')); }}><i className="bi bi-clock" /></button>
           <button type="button" title="Sign out" aria-label="Sign out" onClick={() => { setMobileNavOpen(false); setLogoutOpen(true); }}><i className="bi bi-box-arrow-right" /></button>
         </span>
       </div>

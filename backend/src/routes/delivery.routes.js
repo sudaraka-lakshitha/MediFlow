@@ -8,15 +8,39 @@ import { withWorkflowLease } from '../middleware/workflowLease.js';
 import { idParams } from '../validators/common.validator.js';
 import { deliveryService } from '../services/delivery.service.js';
 import { listPagination } from '../utils/listPagination.js';
+import { deliveryActionSchema, deliveryContactSchema, deliveryFilterSchema } from '../validators/delivery.validator.js';
+import { deliveryBulkSchema, deliveryBulkService } from '../services/deliveryBulk.service.js';
+import { workflowLeaseService } from '../services/workflowLease.service.js';
+import { exportDeliveryWorkbook, readDeliveryWorkbook } from '../services/deliveryWorkbook.service.js';
+import { prisma } from '../config/prisma.js';
 export const deliveryRoutes = Router();
 // Authenticate only matching delivery routes; leave login and registration public.
 deliveryRoutes.use(['/deliveries', '/delivery-settings', '/payment-requests/:id/delivery'], authenticate);
+deliveryRoutes.post('/deliveries/export.xlsx', authorize('ADMIN', 'PHARMACIST'), validate({ body: z.object({ ids: z.array(z.number().int().positive()).min(1).max(500) }) }), asyncHandler(async (req, res) => {
+  const rows = await prisma.deliveryRequest.findMany({ where: { id: { in: req.body.ids } }, include: { paymentRequest: { select: { requestNumber: true, patient: { select: { fullName: true } } } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
+  const buffer = await exportDeliveryWorkbook(rows);
+  res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.set('Content-Disposition', 'attachment; filename="mediflow-deliveries.xlsx"');
+  res.set('Cache-Control', 'no-store'); res.send(Buffer.from(buffer));
+}));
+deliveryRoutes.post('/deliveries/bulk/excel-preview', authorize('ADMIN', 'PHARMACIST'), validate({ body: z.object({ fileBase64: z.string().min(8).max(1_340_000).regex(/^[A-Za-z0-9+/]+={0,2}$/) }) }), asyncHandler(async (req, res) => {
+  const rows = await readDeliveryWorkbook(Buffer.from(req.body.fileBase64, 'base64'));
+  res.json({ data: { ...await deliveryBulkService.preview(rows, req.user), rows } });
+}));
+deliveryRoutes.post('/deliveries/bulk/preview', authorize('ADMIN', 'PHARMACIST'), validate({ body: deliveryBulkSchema }), asyncHandler(async (req, res) => {
+  res.json({ data: await deliveryBulkService.preview(req.body.rows, req.user) });
+}));
+deliveryRoutes.post('/deliveries/bulk/confirm', authorize('ADMIN', 'PHARMACIST'), validate({ body: deliveryBulkSchema }), asyncHandler(async (req, res) => {
+  res.json({ data: await deliveryBulkService.apply(req.body.rows, req.body.previewToken, req.user, workflowLeaseService.owner(req)) });
+}));
 deliveryRoutes.get('/deliveries', authorize('PATIENT', 'ADMIN', 'PHARMACIST', 'CASHIER'), asyncHandler(async (req, res) => {
-  const pagination = listPagination(req.query); const data = await deliveryService.list(req.user, pagination);
+  const pagination = listPagination(req.query); const data = await deliveryService.list(req.user, { ...pagination, ...deliveryFilterSchema.parse(req.query) });
   res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } });
 }));
-deliveryRoutes.post('/payment-requests/:id/delivery', authorize('PATIENT'), validate({ params: idParams, body: z.object({ address: z.string().trim().min(10).max(500), phone: z.string().regex(/^(?:0|\+94)\d{9}$/) }) }), asyncHandler(withWorkflowLease(async (req, res) => res.status(201).json({ data: await deliveryService.request(Number(req.params.id), req.body, req.user) }))));
-deliveryRoutes.put('/payment-requests/:id/delivery', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: z.object({ action: z.enum(['CONFIRM', 'DISPATCH', 'DELIVERED', 'CANCEL', 'UPDATE_TRACKING']), trackingReference: z.string().trim().min(3).max(160).optional(), courierService: z.string().trim().min(2).max(120).optional() }).refine(data => !['DISPATCH', 'UPDATE_TRACKING'].includes(data.action) || (!!data.trackingReference && !!data.courierService), 'Courier service and tracking number are required.') }), asyncHandler(withWorkflowLease(async (req, res) => res.json({ data: await deliveryService.act(Number(req.params.id), req.body, req.user) }))));
+deliveryRoutes.post('/payment-requests/:id/delivery', authorize('PATIENT'), validate({ params: idParams, body: deliveryContactSchema }), asyncHandler(withWorkflowLease(async (req, res) => res.status(201).json({ data: await deliveryService.request(Number(req.params.id), req.body, req.user) }))));
+deliveryRoutes.post('/payment-requests/:id/delivery/reshipment', authorize('PATIENT'), validate({ params: idParams }), asyncHandler(withWorkflowLease(async (req, res) => res.json({ data: await deliveryService.requestReshipment(Number(req.params.id), req.user) }))));
+deliveryRoutes.post('/payment-requests/:id/delivery/reshipment/withdraw', authorize('PATIENT'), validate({ params: idParams }), asyncHandler(withWorkflowLease(async (req, res) => res.json({ data: await deliveryService.requestReshipment(Number(req.params.id), req.user, true) }))));
+deliveryRoutes.put('/payment-requests/:id/delivery', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: deliveryActionSchema }), asyncHandler(withWorkflowLease(async (req, res) => res.json({ data: await deliveryService.act(Number(req.params.id), req.body, req.user) }))));
 deliveryRoutes.get('/delivery-settings', authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), asyncHandler(async (_req, res) => {
   const { prisma } = await import('../config/prisma.js');
   const setting = await prisma.systemSetting.findUnique({ where: { key: 'standardDeliveryFee' } });

@@ -3,7 +3,8 @@ import jwt from 'jsonwebtoken';
 vi.mock('../src/config/env.js', () => ({ env: { JWT_SECRET: 'test-secret', JWT_EXPIRES_IN: '12h' } }));
 vi.mock('../src/config/prisma.js', () => ({ prisma: {
   authSession: { create: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
-  user: { findUnique: vi.fn(), findFirst: vi.fn() },
+  user: { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+  $transaction: vi.fn(),
 } }));
 vi.mock('../src/services/operationSettings.service.js', () => ({ operationSettingsService: { get: vi.fn(async () => ({ sessionIdleMinutes: 15 })) } }));
 vi.mock('bcrypt', () => ({ default: { compare: vi.fn() } }));
@@ -16,6 +17,7 @@ const row = () => ({ id: 'test-session', userId: 1, generation: 0, lastActiveAt:
 const payload = { sub: '1', sid: 'test-session', generation: 0, version: 0 };
 beforeEach(() => {
   vi.clearAllMocks();
+  prisma.$transaction.mockImplementation(fn => fn(prisma));
   prisma.authSession.updateMany.mockResolvedValue({ count: 1 });
   prisma.authSession.findUnique.mockResolvedValue(row());
   prisma.user.findUnique.mockResolvedValue(user);
@@ -23,6 +25,50 @@ beforeEach(() => {
   bcrypt.compare.mockResolvedValue(true);
 });
 describe('server-enforced session lock', () => {
+  it('shortens the preference using the old idle deadline and preserves absolute expiry', async () => {
+    const session = { ...row(), lastActiveAt: new Date(Date.now() - 45 * 60000) };
+    prisma.user.findUnique.mockResolvedValue({ ...user, sessionIdleMinutes: 60 });
+    prisma.authSession.findUnique.mockResolvedValue({ ...session, lastActiveAt: new Date() });
+    const result = await sessionService.setIdleMinutes(session, 15);
+    const change = prisma.authSession.updateMany.mock.calls[0][0];
+    expect(change.where.lastActiveAt.gt.getTime()).toBe(change.data.lastActiveAt.getTime() - 61 * 60000);
+    expect(change.where).toMatchObject({ id: session.id, userId: 1, generation: 0, revokedAt: null, lockedAt: null });
+    expect(change.data).not.toHaveProperty('expiresAt');
+    expect(result).toMatchObject({ idleMinutes: 15, locked: false, expiresAt: session.expiresAt.getTime() });
+    expect(prisma.user.update).toHaveBeenCalledWith({ where: { id: 1 }, data: { sessionIdleMinutes: 15 } });
+    expect(prisma.authSession.updateMany.mock.invocationCallOrder[0]).toBeLessThan(prisma.user.update.mock.invocationCallOrder[0]);
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: 'Serializable' });
+  });
+  it('does not change preferences when the session has expired, locked, or been revoked', async () => {
+    prisma.authSession.updateMany.mockResolvedValue({ count: 0 });
+    await expect(sessionService.setIdleMinutes(row(), 120)).rejects.toMatchObject({ statusCode: 401 });
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+  it.each([0, 14, 121, 30.5])('rejects invalid inactivity preference %s without writes', async minutes => {
+    await expect(sessionService.setIdleMinutes(row(), minutes)).rejects.toMatchObject({ statusCode: 400 });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+  it('propagates preference-save failure through the atomic transaction', async () => {
+    prisma.user.update.mockRejectedValueOnce(new Error('Database unavailable'));
+    await expect(sessionService.setIdleMinutes(row(), 15)).rejects.toThrow('Database unavailable');
+    expect(prisma.authSession.findUnique).not.toHaveBeenCalled();
+  });
+  it('uses role defaults and personal inactivity preferences', async () => {
+    expect(await sessionService.idleMinutes(1)).toBe(30);
+    prisma.user.findUnique.mockResolvedValue({ role: 'PATIENT' });
+    expect(await sessionService.idleMinutes(1)).toBe(60);
+    prisma.user.findUnique.mockResolvedValue({ sessionIdleMinutes: 120 });
+    expect(await sessionService.idleMinutes(1)).toBe(120);
+  });
+  it('ends idle sessions instead of asking for an unlock', async () => {
+    prisma.authSession.findUnique.mockResolvedValue({ ...row(), lastActiveAt: new Date(Date.now() - 32 * 60000) });
+    await expect(sessionService.inspect(payload)).rejects.toMatchObject({ statusCode: 401 });
+  });
+  it('rejects expired JWTs on session control endpoints', async () => {
+    const req = { headers: { authorization: `Bearer ${jwt.sign({ ...payload, exp: 1 }, 'test-secret')}` }, originalUrl: '/api/auth/session' };
+    const next = vi.fn(); await authenticateSessionControl(req, {}, next);
+    expect(next.mock.calls[0][0]).toMatchObject({ statusCode: 401 });
+  });
   it('warns after 15 minutes, locks after the additional minute', () => {
     const session = { ...row(), lastActiveAt: new Date(0), expiresAt: new Date(8 * 3600000) };
     expect(sessionView(session, 15, 15 * 60000)).toMatchObject({ warningAt: 900000, lockAt: 960000, locked: false });
@@ -42,7 +88,7 @@ describe('server-enforced session lock', () => {
   });
   it('cannot revive an expired or locked session through activity', async () => {
     prisma.authSession.updateMany.mockResolvedValue({ count: 0 });
-    await expect(sessionService.activity(row())).rejects.toMatchObject({ statusCode: 423 });
+    await expect(sessionService.activity(row())).rejects.toMatchObject({ statusCode: 401 });
     expect(prisma.authSession.updateMany.mock.calls[0][0].where).toMatchObject({ lockedAt: null, revokedAt: null });
   });
   it('rejects old sessions without a tracked ID or generation', async () => {

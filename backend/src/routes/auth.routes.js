@@ -49,6 +49,11 @@ authRoutes.post('/verify-reset-otp', resetVerificationLimiter, validate({ body: 
 authRoutes.post('/reset-password', validate({ body: selfResetPasswordSchema }), asyncHandler(authController.selfResetPassword));
 authRoutes.get('/me', authenticate, asyncHandler(authController.me));
 authRoutes.get('/session', authenticateSessionControl, (req, res) => res.json({ session: req.sessionView }));
+authRoutes.put('/session/preferences', authenticate,
+  validate({ body: z.object({ idleMinutes: z.number().int().min(15).max(120) }) }),
+  asyncHandler(async (req, res) => {
+    res.json({ session: await sessionService.setIdleMinutes(req.authSession, req.body.idleMinutes) });
+  }));
 authRoutes.post('/session/activity', authenticateSessionControl, asyncHandler(async (req, res) => {
   res.json({ session: await sessionService.activity(req.authSession) });
 }));

@@ -25,3 +25,19 @@ it('does not let patients dispatch', async () => {
 it('rejects dispatch without a courier and tracking reference', async () => {
   expect((await request(app).put('/api/payment-requests/1/delivery').set('x-test-role', 'PHARMACIST').send({ action: 'DISPATCH' })).status).toBe(400);
 });
+it.each(['CONFIRM', 'CANCEL', 'DELIVERED', 'DISPATCH', 'UPDATE_TRACKING', 'UPDATE_DETAILS', 'RETURNED', 'APPROVE_RESHIPMENT', 'RESHIP'])('requires the viewed version for %s', async action => {
+  const response = await request(app).put('/api/payment-requests/1/delivery').set('x-test-role', 'PHARMACIST').send({ action, courierService: 'Courier', trackingReference: 'TRACK123', recipientName: 'Patient Name', reason: 'Parcel reviewed', inspectionConfirmed: true });
+  expect(response.status).toBe(400);
+});
+it('accepts a versioned delivery action', async () => {
+  const response = await request(app).put('/api/payment-requests/1/delivery').set('x-test-role', 'PHARMACIST').send({ action: 'CONFIRM', expectedUpdatedAt: '2026-10-25T06:00:00.000Z' });
+  expect(response.status).toBe(200);
+});
+it.each(['PATIENT', 'CASHIER'])('blocks bulk changes and Excel export for %s', async role => {
+  for (const path of ['/deliveries/bulk/preview', '/deliveries/bulk/confirm', '/deliveries/bulk/excel-preview', '/deliveries/export.xlsx']) {
+    expect((await request(app).post(`/api${path}`).set('x-test-role', role).send({})).status).toBe(403);
+  }
+});
+it('requires a delivery recipient name', async () => {
+  expect((await request(app).post('/api/payment-requests/1/delivery').set('x-test-role', 'PATIENT').send({ address: '123 Example Street', phone: '0701234567' })).status).toBe(400);
+});

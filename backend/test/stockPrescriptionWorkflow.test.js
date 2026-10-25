@@ -9,7 +9,7 @@ import { cashierPaymentSchema } from '../src/controllers/paymentRequest.controll
 
 const { db, tx, release, reserve, dispense, settings } = vi.hoisted(() => {
   const model = () => ({ findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), count: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn() });
-  const client = () => Object.fromEntries(['prescription', 'prescriptionItem', 'prescriptionRetailItem', 'prescriptionUpload', 'patientProfile', 'product', 'paymentRequest', 'paymentRequestItem', 'paymentRequestEvent', 'paymentSlip', 'stockReservation', 'auditLog', 'refund'].map((key) => [key, model()]));
+  const client = () => Object.fromEntries(['prescription', 'prescriptionItem', 'prescriptionRetailItem', 'prescriptionUpload', 'patientProfile', 'product', 'paymentRequest', 'paymentRequestItem', 'paymentRequestEvent', 'salePayment', 'paymentSlip', 'stockReservation', 'auditLog', 'refund'].map((key) => [key, model()]));
   return { db: { ...client(), $transaction: vi.fn() }, tx: client(), release: vi.fn(), reserve: vi.fn(), dispense: vi.fn(), settings: vi.fn() };
 });
 vi.mock('../src/config/prisma.js', () => ({ prisma: db }));
@@ -204,6 +204,22 @@ describe('expiry cleanup independent of the cashier screen', () => {
 });
 
 describe('payment is separate from collection', () => {
+  it('rejects bank-slip approval when a retail payment already used the reference', async () => {
+    tx.paymentSlip.findFirst.mockResolvedValue({ id: 2, status: 'PENDING', declaredAmount: d(50), paymentRequest: { id: 9, status: 'SLIP_SUBMITTED', total: d(50) } });
+    tx.salePayment.findFirst.mockResolvedValue({ id: 11 });
+    await expect(paymentRequestService.reviewSlip(9, 2, { approved: true, verifiedAmount: 50, verifiedReference: 'BT-1' }, { id: 5, role: 'CASHIER' })).rejects.toThrow('already been used');
+    expect(tx.paymentRequest.updateMany).not.toHaveBeenCalled();
+    expect(reserve).not.toHaveBeenCalled();
+  });
+  it.each(['BANK_TRANSFER', 'OTHER'])('rejects reused bank references in manual %s payments', async method => {
+    db.paymentRequest.findMany.mockResolvedValue([]);
+    tx.paymentRequest.findUnique.mockResolvedValue({ id: 9, status: 'AWAITING_PAYMENT', total: d(50) });
+    tx.salePayment.findFirst.mockResolvedValue({ id: 11 });
+    const extra = method === 'OTHER' ? { splitDetails: { isSplit: true, cashAmount: 20, nonCashAmount: 30, nonCashMethod: 'BANK_TRANSFER', nonCashReference: 'BT-1', cashTendered: 20, change: 0 } } : {};
+    await expect(paymentRequestService.pay(9, method, 5, 'BT-1', extra)).rejects.toThrow('already been used');
+    expect(tx.paymentRequest.updateMany).not.toHaveBeenCalled();
+    expect(reserve).not.toHaveBeenCalled();
+  });
   it('bank approval reserves stock and issues a PIN without dispensing even when the setting is enabled', async () => {
     tx.paymentSlip.findFirst.mockResolvedValue({ id: 2, status: 'PENDING', declaredAmount: d(50), reference: 'BT-1', paymentRequest: { id: 9, status: 'SLIP_SUBMITTED', total: d(50), prescriptionId: 1 } });
     const result = await paymentRequestService.reviewSlip(9, 2, { approved: true, verifiedAmount: 50, verifiedReference: 'BT-1' }, { id: 5, role: 'CASHIER' });

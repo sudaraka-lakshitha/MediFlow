@@ -22,6 +22,8 @@ export function SessionGuard({ children }: { children: ReactNode }) {
   const [writes, setWrites] = useState(pendingWrites);
   const [renew, setRenew] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [idleMinutes, setIdleMinutes] = useState(30);
   const offset = useRef(0);
   const current = useRef<SessionView | null>(null);
   const syncing = useRef(false);
@@ -60,6 +62,11 @@ export function SessionGuard({ children }: { children: ReactNode }) {
     mounted.current = true;
     void sync();
     const state = () => { setLocked(workspaceLocked()); setWrites(pendingWrites()); };
+    // A request can lock the session before this effect subscribes.
+    state();
+    const requestUnlock = () => {
+      setPassword(''); setError(''); setRenew(true); setWorkspaceLocked(true);
+    };
     const refresh = () => { setChecking(true); void sync(); };
     const interact = (event: Event) => {
       if (!event.isTrusted || document.hidden || workspaceLocked() || paused.current) return;
@@ -67,10 +74,10 @@ export function SessionGuard({ children }: { children: ReactNode }) {
       if (Date.now() - lastSent.current >= 30_000) void activity();
     };
     const visibility = () => {
-      // Hide cached clinical screens until the server checks the session again.
-      setChecking(true);
+      // Background validation must not interrupt a valid workspace.
       if (!document.hidden) void sync();
     };
+    const preferences = () => { setIdleMinutes(current.current?.idleMinutes ?? 30); setPreferencesOpen(true); setError(''); };
     const storage = (event: StorageEvent) => {
       if (event.key && !['mediflow_token', 'mediflow_user'].includes(event.key)) return;
       const stored = sessionUser<User>();
@@ -83,12 +90,14 @@ export function SessionGuard({ children }: { children: ReactNode }) {
       const time = Date.now() + offset.current; setNow(time);
       const snapshot = current.current;
       if (snapshot && time >= snapshot.lockAt && !workspaceLocked() && !document.hidden) {
-        setChecking(true); void sync();
+        if (pendingWrites() === 0) void sync();
       }
       if (activityPending.current && Date.now() - lastSent.current >= 30_000 && !document.hidden) void activity();
     }, 1000);
-    const poll = window.setInterval(() => { if (!document.hidden) void sync(); }, 30_000);
+    const poll = window.setInterval(() => { if (!document.hidden && pendingWrites() === 0) void sync(); }, 60_000);
     window.addEventListener('mediflow:session-state', state);
+    window.addEventListener('mediflow:session-preferences', preferences);
+    window.addEventListener('mediflow:request-unlock', requestUnlock);
     window.addEventListener('mediflow:session-refresh', refresh);
     window.addEventListener('storage', storage);
     document.addEventListener('visibilitychange', visibility);
@@ -96,6 +105,8 @@ export function SessionGuard({ children }: { children: ReactNode }) {
     return () => {
       mounted.current = false; clearInterval(timer); clearInterval(poll);
       window.removeEventListener('mediflow:session-state', state);
+      window.removeEventListener('mediflow:session-preferences', preferences);
+      window.removeEventListener('mediflow:request-unlock', requestUnlock);
       window.removeEventListener('mediflow:session-refresh', refresh);
       window.removeEventListener('storage', storage);
       document.removeEventListener('visibilitychange', visibility);
@@ -128,12 +139,26 @@ export function SessionGuard({ children }: { children: ReactNode }) {
   return <>
     {!hidden && (absoluteWarning || idleWarning) && <div className="session-warning" role="alert">
       <strong>{absoluteWarning ? 'Password verification needed soon' : 'Still working?'}</strong>
-      <p>{absoluteWarning ? `Your session reaches its limit in ${Math.max(0, Math.ceil((view!.expiresAt - now) / 60_000))} minute(s). Finish your current step. Unsaved forms will remain open.`
-        : `Your workspace will lock in ${Math.max(0, Math.ceil((view!.lockAt - now) / 1000))} seconds. Your unsaved forms will remain open.`}</p>
+      <p>{absoluteWarning ? `Your session expires in ${Math.max(0, Math.ceil((view!.expiresAt - now) / 60_000))} minute(s). Save your work or verify your password now to renew it.`
+        : `You will be signed out in ${Math.max(0, Math.ceil((view!.lockAt - now) / 1000))} seconds due to inactivity. Save your work or continue working.`}</p>
       <button type="button" className="btn btn-primary" disabled={writes > 0} onClick={() => absoluteWarning ? void verifyEarly() : void activity()}>{absoluteWarning ? 'Verify password now' : 'Continue working'}</button>
       {writes > 0 && <small className="d-block">Your current request is finishing. It will not be cancelled.</small>}
     </div>}
     <div inert={hidden} aria-hidden={hidden || undefined} style={hidden ? { visibility: 'hidden', pointerEvents: 'none' } : undefined}>{children}</div>
+    {preferencesOpen && !hidden && <Modal title="Session preferences" onClose={() => { if (!busy) setPreferencesOpen(false); }} size="sm">
+      <p>Sign out after inactivity. You receive a one-minute warning. Closing this tab normally clears its login; browser restore features may restore tabs, so always sign out on shared devices.</p>
+      <label className="form-label" htmlFor="session-idle">Inactive time</label>
+      <select id="session-idle" className="form-select" value={idleMinutes} onChange={e => setIdleMinutes(Number(e.target.value))}>
+        {[15, 30, 60, 90, 120].map(minutes => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
+      </select>
+      <p className="text-secondary mt-2">Sessions also expire after at most 8 hours. Background refreshes do not count as activity.</p>
+      {error && <p role="alert" className="text-danger">{error}</p>}
+      <button className="btn btn-primary mt-2" disabled={busy} onClick={async () => {
+        setBusy(true); setError('');
+        try { const response = await api.put('/auth/session/preferences', { idleMinutes }); apply(response.data.session); setPreferencesOpen(false); }
+        catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
+      }}>Save preference</button>
+    </Modal>}
     {hidden && <div className="session-shield">
       <Modal title={checking && !locked && !renew ? 'Checking your session' : 'Workspace locked'} closable={false} onClose={() => {}} size="sm">
         <p>{checking && !locked && !renew ? 'Confirming your session before showing the workspace.' : 'Enter your password to continue. Unsaved forms are still here; do not refresh or close this page.'}</p>

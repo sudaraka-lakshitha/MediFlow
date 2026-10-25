@@ -54,7 +54,7 @@ describe('name validation across write endpoints', () => {
     expect(schema.parse('jane doe')).toBe('Jane Doe');
   });
   it('still requires a recipient name for uploads on behalf of someone else', () => {
-    const result = uploadPrescriptionSchema.safeParse({
+    const result = uploadPrescriptionSchema.safeParse({ submissionKey: '11111111-1111-4111-8111-111111111111',
       originalName: 'sample.txt', mimeType: 'text/plain', fileBase64: 'dGVzdA==', prepareRequested: true,
       orderedForSelf: false, recipientName: ' ', recipientRelationship: 'Child', recipientDateOfBirth: '2000-01-01',
     });

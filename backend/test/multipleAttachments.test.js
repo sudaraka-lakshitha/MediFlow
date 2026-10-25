@@ -7,8 +7,16 @@ import { prisma } from '../src/config/prisma.js';
 import { prescriptionUploadService } from '../src/services/prescriptionUpload.service.js';
 import { uploadPrescriptionSchema } from '../src/validators/prescriptionUpload.validator.js';
 const file = { originalName: 'page.pdf', mimeType: 'application/pdf', fileBase64: Buffer.from('%PDF-1.4 sample').toString('base64') };
-const input = { ...file, prepareRequested: true, orderedForSelf: true };
+const input = { ...file, submissionKey: '11111111-1111-4111-8111-111111111111', prepareRequested: true, orderedForSelf: true };
 beforeEach(() => vi.resetAllMocks());
+it('requires preparation, address and a local phone for home delivery', () => {
+  const delivery = { ...input, deliveryRequested: true, deliveryRecipientName: 'Demo Patient', deliveryAddress: '123 Main Street, Colombo', deliveryPhone: '+94701234567' };
+  expect(uploadPrescriptionSchema.safeParse(delivery).success).toBe(true);
+  expect(uploadPrescriptionSchema.safeParse({ ...delivery, deliveryRecipientName: '' }).success).toBe(false);
+  expect(uploadPrescriptionSchema.safeParse({ ...delivery, prepareRequested: false }).success).toBe(false);
+  expect(uploadPrescriptionSchema.safeParse({ ...delivery, deliveryAddress: '' }).success).toBe(false);
+  expect(uploadPrescriptionSchema.safeParse({ ...delivery, deliveryPhone: 'abc' }).success).toBe(false);
+});
 it('accepts five files and rejects six', () => {
   expect(uploadPrescriptionSchema.safeParse({ ...input, additionalAttachments: Array(4).fill(file) }).success).toBe(true);
   expect(uploadPrescriptionSchema.safeParse({ ...input, additionalAttachments: Array(5).fill(file) }).success).toBe(false);

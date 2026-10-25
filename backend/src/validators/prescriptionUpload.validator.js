@@ -12,6 +12,11 @@ const attachmentSchema = z.object({
 });
 
 export const uploadPrescriptionSchema = z.object({
+  submissionKey: z.uuid(),
+  deliveryRequested: z.boolean().default(false),
+  deliveryRecipientName: optionalPersonNameSchema,
+  deliveryAddress: z.string().trim().max(500).optional().nullable(),
+  deliveryPhone: z.string().trim().max(40).optional().nullable(),
   additionalAttachments: z.array(attachmentSchema).max(4).optional(),
   originalName: z.string().trim().min(1).max(180),
   mimeType: z.enum(['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'text/plain']),
@@ -25,12 +30,20 @@ export const uploadPrescriptionSchema = z.object({
   recipientAllergies: z.string().trim().max(500).optional().nullable(),
   recipientConditions: z.string().trim().max(500).optional().nullable(),
 }).superRefine((data, context) => {
+  if (data.deliveryRequested) {
+    if (!data.deliveryRecipientName) context.addIssue({ code: 'custom', path: ['deliveryRecipientName'], message: 'Enter the delivery recipient name.' });
+    if (!data.prepareRequested) context.addIssue({ code: 'custom', path: ['prepareRequested'], message: 'Home delivery requires preparation, not quotation only.' });
+    if (!data.deliveryAddress || data.deliveryAddress.length < 10) context.addIssue({ code: 'custom', path: ['deliveryAddress'], message: 'Enter a complete delivery address (at least 10 characters).' });
+    if (!/^(?:0|\+94)\d{9}$/.test(data.deliveryPhone || '')) context.addIssue({ code: 'custom', path: ['deliveryPhone'], message: 'Enter a phone number such as 0701234567 or +94701234567.' });
+  }
   if (!data.orderedForSelf && !data.recipientName) context.addIssue({ code: 'custom', path: ['recipientName'], message: 'Recipient name is required.' });
   if (!data.orderedForSelf && !data.recipientRelationship) context.addIssue({ code: 'custom', path: ['recipientRelationship'], message: 'Relationship is required.' });
   if (!data.orderedForSelf && !data.recipientDateOfBirth) context.addIssue({ code: 'custom', path: ['recipientDateOfBirth'], message: 'Recipient date of birth is required for medicine age checks.' });
 });
 
 export const editUploadSchema = uploadPrescriptionSchema.safeExtend({
+  submissionKey: z.undefined().optional(),
+  deliveryRequested: z.boolean().optional(),
   additionalAttachments: z.undefined().optional(),
   originalName: uploadPrescriptionSchema.shape.originalName.optional(),
   mimeType: uploadPrescriptionSchema.shape.mimeType.optional(),

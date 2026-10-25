@@ -10,6 +10,7 @@ export interface User {
   phone?: string | null;
   cashierAccess?: boolean;
   pharmacyReconciliationAccess?: boolean;
+  deliveryRefundApprovalAccess?: boolean;
   mustChangePassword?: boolean;
   lastLoginAt?: string | null;
   passwordChangedAt?: string | null;

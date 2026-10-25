@@ -8,9 +8,7 @@ const authenticateWith = (allowLocked) => async (req, _res, next) => {
   try {
     const header = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) throw new AppError(401, 'Authentication is required.');
-    // Signature is always verified. Database expiry locks the session so a password
-    // can restore the same in-memory form rather than forcing a page reload.
-    const payload = jwt.verify(header.slice(7), env.JWT_SECRET, { ignoreExpiration: true });
+    const payload = jwt.verify(header.slice(7), env.JWT_SECRET);
     const user = await prisma.user.findFirst({
       where: { id: Number(payload.sub), active: true },
       select: {
@@ -20,6 +18,7 @@ const authenticateWith = (allowLocked) => async (req, _res, next) => {
         role: true,
         cashierAccess: true,
         pharmacyReconciliationAccess: true,
+        deliveryRefundApprovalAccess: true,
         mustChangePassword: true,
         tokenVersion: true,
         lastLoginAt: true,

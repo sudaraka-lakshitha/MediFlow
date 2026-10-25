@@ -6,6 +6,39 @@ const credit = { id: 3, createdAt: date('03'), sale, amount: 52, lines: [{ id: 4
 const db = (sales, refunds) => ({ sale: { findMany: vi.fn().mockResolvedValue(sales) }, refund: { findMany: vi.fn().mockResolvedValue(refunds) } });
 const bounds = (a, b) => ({ start: new Date(`2026-10-${a}T00:00:00Z`), end: new Date(`2026-10-${b}T00:00:00Z`) });
 describe('dated sales, credits and stock recovery', () => {
+  const serviceSale = { ...sale, id: 9, subtotal: 250, discount: 0, tax: 0, containerFee: 0, total: 250, items: [] };
+  it('includes delivery service revenue without creating medicine quantities', async () => {
+    const rows = await reportEvents(bounds('01','02'), db([serviceSale], []));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ quantity: 0, item: { isService: true } });
+    expect(eventSummary(rows)).toMatchObject({ netRevenue: 250, cost: 0 });
+  });
+  it('recognizes a delivery fee credit on approval, not request or payout', async () => {
+    const refund = { id: 10, category: 'DELIVERY_FEE', status: 'SETTLED', amount: 25, createdAt: date('02'), decidedAt: date('03'), settledAt: date('05'), paymentRequest: { sale: serviceSale }, lines: [] };
+    for (const [a, b, count] of [['02','03',0], ['03','04',1], ['05','06',0]]) {
+      const rows = await reportEvents(bounds(a,b), db([], [refund]));
+      expect(rows).toHaveLength(count);
+      if (count) expect(eventSummary(rows)).toMatchObject({ netRevenue: -25, cost: 0 });
+    }
+  });
+  it('does not report unapproved or rejected delivery fee requests as credits', async () => {
+    for (const status of ['AWAITING_APPROVAL', 'REJECTED']) {
+      const rows = await reportEvents(bounds('03','04'), db([], [{ category: 'DELIVERY_FEE', status, amount: 25, decidedAt: date('03'), paymentRequest: { sale: serviceSale } }]));
+      expect(rows).toHaveLength(0);
+    }
+  });
+  it('uses the recorded refund cent rather than losing it through quantity allocation', async () => {
+    const tinySale = { ...sale, subtotal: 0.03, discount: 0.02, total: 0.01, tax: 0, containerFee: 0, items: [{ ...sale.items[0], quantity: 3, lineTotal: 0.03 }] };
+    const refund = { ...credit, sale: tinySale, lines: [{ ...credit.lines[0], quantity: 1, amount: 0.01, stockStatus: 'PENDING_REVIEW' }] };
+    const rows = await reportEvents(bounds('03','04'), db([], [refund]));
+    expect(eventSummary(rows).netRevenue).toBe(-0.01);
+  });
+  it('keeps credit revenue plus tax equal to the authorized amount', async () => {
+    const refund = { ...credit, sale: { ...sale, total: 104 }, lines: [{ ...credit.lines[0], amount: 52.01 }] };
+    const rows = await reportEvents(bounds('03','04'), db([], [refund]));
+    const totals = eventSummary(rows);
+    expect(Number((totals.netRevenue + totals.tax).toFixed(2))).toBe(-52.01);
+  });
   it('keeps the original sale intact after later credit and stock review', async () => {
     const rows = await reportEvents(bounds('01','02'), db([{ ...sale, refunds: [credit] }], []));
     expect(rows).toHaveLength(1); expect(rows[0].kind).toBe('SALE');

@@ -7,9 +7,9 @@ export const prescriptionUploadController = protectWorkflowController({
   attachments: async (req, res) => res.json({ data: await prescriptionUploadService.attachments(Number(req.params.id), req.user) }),
   list: async (req, res) => { const pagination = listPagination(req.query); const data = await prescriptionUploadService.list(req.user,pagination); res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } }); },
   create: async (req, res) => {
-    const data = await prescriptionUploadService.create(req.body, req.user.id);
-    await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOADED', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id, details: { fileName: data.originalName, prepareRequested: data.prepareRequested }, ipAddress: req.ip });
-    res.status(201).json({ data });
+    const { replayed, ...data } = await prescriptionUploadService.create(req.body, req.user.id);
+    if (!replayed) await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOADED', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id, details: { fileName: data.originalName, prepareRequested: data.prepareRequested }, ipAddress: req.ip });
+    res.status(replayed ? 200 : 201).json({ data, replayed: Boolean(replayed) });
   },
   file: async (req, res) => {
     const data = await prescriptionUploadService.file(Number(req.params.id), req.user, req.query.attachmentId ? Number(req.query.attachmentId) : undefined);

@@ -17,6 +17,7 @@ const safeUser = (user) => ({
   role: user.role,
   cashierAccess: user.cashierAccess,
   pharmacyReconciliationAccess: user.pharmacyReconciliationAccess,
+  deliveryRefundApprovalAccess: user.deliveryRefundApprovalAccess,
   mustChangePassword: user.mustChangePassword,
   lastLoginAt: user.lastLoginAt,
   passwordChangedAt: user.passwordChangedAt,

@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { clearSession, sessionToken } from '../auth/authStorage';
-import { setWorkspaceLocked, trackWrite, workspaceLocked } from '../auth/workspaceLock';
+import { pendingWrites, setWorkspaceLocked, trackWrite, workspaceLocked } from '../auth/workspaceLock';
 import type { InternalAxiosRequestConfig } from 'axios';
 import { workflowClientId, workflowLeaseToken, waitForWorkflow } from './workflowState';
 type TrackedConfig = InternalAxiosRequestConfig & { workspaceWrite?: boolean };
@@ -44,7 +44,8 @@ api.interceptors.response.use((response) => {
 }, (error) => {
   finishWrite(error.config);
   if (error.response?.data?.details?.code === 'WORKFLOW_BUSY') window.dispatchEvent(new CustomEvent('mediflow:workflow-conflict', { detail: error.response.data.message }));
-  if (error.response?.status === 423 && error.response.data?.details?.code === 'SESSION_LOCKED'
+  if (error.response?.status === 423 && (error.response.data?.details?.code === 'SESSION_LOCKED'
+    || /^Unlock your workspace to continue\.?$/i.test(error.response.data?.message || ''))
     && error.config?.headers?.Authorization === `Bearer ${sessionToken()}`) setWorkspaceLocked(true);
   if (!error.response && !axios.isCancel(error)) window.dispatchEvent(new CustomEvent('mediflow:connectivity', { detail: false }));
   if (error.response?.status === 401 && !error.config?.url?.includes('/auth/login')) {
@@ -52,8 +53,15 @@ api.interceptors.response.use((response) => {
     // A delayed response from an older login must not clear a newer session.
     if (!redirectingToLogin && token && error.config?.headers?.Authorization === `Bearer ${token}`) {
       redirectingToLogin = true;
-      clearSession();
-      window.location.replace('/login?reason=session-ended');
+      const finishSignOut = () => {
+        if (pendingWrites() > 0) return;
+        window.removeEventListener('mediflow:session-state', finishSignOut);
+        if (sessionToken() !== token) { redirectingToLogin = false; return; }
+        clearSession();
+        window.location.replace('/login?reason=session-ended');
+      };
+      if (pendingWrites() > 0) window.addEventListener('mediflow:session-state', finishSignOut);
+      else finishSignOut();
     }
   }
   return Promise.reject(error);

@@ -7,7 +7,7 @@ import { serializable } from '../utils/serializable.js';
 const ensureStaff = async (id, tx = prisma) => {
   const user = await tx.user.findUnique({
     where: { id },
-    select: { id: true, role: true, active: true, cashierAccess: true, pharmacyReconciliationAccess: true },
+    select: { id: true, role: true, active: true, cashierAccess: true, pharmacyReconciliationAccess: true, deliveryRefundApprovalAccess: true },
   });
   if (!user || user.role === 'PATIENT') throw new AppError(404, 'Staff account not found.');
   return user;
@@ -27,6 +27,7 @@ const staffSelect = {
   role: true,
   cashierAccess: true,
   pharmacyReconciliationAccess: true,
+  deliveryRefundApprovalAccess: true,
   active: true,
   mustChangePassword: true,
   lastLoginAt: true,
@@ -48,6 +49,7 @@ export const userService = {
         cashierAccess: data.role === 'CASHIER' || (data.role === 'PHARMACIST' && data.cashierAccess),
         pharmacyReconciliationAccess: Boolean(data.pharmacyReconciliationAccess && (data.role === 'CASHIER' || (data.role === 'PHARMACIST' && data.cashierAccess))),
         mustChangePassword: true,
+        deliveryRefundApprovalAccess: Boolean(data.deliveryRefundApprovalAccess),
       },
       select: staffSelect,
     });
@@ -58,7 +60,8 @@ export const userService = {
     await ensureAnotherActiveAdmin(current, data.role, current.active, tx);
     const cashierAccess = data.role === 'CASHIER' || (data.role === 'PHARMACIST' && data.cashierAccess);
     const pharmacyReconciliationAccess = Boolean((data.pharmacyReconciliationAccess ?? current.pharmacyReconciliationAccess) && (data.role === 'CASHIER' || (data.role === 'PHARMACIST' && cashierAccess)));
-    const permissionsChanged = current.role !== data.role || current.cashierAccess !== cashierAccess || Boolean(current.pharmacyReconciliationAccess) !== pharmacyReconciliationAccess;
+    const deliveryRefundApprovalAccess = Boolean(data.deliveryRefundApprovalAccess ?? current.deliveryRefundApprovalAccess);
+    const permissionsChanged = current.role !== data.role || current.cashierAccess !== cashierAccess || Boolean(current.pharmacyReconciliationAccess) !== pharmacyReconciliationAccess || Boolean(current.deliveryRefundApprovalAccess) !== deliveryRefundApprovalAccess;
     const updated = await tx.user.update({
       where: { id },
       data: {
@@ -68,6 +71,7 @@ export const userService = {
         role: data.role,
         cashierAccess,
         pharmacyReconciliationAccess,
+        deliveryRefundApprovalAccess,
         ...(permissionsChanged ? { tokenVersion: { increment: 1 } } : {}),
       },
       select: staffSelect,
@@ -76,6 +80,7 @@ export const userService = {
       await tx.auditLog.create({ data: { userId: actorId, action: 'PHARMACY_RECONCILIATION_ACCESS_CHANGED', entityType: 'USER', entityId: id,
         details: { before: Boolean(current.pharmacyReconciliationAccess), after: pharmacyReconciliationAccess, sessionsRevoked: true } } });
     }
+    if (actorId && Boolean(current.deliveryRefundApprovalAccess) !== deliveryRefundApprovalAccess) await tx.auditLog.create({ data: { userId: actorId, action: 'DELIVERY_REFUND_PERMISSION_CHANGED', entityType: 'USER', entityId: id, details: { before: Boolean(current.deliveryRefundApprovalAccess), after: deliveryRefundApprovalAccess, sessionsRevoked: true } } });
     return updated;
     });
   },

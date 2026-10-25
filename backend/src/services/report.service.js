@@ -76,17 +76,21 @@ export const reportService = {
       days[date].revenue += financials.netRevenue;
       days[date].cost += financials.cost;
       days[date].profit += financials.profit;
-      {
-        const key = item.product.genericName;
+      if (!item.isService) {
+        const key = item.product.id;
         const itemValues = financials;
-        products[key] ??= { name: key, quantity: 0, revenue: 0, cost: 0, profit: 0 };
+        products[key] ??= { id: key, name: [item.product.genericName, item.product.strength, item.product.dosageForm].filter(Boolean).join(' '), quantity: 0, revenue: 0, cost: 0, profit: 0 };
         products[key].quantity += quantity;
         products[key].revenue += itemValues.netRevenue;
         products[key].cost += itemValues.cost;
         products[key].profit += itemValues.profit;
       }
     }
-    for (const issue of dispensings) pharmacists[issue.pharmacist.fullName] = (pharmacists[issue.pharmacist.fullName] || 0) + 1;
+    for (const issue of dispensings) {
+      const person = issue.pharmacist;
+      pharmacists[person.id] ??= { id: person.id, name: `${person.fullName} (#${person.id})`, count: 0 };
+      pharmacists[person.id].count += 1;
+    }
     for (const prescription of prescriptions) statuses[prescription.status] = (statuses[prescription.status] || 0) + 1;
 
     const summary = eventSummary(sales);
@@ -105,7 +109,7 @@ export const reportService = {
       },
       dailySeries: seriesWithEmptyDays(from, to, days).map((item) => ({ date: item.date, revenue: item.value?.revenue || 0, cost: item.value?.cost || 0, profit: item.value?.profit || 0, value: item.value?.revenue || 0 })),
       topProducts: Object.values(products).sort((a, b) => b.quantity - a.quantity).slice(0, 8),
-      pharmacistActivity: Object.entries(pharmacists).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
+      pharmacistActivity: Object.values(pharmacists).sort((a, b) => b.count - a.count),
       prescriptionStatuses: Object.entries(statuses).map(([status, count]) => ({ status, count })),
     };
   },
@@ -115,8 +119,8 @@ export const reportService = {
     const groups = new Map();
     const itemFields = ['product', 'category', 'batch'];
     const groupLabels = { date: 'Activity date', product: 'Product', category: 'Category', batch: 'Batch', pharmacist: 'Pharmacist', patient: 'Patient', paymentMethod: 'Invoice payment method', saleStatus: 'Activity type' };
-    const add = (key, sale, quantity, values) => {
-      const group = groups.get(key) || { group: key, saleIds: new Set(), quantity: 0, grossSales: 0, discount: 0, containerFee: 0, netRevenue: 0, cost: 0, profit: 0 };
+    const add = (key, sale, quantity, values, label = key) => {
+      const group = groups.get(key) || { group: label, saleIds: new Set(), quantity: 0, grossSales: 0, discount: 0, containerFee: 0, netRevenue: 0, cost: 0, profit: 0 };
       group.saleIds.add(sale.id); group.quantity += quantity;
       for (const field of ['grossSales', 'discount', 'containerFee', 'netRevenue', 'cost', 'profit']) group[field] += values[field] || 0;
       groups.set(key, group);
@@ -124,12 +128,11 @@ export const reportService = {
     for (const entry of sales) {
       const { sale, item, quantity, financials } = entry;
       if (itemFields.includes(groupBy)) {
-        {
-          const key = groupBy === 'product' ? `${item.product.genericName} ${item.product.strength}` : groupBy === 'category' ? item.product.category.name : item.batch.batchNumber;
-          add(key, sale, quantity, financials);
-        }
+        const key = groupBy === 'product' ? item.product.id : groupBy === 'category' ? item.product.category.id : item.batch.id;
+        const label = groupBy === 'product' ? `${item.product.genericName} ${item.product.strength || ''} (#${key})` : groupBy === 'category' ? `${item.product.category.name} (#${key})` : `${item.batch.batchNumber} (#${key})`;
+        add(key, sale, quantity, financials, label);
       } else {
-        const key = groupBy === 'date' ? localDateKey(entry.date) : groupBy === 'pharmacist' ? sale.pharmacist.fullName : groupBy === 'patient' ? (sale.patient?.fullName || 'Walk-in') : groupBy === 'paymentMethod' ? sale.paymentMethod : entry.kind;
+        const key = groupBy === 'date' ? localDateKey(entry.date) : groupBy === 'pharmacist' ? `${sale.pharmacist.fullName} (#${sale.pharmacist.id})` : groupBy === 'patient' ? (sale.patient ? `${sale.patient.fullName} (#${sale.patient.id})` : 'Walk-in') : groupBy === 'paymentMethod' ? sale.paymentMethod : entry.kind;
         add(key, sale, quantity, financials);
       }
     }

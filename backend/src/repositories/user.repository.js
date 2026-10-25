@@ -7,6 +7,7 @@ export const userRepository = {
     select: {
       id: true, email: true, fullName: true, phone: true, role: true, cashierAccess: true, pharmacyReconciliationAccess: true, active: true,
       mustChangePassword: true, lastLoginAt: true, passwordChangedAt: true, patientProfile: true, createdAt: true,
+      deliveryRefundApprovalAccess: true,
     },
   }),
   list: (search = '') => prisma.user.findMany({
@@ -14,6 +15,7 @@ export const userRepository = {
     select: {
       id: true, email: true, fullName: true, phone: true, role: true, cashierAccess: true, pharmacyReconciliationAccess: true, active: true,
       mustChangePassword: true, lastLoginAt: true, passwordChangedAt: true, createdAt: true,
+      deliveryRefundApprovalAccess: true,
     },
     orderBy: { createdAt: 'desc' },
     take: 200,

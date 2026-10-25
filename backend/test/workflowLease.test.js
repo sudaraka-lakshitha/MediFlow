@@ -16,6 +16,19 @@ const matches = (record, where) => Object.entries(where).every(([key, value]) =>
 });
 const staff = { userId: 1, sessionId: 'staff-session', clientId: 'staff-tab' };
 const patient = { userId: 2, sessionId: 'patient-session', clientId: 'patient-tab' };
+it('pins an owned processing lease inside the supplied transaction', async () => {
+  const lease = await leases.begin('payment:1', staff);
+  await expect(leases.pinForTransaction(prisma, lease, staff)).resolves.toBeUndefined();
+  await expect(leases.pinForTransaction(prisma, lease, patient)).rejects.toMatchObject({ statusCode: 409 });
+  records.get('payment:1').expiresAt = new Date(0);
+  await expect(leases.pinForTransaction(prisma, lease, staff)).rejects.toMatchObject({ statusCode: 409 });
+});
+it('uses the medicine order lock for its delivery fee', async () => {
+  prisma.paymentRequest.findUnique.mockImplementation(async ({ where }) => where.id === 20
+    ? { patientId: 2, deliveryFeeFor: { paymentRequestId: 10 } }
+    : { patientId: 2, prescriptionId: null });
+  await expect(leases.resource('payment', 20, { id: 2, role: 'PATIENT' })).resolves.toBe('payment:10');
+});
 beforeEach(() => {
   vi.clearAllMocks(); records = new Map();
   prisma.workflowLease.findUnique.mockImplementation(async ({ where }) => records.get(where.resourceKey) || null);

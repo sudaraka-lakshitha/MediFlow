@@ -10,6 +10,7 @@ import { batchAllocationOrder, operationSettingsService } from './operationSetti
 import { withUniqueRetry } from '../utils/withUniqueRetry.js';
 import { isSameLocalDay } from '../utils/localDate.js';
 import { serializable } from '../utils/serializable.js';
+import { assertUnusedBankReference } from '../utils/bankReference.js';
 import { assertRetailAgeSuitability } from '../utils/ageSuitability.js';
 import { usableQuantity, usableStockTotal } from '../utils/stock.js';
 import { invoiceDispensingInclude } from '../utils/patientMedicineInstructions.js';
@@ -43,7 +44,7 @@ export const saleService = {
     if (sale.status === 'PAID') throw new AppError(409, 'This invoice has already been paid.');
     const amountPaid = sale.amountPaid.add(amount);
     if (!cashierId || !new Prisma.Decimal(amount).greaterThan(0) || new Prisma.Decimal(amount).decimalPlaces() > 2 || amountPaid.greaterThan(sale.total)) throw new AppError(400, 'Record only the outstanding amount, after returning any cash change.');
-    if (paymentMethod === 'BANK_TRANSFER' && !reference?.trim()) throw new AppError(400, 'Record the bank transaction reference.');
+    if (paymentMethod === 'BANK_TRANSFER') reference = await assertUnusedBankReference(tx, reference);
     const updated = await tx.sale.updateMany({
       where: { id, status: 'PENDING', amountPaid: sale.amountPaid },
       data: { amountPaid, paymentMethod, status: amountPaid.greaterThanOrEqualTo(sale.total) ? 'PAID' : 'PENDING' },
@@ -91,10 +92,11 @@ export const saleService = {
       const discountResult = assertCouponMatched(await calculateDiscounts(tx, allocations, subtotal, input.couponCode));
       const discount = discountResult.amount; const tax = new Prisma.Decimal(input.tax); const total = Prisma.Decimal.max(0, subtotal.sub(discount).add(tax)); const amountPaid = new Prisma.Decimal(input.amountPaid);
       if (amountPaid.lessThan(0) || amountPaid.decimalPlaces() > 2) throw new AppError(400, 'Payment must be a non-negative amount with at most two decimal places.');
-      if (amountPaid.greaterThan(0) && input.paymentMethod === 'BANK_TRANSFER' && !input.paymentReference?.trim()) throw new AppError(400, 'Record the bank transaction reference.');
+      const paymentReference = amountPaid.greaterThan(0) && input.paymentMethod === 'BANK_TRANSFER'
+        ? await assertUnusedBankReference(tx, input.paymentReference) : input.paymentReference;
       const sale = await withUniqueRetry(() => tx.sale.create({ data: { invoiceNumber: `INV-${Date.now()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`, patientId: input.patientId || null, pharmacistId, cashierId: pharmacistId, subtotal, discount, tax, total, amountPaid, paymentMethod: input.paymentMethod, status: amountPaid.greaterThanOrEqualTo(total) ? 'PAID' : 'PENDING', items: { create: allocations.map(({ categoryId, quantityBefore, quantityAfter, productName, ...item }) => item) }, discountApplications: { create: discountResult.applications } } }));
       if (amountPaid.greaterThan(total)) throw new AppError(400, 'Amount paid cannot exceed the invoice total. Record payment after returning change.');
-      if (amountPaid.greaterThan(0)) await tx.salePayment.create({ data: { saleId: sale.id, amount: amountPaid, method: input.paymentMethod, reference: input.paymentReference || null, cashierId: pharmacistId } });
+      if (amountPaid.greaterThan(0)) await tx.salePayment.create({ data: { saleId: sale.id, amount: amountPaid, method: input.paymentMethod, reference: paymentReference || null, cashierId: pharmacistId } });
       for (const item of allocations) await tx.stockMovement.create({ data: { productId: item.productId, batchId: item.batchId, type: 'RETAIL_SALE', quantityChange: item.quantity.negated(), quantityBefore: item.quantityBefore, quantityAfter: item.quantityAfter, referenceType: 'SALE', referenceId: sale.id, reason: 'Retail counter sale', performedById: pharmacistId } });
       return tx.sale.findUnique({ where: { id: sale.id }, include: { patient: { select: { fullName: true } }, items: { include: { product: true, batch: true } }, discountApplications: true } });
     });

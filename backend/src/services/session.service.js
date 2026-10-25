@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import { prisma } from '../config/prisma.js';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
-import { operationSettingsService } from './operationSettings.service.js';
+import { serializable } from '../utils/serializable.js';
 
 export const WARNING_MS = 60_000;
 const MAX_MS = 8 * 60 * 60_000;
@@ -29,34 +29,57 @@ export const sessionService = {
   },
   async inspect(payload) {
     if (typeof payload.sid !== 'string' || !Number.isInteger(payload.generation)) throw new AppError(401, 'Please sign in again to start a secure session.');
-    const settings = await operationSettingsService.get();
-    const idleMinutes = settings.sessionIdleMinutes;
+    const idleMinutes = await this.idleMinutes(Number(payload.sub));
     const now = new Date();
     // Atomic transition: activity cannot revive a deadline that already passed.
     await prisma.authSession.updateMany({
       where: { id: payload.sid, userId: Number(payload.sub), generation: payload.generation, revokedAt: null, lockedAt: null,
         OR: [{ lastActiveAt: { lte: new Date(now.getTime() - idleMinutes * 60_000 - WARNING_MS) } }, { expiresAt: { lte: now } }] },
-      data: { lockedAt: now },
+      data: { revokedAt: now },
     });
     const session = await prisma.authSession.findUnique({ where: { id: payload.sid } });
-    if (!session || session.userId !== Number(payload.sub) || session.revokedAt || session.generation !== payload.generation) {
+    if (!session || session.userId !== Number(payload.sub) || session.revokedAt || session.generation !== payload.generation || new Date(session.expiresAt) <= now || new Date(session.lastActiveAt).getTime() + idleMinutes * 60_000 + WARNING_MS <= now.getTime()) {
       throw new AppError(401, 'This session has ended. Please sign in again.');
     }
     return { session, view: sessionView(session, idleMinutes) };
   },
   async activity(session) {
-    const { sessionIdleMinutes } = await operationSettingsService.get();
+    const sessionIdleMinutes = await this.idleMinutes(session.userId);
     const now = new Date();
     const updated = await prisma.authSession.updateMany({
       where: { id: session.id, generation: session.generation, revokedAt: null, lockedAt: null,
         expiresAt: { gt: now }, lastActiveAt: { gt: new Date(now.getTime() - sessionIdleMinutes * 60_000 - WARNING_MS) } },
       data: { lastActiveAt: now },
     });
-    if (!updated.count) throw new AppError(423, 'Unlock your workspace to continue.', { code: 'SESSION_LOCKED' });
+    if (!updated.count) throw new AppError(401, 'This session has ended. Please sign in again.');
     return sessionView({ ...session, lastActiveAt: now }, sessionIdleMinutes);
   },
   async lock(session) {
     await prisma.authSession.updateMany({ where: { id: session.id, generation: session.generation, revokedAt: null }, data: { lockedAt: new Date() } });
+  },
+  async idleMinutes(userId) {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { sessionIdleMinutes: true, role: true } });
+    return user?.sessionIdleMinutes ?? (user?.role === 'PATIENT' ? 60 : 30);
+  },
+  async setIdleMinutes(session, minutes) {
+    if (!Number.isInteger(minutes) || minutes < 15 || minutes > 120) throw new AppError(400, 'Choose an inactivity timeout between 15 and 120 minutes.');
+    return serializable(async tx => {
+      const user = await tx.user.findUnique({ where: { id: session.userId }, select: { sessionIdleMinutes: true, role: true } });
+      if (!user) throw new AppError(401, 'This session has ended. Please sign in again.');
+      const previousMinutes = user.sessionIdleMinutes ?? (user.role === 'PATIENT' ? 60 : 30);
+      const now = new Date();
+      // Saving a preference is activity under the OLD policy. Applying the new
+      // shorter timeout first could expire the very session making this change.
+      const updated = await tx.authSession.updateMany({
+        where: { id: session.id, userId: session.userId, generation: session.generation, revokedAt: null, lockedAt: null,
+          expiresAt: { gt: now }, lastActiveAt: { gt: new Date(now.getTime() - previousMinutes * 60_000 - WARNING_MS) } },
+        data: { lastActiveAt: now },
+      });
+      if (!updated.count) throw new AppError(401, 'This session has ended. Please sign in again.');
+      await tx.user.update({ where: { id: session.userId }, data: { sessionIdleMinutes: minutes } });
+      const saved = await tx.authSession.findUnique({ where: { id: session.id } });
+      return sessionView(saved, minutes);
+    });
   },
   async revoke(session) {
     await prisma.authSession.updateMany({ where: { id: session.id, generation: session.generation }, data: { revokedAt: new Date() } });
@@ -84,7 +107,7 @@ export const sessionService = {
     const changed = await prisma.authSession.updateMany({ where: { id: session.id, generation: session.generation, revokedAt: null },
       data: { generation, lockedAt: null, lastActiveAt: new Date(), expiresAt, unlockAttempts: 0, retryAfter: null } });
     if (!changed.count) throw new AppError(409, 'The session changed. Try again.');
-    const { sessionIdleMinutes } = await operationSettingsService.get();
+    const sessionIdleMinutes = await this.idleMinutes(session.userId);
     return { token, session: sessionView({ lastActiveAt: new Date(), expiresAt }, sessionIdleMinutes) };
   },
 };

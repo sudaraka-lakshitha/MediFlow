@@ -117,10 +117,7 @@ export function SettingsPage() {
       <form className="panel operation-settings" onSubmit={save}>
         <div className="form-section">
           <div className="form-section-title">Workspace security</div>
-          <label htmlFor="session-idle-minutes" className="form-label">Inactivity warning after (minutes)</label>
-          <input id="session-idle-minutes" className="form-control" type="number" min={5} max={60} step={1} required value={form.sessionIdleMinutes}
-            onChange={event => setForm({ ...form, sessionIdleMinutes: Number(event.target.value) })} />
-          <p className="text-secondary mt-2">Allowed: 5–60 minutes. A 60-second warning appears before password locking. Unsaved forms stay in memory. Sessions require password verification after at most 8 hours, with a warning 5 minutes beforehand. Existing shorter token limits still apply.</p>
+          <p className="text-secondary">Each user can choose 15–120 minutes in Session preferences (the sidebar clock button). Defaults: 30 minutes for staff and 60 minutes for patients, with a one-minute warning before sign-out. Sessions expire after at most 8 hours.</p>
         </div>
         <div className="panel-header">
           <div>

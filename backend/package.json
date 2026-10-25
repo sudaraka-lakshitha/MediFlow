@@ -23,16 +23,18 @@
     "cors": "^2.8.6",
     "dayjs": "^1.11.21",
     "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "helmet": "^8.3.0",
     "json2csv": "^6.0.0-alpha.2",
     "jsonwebtoken": "^9.0.3",
     "morgan": "^1.11.0",
-    "nodemailer": "^9.0.3",
+    "nodemailer": "^10.2.1",
     "pdfkit": "^0.19.1",
     "swagger-jsdoc": "^6.3.0",
     "swagger-ui-express": "^5.0.1",
     "winston": "^3.19.0",
+    "yauzl": "^3.4.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -42,7 +44,9 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
+    "exceljs": { "uuid": "11.1.1" },
     "@prisma/config": {
+      "deepmerge-ts": "8.0.0",
       "effect": "3.20.0"
     }
   }

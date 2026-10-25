@@ -1,4 +1,5 @@
 import { personNameInputProps } from '../utils/personName';
+import { uploadAttemptKey, completeUploadAttempt } from '../utils/uploadAttempt';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api/client";
 import { stockQuantityStep } from "../utils/unitMeasure";
@@ -39,6 +40,10 @@ type Upload = {
   mimeType: string;
   patientNote?: string;
   prepareRequested: boolean;
+  deliveryRequested?: boolean;
+  deliveryRecipientName?: string;
+  deliveryAddress?: string;
+  deliveryPhone?: string;
   orderedForSelf: boolean;
   recipientName?: string;
   recipientRelationship?: string;
@@ -174,6 +179,7 @@ export function PrescriptionUploadsPage() {
   const [bankAccounts, setBankAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const uploadInFlight = useRef(false);
   const [error, setError] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [additionalFiles, setAdditionalFiles] = useState<File[]>([]);
@@ -213,6 +219,10 @@ export function PrescriptionUploadsPage() {
     prescriptionText: string;
     patientNote: string;
     prepareRequested: boolean;
+    deliveryRequested?: boolean;
+    deliveryRecipientName?: string;
+    deliveryAddress?: string;
+    deliveryPhone?: string;
     orderedForSelf: boolean;
     recipientName: string;
     recipientRelationship: string;
@@ -435,6 +445,7 @@ export function PrescriptionUploadsPage() {
 
   const submitUpload = async (event: FormEvent) => {
     event.preventDefault();
+    if (uploadInFlight.current) return;
     const typedText = uploadForm.prescriptionText.trim();
     if (!editingUpload && !uploadForm.file && !typedText)
       return setError("Upload a prescription file, type the prescription and retail items, or both.");
@@ -442,7 +453,7 @@ export function PrescriptionUploadsPage() {
       return setError("Type at least 10 characters describing the prescription or requested retail items.");
     const file =
       uploadForm.file ||
-      (typedText ? new File([typedText], `typed-prescription-${Date.now()}.txt`, { type: "text/plain" }) : null);
+      (typedText ? new File([typedText], 'typed-prescription.txt', { type: "text/plain" }) : null);
     const extraFiles = editingUpload ? [] : additionalFiles;
     if (extraFiles.length > 4 || extraFiles.some(item => item.size > 2_500_000 || !['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(item.type)))
       return setError('Select up to five PDF or image files, each 2.5 MB or smaller.');
@@ -460,6 +471,7 @@ export function PrescriptionUploadsPage() {
     ]
       .filter(Boolean)
       .join("\n\n");
+    uploadInFlight.current = true;
     setBusy(true);
     setError("");
     try {
@@ -480,6 +492,10 @@ export function PrescriptionUploadsPage() {
         ...(file && dataUrl ? { originalName: file.name, mimeType: file.type, fileBase64: dataUrl.split(",")[1] } : {}),
         patientNote: patientNote || null,
         prepareRequested: uploadForm.prepareRequested,
+        deliveryRequested: Boolean(uploadForm.deliveryRequested),
+        deliveryRecipientName: uploadForm.deliveryRecipientName,
+        deliveryAddress: uploadForm.deliveryAddress,
+        deliveryPhone: uploadForm.deliveryPhone,
         orderedForSelf: uploadForm.orderedForSelf,
         recipientName: uploadForm.orderedForSelf ? null : uploadForm.recipientName,
         recipientRelationship: uploadForm.orderedForSelf ? null : uploadForm.recipientRelationship,
@@ -488,7 +504,11 @@ export function PrescriptionUploadsPage() {
         recipientConditions: uploadForm.orderedForSelf ? null : (uploadForm.recipientConditions.trim() || null),
       };
       if (editingUpload) await api.put(`/prescription-uploads/${editingUpload.id}`, { ...payload, updatedAt: editingUpload.updatedAt });
-      else await api.post('/prescription-uploads', payload);
+      else {
+        const submissionKey = await uploadAttemptKey(user!.id, payload);
+        await api.post('/prescription-uploads', { ...payload, submissionKey });
+        completeUploadAttempt(user!.id);
+      }
       closeUpload();
       setAdditionalFiles([]);
       setUploadForm({
@@ -507,6 +527,7 @@ export function PrescriptionUploadsPage() {
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
+      uploadInFlight.current = false;
       setBusy(false);
     }
   };
@@ -989,9 +1010,10 @@ export function PrescriptionUploadsPage() {
                 <small>Customer request</small>
                 <strong>
                   {item.prepareRequested
-                    ? "Prepare medicines for collection"
+                    ? (item.deliveryRequested ? "Prepare medicines for home delivery" : "Prepare medicines for collection")
                     : "Availability and price review only"}
                 </strong>
+                {item.deliveryRequested && <small>{item.deliveryRecipientName} · {item.deliveryAddress} · {item.deliveryPhone}. Track progress under Home deliveries once invoiced.</small>}
               </div>
             </div>
             <div className="availability-box">
@@ -1244,6 +1266,7 @@ export function PrescriptionUploadsPage() {
                 <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => {
                   setError(''); setEditingUpload(item);
                   setUploadForm({ file: null, prescriptionText: '', patientNote: item.patientNote || '', prepareRequested: item.prepareRequested,
+                    deliveryRequested: item.deliveryRequested, deliveryRecipientName: item.deliveryRecipientName || '', deliveryAddress: item.deliveryAddress || '', deliveryPhone: item.deliveryPhone || '',
                     orderedForSelf: item.orderedForSelf, recipientName: item.recipientName || '', recipientRelationship: item.recipientRelationship || '',
                     recipientDateOfBirth: item.recipientDateOfBirth?.slice(0, 10) || '', recipientAllergies: item.recipientAllergies || '', recipientConditions: item.recipientConditions || '' });
                   setUploadOpen(true);
@@ -1495,14 +1518,14 @@ export function PrescriptionUploadsPage() {
                 What should the pharmacy do after reviewing it?
               </legend>
               <label
-                className={`preparation-choice ${uploadForm.prepareRequested ? "selected" : ""}`}
+                className={`preparation-choice ${uploadForm.prepareRequested && !uploadForm.deliveryRequested ? "selected" : ""}`}
               >
                 <input
                   type="radio"
                   name="prepareRequested"
-                  checked={uploadForm.prepareRequested}
+                  checked={uploadForm.prepareRequested && !uploadForm.deliveryRequested}
                   onChange={() =>
-                    setUploadForm({ ...uploadForm, prepareRequested: true })
+                    setUploadForm({ ...uploadForm, prepareRequested: true, deliveryRequested: false })
                   }
                 />
                 <span>
@@ -1512,6 +1535,18 @@ export function PrescriptionUploadsPage() {
                   </small>
                 </span>
               </label>
+              <label className={`preparation-choice ${uploadForm.deliveryRequested ? 'selected' : ''}`}>
+                <input type="radio" name="prepareRequested" checked={Boolean(uploadForm.deliveryRequested)} onChange={() => setUploadForm({ ...uploadForm, prepareRequested: true, deliveryRequested: true })} />
+                <span><strong>Prepare my medicines for home delivery</strong><small>Medicines and the separate delivery fee must be paid and verified before dispatch. Track the courier, tracking number and dispatch date under Home deliveries.</small></span>
+              </label>
+              {uploadForm.deliveryRequested && <div className="my-3">
+                <label className="form-label" htmlFor="upload-delivery-name">Delivery recipient name</label>
+                <input id="upload-delivery-name" className="form-control" required {...personNameInputProps(deliveryRecipientName => setUploadForm(previous => ({ ...previous, deliveryRecipientName })))} value={uploadForm.deliveryRecipientName || ''} onChange={e => setUploadForm({ ...uploadForm, deliveryRecipientName: e.target.value })} />
+                <label className="form-label" htmlFor="upload-delivery-address">Delivery address</label>
+                <textarea id="upload-delivery-address" className="form-control" required minLength={10} maxLength={500} value={uploadForm.deliveryAddress || ''} onChange={e => setUploadForm({ ...uploadForm, deliveryAddress: e.target.value })} />
+                <label className="form-label mt-2" htmlFor="upload-delivery-phone">Delivery phone number</label>
+                <input id="upload-delivery-phone" type="tel" className="form-control" required pattern="(0|\+94)[0-9]{9}" placeholder="0701234567 or +94701234567" value={uploadForm.deliveryPhone || ''} onChange={e => setUploadForm({ ...uploadForm, deliveryPhone: e.target.value })} />
+              </div>}
               <label
                 className={`preparation-choice ${!uploadForm.prepareRequested ? "selected" : ""}`}
               >
@@ -1520,7 +1555,7 @@ export function PrescriptionUploadsPage() {
                   name="prepareRequested"
                   checked={!uploadForm.prepareRequested}
                   onChange={() =>
-                    setUploadForm({ ...uploadForm, prepareRequested: false })
+                    setUploadForm({ ...uploadForm, prepareRequested: false, deliveryRequested: false })
                   }
                 />
                 <span>
