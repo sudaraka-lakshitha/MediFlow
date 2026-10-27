@@ -2,3 +2,38 @@
 .session-shield .modal-backdrop-custom { background: #eef4f6; }
 .session-warning { position: sticky; top: 0; z-index: 2147483639; width: min(720px, calc(100% - 24px)); margin: 12px auto; padding: 14px; border: 1px solid #d29a34; border-radius: 12px; background: #fff6df; color: #45320d; box-shadow: 0 4px 24px #0002; }
 .session-warning p { margin: 6px 0 12px; }
+
+/* Non-blocking session-check banner (shown while verifying on load) */
+.session-checking-bar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 2147483638;
+  background: linear-gradient(90deg, #1a3a5c, #1e5288);
+  color: #e8f4ff;
+  padding: 7px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  animation: session-banner-in 0.3s ease;
+}
+@keyframes session-banner-in {
+  from { transform: translateY(-100%); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+.session-checking-spinner {
+  display: inline-block;
+  width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: session-spin 0.75s linear infinite;
+}
+@keyframes session-spin {
+  to { transform: rotate(360deg); }
+}
+

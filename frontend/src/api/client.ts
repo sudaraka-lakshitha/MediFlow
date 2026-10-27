@@ -11,7 +11,7 @@ const finishWrite = (config?: TrackedConfig) => {
 };
 
 const defaultApiUrl = import.meta.env.DEV ? 'http://localhost:5000/api' : '/api';
-export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || defaultApiUrl, timeout: 15000 });
+export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || defaultApiUrl, timeout: 30000 });
 let redirectingToLogin = false;
 api.interceptors.request.use(async (config) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(config.method?.toUpperCase() || '') && /^\/(prescriptions|prescription-uploads|payment-requests|sales)(?:\/|$)/.test(config.url || '')) {

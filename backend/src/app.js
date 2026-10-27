@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import compression from 'compression';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +19,8 @@ export const app = express();
 app.set('trust proxy', 1);
 app.use(requestContext);
 app.use(auditReadAccess);
+// Gzip all API and static responses — reduces payload size by 30–70%
+app.use(compression());
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({ origin: env.NODE_ENV === 'production' ? false : env.FRONTEND_URL, exposedHeaders: ['Content-Disposition', 'X-Request-Id'] }));
 // Bulk catalogue uploads can legitimately be larger than ordinary API requests.

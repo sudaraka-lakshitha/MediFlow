@@ -24,6 +24,8 @@ export function SessionGuard({ children }: { children: ReactNode }) {
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [idleMinutes, setIdleMinutes] = useState(30);
+  // Show a "warming up" hint after 5 s of initial session check with no response
+  const [warmingUp, setWarmingUp] = useState(false);
   const offset = useRef(0);
   const current = useRef<SessionView | null>(null);
   const syncing = useRef(false);
@@ -36,6 +38,7 @@ export function SessionGuard({ children }: { children: ReactNode }) {
     offset.current = next.serverNow - Date.now();
     current.current = next; setView(next); setNow(next.serverNow);
     setWorkspaceLocked(next.locked); setChecking(false); setError('');
+    setWarmingUp(false);
   }, []);
   const sync = useCallback(async () => {
     if (syncing.current) return;
@@ -113,6 +116,14 @@ export function SessionGuard({ children }: { children: ReactNode }) {
       for (const event of ['pointerdown', 'keydown', 'scroll']) window.removeEventListener(event, interact);
     };
   }, [activity, sync, user?.id]);
+
+  // Show "warming up" hint after 5 s of waiting for the initial session check
+  useEffect(() => {
+    if (!checking) { setWarmingUp(false); return; }
+    const timer = window.setTimeout(() => setWarmingUp(true), 5000);
+    return () => window.clearTimeout(timer);
+  }, [checking]);
+
   const unlock = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError('');
     try {
@@ -133,10 +144,25 @@ export function SessionGuard({ children }: { children: ReactNode }) {
     try { await api.post('/auth/session/lock'); setWorkspaceLocked(true); }
     catch (e) { setError(errorMessage(e)); }
   };
-  const hidden = locked || checking || renew;
+
+  // The workspace is only fully blocked for lock/renew states.
+  // During the initial session check we show content optimistically behind
+  // a non-blocking banner — avoids a blank-screen on cold-start servers.
+  const hidden = locked || renew;
+  const showCheckingBanner = checking && !hidden;
+
   const absoluteWarning = Boolean(view && now >= view.expiresAt - 5 * 60_000);
   const idleWarning = Boolean(view && now >= view.warningAt);
   return <>
+    {/* Non-blocking session-checking banner shown during initial validation */}
+    {showCheckingBanner && <div className="session-checking-bar" role="status" aria-live="polite">
+      <span className="session-checking-spinner" aria-hidden="true" />
+      <span>
+        {warmingUp
+          ? '☕ The server is warming up — this may take a moment. Please wait…'
+          : 'Verifying your session…'}
+      </span>
+    </div>}
     {!hidden && (absoluteWarning || idleWarning) && <div className="session-warning" role="alert">
       <strong>{absoluteWarning ? 'Password verification needed soon' : 'Still working?'}</strong>
       <p>{absoluteWarning ? `Your session expires in ${Math.max(0, Math.ceil((view!.expiresAt - now) / 60_000))} minute(s). Save your work or verify your password now to renew it.`
@@ -160,8 +186,8 @@ export function SessionGuard({ children }: { children: ReactNode }) {
       }}>Save preference</button>
     </Modal>}
     {hidden && <div className="session-shield">
-      <Modal title={checking && !locked && !renew ? 'Checking your session' : 'Workspace locked'} closable={false} onClose={() => {}} size="sm">
-        <p>{checking && !locked && !renew ? 'Confirming your session before showing the workspace.' : 'Enter your password to continue. Unsaved forms are still here; do not refresh or close this page.'}</p>
+      <Modal title={renew ? 'Workspace locked' : locked && !checking ? 'Workspace locked' : 'Checking your session'} closable={false} onClose={() => {}} size="sm">
+        <p>{renew || locked ? 'Enter your password to continue. Unsaved forms are still here; do not refresh or close this page.' : 'Confirming your session before showing the workspace.'}</p>
         {error && <div className="alert alert-danger" role="alert">{error}</div>}
         {locked || renew ? <form onSubmit={unlock}>
           <p className="text-secondary">{user?.fullName}</p>

@@ -41,6 +41,16 @@ deliveryRoutes.get('/deliveries/couriers', authorize('PATIENT', 'ADMIN', 'PHARMA
   res.json({ data: await deliveryService.couriers(req.user) });
 }));
 deliveryRoutes.post('/payment-requests/:id/delivery', authorize('PATIENT'), validate({ params: idParams, body: deliveryContactSchema }), asyncHandler(withWorkflowLease(async (req, res) => res.status(201).json({ data: await deliveryService.request(Number(req.params.id), req.body, req.user) }))));
+// Patient can cancel their own REQUESTED delivery before the pharmacy confirms it
+deliveryRoutes.delete('/payment-requests/:id/delivery', authorize('PATIENT'), validate({ params: idParams }), asyncHandler(withWorkflowLease(async (req, res) => {
+  const row = await prisma.deliveryRequest.findFirst({
+    where: { paymentRequestId: Number(req.params.id), paymentRequest: { patientId: req.user.id } },
+  });
+  if (!row) throw new Error('Delivery request not found or does not belong to your account.');
+  if (row.status !== 'REQUESTED') throw new Error('This delivery can no longer be cancelled. Contact the pharmacy for assistance.');
+  await prisma.deliveryRequest.update({ where: { id: row.id }, data: { status: 'CANCELLED' } });
+  res.json({ message: 'Delivery request cancelled. You can re-request delivery if needed.' });
+})));
 deliveryRoutes.post('/payment-requests/:id/delivery/reshipment', authorize('PATIENT'), validate({ params: idParams }), asyncHandler(withWorkflowLease(async (req, res) => res.json({ data: await deliveryService.requestReshipment(Number(req.params.id), req.user) }))));
 deliveryRoutes.post('/payment-requests/:id/delivery/reshipment/withdraw', authorize('PATIENT'), validate({ params: idParams }), asyncHandler(withWorkflowLease(async (req, res) => res.json({ data: await deliveryService.requestReshipment(Number(req.params.id), req.user, true) }))));
 deliveryRoutes.put('/payment-requests/:id/delivery', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: deliveryActionSchema }), asyncHandler(withWorkflowLease(async (req, res) => res.json({ data: await deliveryService.act(Number(req.params.id), req.body, req.user) }))));

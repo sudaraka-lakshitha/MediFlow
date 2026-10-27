@@ -43,8 +43,15 @@ apiRoutes.use(bankTransferRoutes);
 apiRoutes.use('/workflow-locks', workflowLeaseRoutes);
 apiRoutes.use('/staff-activity-report', staffActivityReportRoutes);
 // Refresh stock holds before any authenticated availability or order operation.
+// Debounced: runs at most once every 60 s per process instance to avoid a DB
+// query on every single request to these high-traffic endpoints.
+let _lastReservationCleanup = 0;
 apiRoutes.use(['/catalog', '/inventory', '/prescriptions', '/prescription-uploads', '/payment-requests', '/sales', '/cashier', '/dashboard', '/reports'], authenticate, asyncHandler(async (_req, _res, next) => {
-  await cleanupExpiredCashReservations();
+  const now = Date.now();
+  if (now - _lastReservationCleanup >= 60_000) {
+    _lastReservationCleanup = now;
+    await cleanupExpiredCashReservations();
+  }
   next();
 }));
 apiRoutes.use('/auth', authRoutes);

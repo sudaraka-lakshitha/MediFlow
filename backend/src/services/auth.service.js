@@ -33,7 +33,8 @@ export const authService = {
     if (data.phone && await prisma.user.findFirst({ where: { phone: data.phone, role: 'PATIENT' } })) {
       throw new AppError(409, 'An account already uses this phone number. Sign in or reset your password instead.');
     }
-    const passwordHash = await bcrypt.hash(data.password, 12);
+    const bcryptRounds = Number(process.env.BCRYPT_ROUNDS) || 12;
+    const passwordHash = await bcrypt.hash(data.password, bcryptRounds);
     const user = await prisma.$transaction(async (tx) => {
       const created = await tx.user.create({ data: { email, passwordHash, fullName: data.fullName.trim(), phone: data.phone, role: 'PATIENT' } });
       await tx.patientProfile.create({
@@ -63,7 +64,8 @@ export const authService = {
     if (await bcrypt.compare(newPassword, user.passwordHash)) {
       throw new AppError(400, 'The new password must be different from the current password.');
     }
-    const passwordHash = await bcrypt.hash(newPassword, 12);
+    const bcryptRounds = Number(process.env.BCRYPT_ROUNDS) || 12;
+    const passwordHash = await bcrypt.hash(newPassword, bcryptRounds);
     const updated = await prisma.user.update({
       where: { id: userId },
       data: {
@@ -135,7 +137,8 @@ export const authService = {
     if (payload.passwordKey !== currentPasswordKey) throw new AppError(400, 'This password reset session has already been used.');
     if (payload.tokenVersion !== user.tokenVersion) throw new AppError(400, 'This password reset session has been revoked. Request a new code.');
     if (await bcrypt.compare(newPassword, user.passwordHash)) throw new AppError(400, 'The new password must be different from the current password.');
-    const passwordHash = await bcrypt.hash(newPassword, 12);
+    const bcryptRounds = Number(process.env.BCRYPT_ROUNDS) || 12;
+    const passwordHash = await bcrypt.hash(newPassword, bcryptRounds);
     await prisma.$transaction(async tx => {
       const claimed = await tx.user.updateMany({
         where: { id: user.id, active: true, passwordHash: user.passwordHash, tokenVersion: user.tokenVersion },

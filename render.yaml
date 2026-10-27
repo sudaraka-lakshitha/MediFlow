@@ -18,6 +18,8 @@ services:
         value: 12h
       - key: REPORT_TIMEZONE_OFFSET_MINUTES
         value: 330
+      - key: BCRYPT_ROUNDS
+        value: 10
       - key: LOG_LEVEL
         value: info
       - key: SMTP_HOST

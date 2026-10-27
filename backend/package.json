@@ -20,6 +20,7 @@
   "dependencies": {
     "@prisma/client": "^6.16.2",
     "bcrypt": "^6.0.0",
+    "compression": "^1.8.2",
     "cors": "^2.8.6",
     "dayjs": "^1.11.21",
     "dotenv": "^17.4.2",
@@ -44,7 +45,9 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
-    "exceljs": { "uuid": "11.1.1" },
+    "exceljs": {
+      "uuid": "11.1.1"
+    },
     "@prisma/config": {
       "deepmerge-ts": "8.0.0",
       "effect": "3.20.0"

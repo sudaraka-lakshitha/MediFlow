@@ -20,6 +20,7 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
   const [editingFee, setEditingFee] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState('');
   const [form, setForm] = useState({ id: '', recipientName: '', address: '', phone: '' });
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -45,8 +46,9 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
   if (to) { const end = new Date(`${to}T00:00:00`); end.setDate(end.getDate() + 1); deliveryFilters.to = end.toISOString(); }
   const { get: readDeliveries, controls: deliveryHistoryControls } = useHistoryPage('Deliveries', deliveryFilters);
   const loadVersion = useRef(0);
-  const load = useCallback(async () => {
+  const load = useCallback(async (manual = false) => {
     const version = ++loadVersion.current;
+    if (manual) setRefreshing(true);
     try {
       const [deliveries, settings, options] = await Promise.all([readDeliveries('/deliveries'), api.get('/delivery-settings'), api.get('/deliveries/couriers')]);
       if (version !== loadVersion.current) return;
@@ -54,6 +56,7 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
       setCourierOptions(options.data.data);
       if (patient) { const result = await readInvoices('/payment-requests?status=PAID'); if (version === loadVersion.current) setInvoices(result.data.data); }
     } catch (e) { if (version === loadVersion.current) setError(errorMessage(e)); }
+    finally { if (manual) setRefreshing(false); }
   }, [patient, readDeliveries, readInvoices]);
   useEffect(() => { const timer = setTimeout(() => { void load(); }, 300); return () => clearTimeout(timer); }, [load]);
   const run = async (operation: () => Promise<unknown>, success: string) => {
@@ -134,7 +137,19 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
         <label className="col-12">Delivery address<textarea className="form-control" rows={2} required minLength={10} maxLength={500} value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} /></label>
       </div><button className="btn btn-primary mb-3" disabled={busy || fee === null}>Request home delivery</button>
     </form>}
-    <button className="btn btn-sm btn-outline-secondary mb-3" type="button" disabled={busy} onClick={() => void load()}>Refresh delivery status</button>
+    {/* Patient cancel: only available while the pharmacy hasn't acted yet (REQUESTED status) */}
+    {patient && rows.filter(row => row.status === 'REQUESTED' && !row.dispatchedAt).map(row => (
+      <div key={row.id} className="alert alert-info d-flex align-items-center gap-3 mb-2" role="alert">
+        <span><strong>Delivery pending confirmation</strong> – {row.paymentRequest.requestNumber}. The pharmacy has not yet confirmed this delivery request.</span>
+        <button type="button" className="btn btn-sm btn-outline-danger ms-auto flex-shrink-0" disabled={busy}
+          onClick={() => { if (window.confirm('Cancel this delivery request? You can re-request delivery later.')) void run(() => api.delete(`/payment-requests/${row.paymentRequestId}/delivery`), 'Delivery request cancelled.'); }}>
+          Cancel request
+        </button>
+      </div>
+    ))}
+    <button className="btn btn-sm btn-outline-secondary mb-3" type="button" disabled={busy || refreshing} onClick={() => void load(true)}>
+      {refreshing ? <><span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />Refreshing…</> : 'Refresh delivery status'}
+    </button>
     <div className="d-flex flex-wrap gap-2 mb-3" role="group" aria-label="Delivery queues">
       {[['ALL', 'All'], ['ATTENTION', 'Needs attention'], ['READY', 'Ready to dispatch'], ['DISPATCHED', 'Dispatched'], ['DELIVERY_FAILED', 'Delivery failed'], ['RETURNING', 'Returning to pharmacy'], ['DELIVERED', 'Delivered'], ['RETURNED', 'Returned'], ['RESHIP_REQUESTED', 'Reshipment requested'], ['CANCELLED', 'Cancelled']].map(([value, label]) => <button type="button" key={value} aria-pressed={queue === value} className={`btn btn-sm ${queue === value ? 'btn-primary' : 'btn-outline-secondary'}`} onClick={() => setQueue(value)}>{label}</button>)}
     </div>

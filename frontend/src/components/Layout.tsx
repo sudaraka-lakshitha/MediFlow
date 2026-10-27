@@ -134,7 +134,7 @@ export function Layout() {
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('mediflow:attention-refresh', onAttentionRefresh);
     };
-  }, [location.pathname]);
+  }, []);
   const visible = items.filter((item) => (!item.roles || item.roles.includes(user!.role)) && (item.to !== '/cashier' || user!.role === 'ADMIN' || user!.role === 'CASHIER' || Boolean(user!.cashierAccess)));
   const current = visible.find((item) => item.to === location.pathname)?.label || 'MediFlow';
   const initials = user!.fullName.split(' ').map((part) => part[0]).slice(0, 2).join('');
