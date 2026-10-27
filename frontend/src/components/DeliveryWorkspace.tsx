@@ -100,11 +100,30 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
     {message && <div className="alert alert-success" role="status">{message}</div>}
     <p>Standard delivery fee: {fee === null ? 'Not configured' : `Rs. ${fee.toFixed(2)}`}. Pharmacy confirmation is required.</p>
     {user?.role === 'ADMIN' && <form className="d-flex flex-wrap align-items-end gap-2 mb-3" onSubmit={e => { e.preventDefault(); void saveFee(); }}>
-      <label>Standard fee (Rs.)<input className="form-control" type="number" min="0.01" max="1000000" step="0.01" required disabled={!editingFee || busy} value={editingFee ? feeDraft : (fee ?? '')} onChange={e => setFeeDraft(e.target.value)} /></label>
+      <label>Standard fee (Rs.)
+        <div className="input-group">
+          <input
+            className="form-control"
+            type="number"
+            min="0.01"
+            max="1000000"
+            step="0.01"
+            required
+            readOnly={!editingFee}
+            disabled={busy}
+            value={editingFee ? feeDraft : (fee ?? '')}
+            onChange={e => setFeeDraft(e.target.value)}
+            style={{ background: editingFee ? undefined : '#f8f9fa', cursor: editingFee ? 'text' : 'not-allowed' }}
+          />
+          <span className="input-group-text" title={editingFee ? 'Editing' : 'Locked – click Edit to change'}>
+            {editingFee ? '✏️' : '🔒'}
+          </span>
+        </div>
+      </label>
       {editingFee ? <>
         <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save standard fee'}</button>
         <button type="button" className="btn btn-outline-secondary" disabled={busy} onClick={() => { setEditingFee(false); setFeeDraft(''); setError(''); }}>Cancel</button>
-      </> : <button type="button" className="btn btn-outline-primary" disabled={busy} onClick={() => { setFeeDraft(String(fee ?? '')); setEditingFee(true); setError(''); setMessage(''); }}>Edit standard fee</button>}
+      </> : <button type="button" className="btn btn-outline-primary" disabled={busy} onClick={() => { setFeeDraft(String(fee ?? '')); setEditingFee(true); setError(''); setMessage(''); }}>✏️ Edit standard fee</button>}
     </form>}
     {patient && eligible.length > 0 && <form onSubmit={e => { e.preventDefault(); void run(() => api.post(`/payment-requests/${form.id}/delivery`, { recipientName: form.recipientName, address: form.address, phone: form.phone }), 'Delivery requested. After pharmacy confirmation, pay the separate DEL invoice in Orders & invoice history. Refresh that list to see the new invoice.'); }}>
       {rows.some(row => row.paymentRequestId === Number(form.id) && row.status === 'CANCELLED') && <p className="text-secondary">Request delivery again with the recipient details below. The previous cancelled fee remains in your invoice history; the pharmacy will confirm a new delivery fee.</p>}

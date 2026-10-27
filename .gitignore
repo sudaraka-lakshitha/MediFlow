@@ -7,3 +7,19 @@
 .idea/
 .vscode/
 tmp/
+
+# Android app
+android/
+
+# Test files
+**/tests/
+**/*.test.js
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.js
+**/*.spec.ts
+**/*.spec.tsx
+backend/test-*.js
+
+# Outputs / scratch
+outputs/
