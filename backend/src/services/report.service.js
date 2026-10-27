@@ -1,11 +1,13 @@
 import { prisma } from '../config/prisma.js';
 import { env } from '../config/env.js';
 import { reportEvents, eventSummary } from './reportEvents.js';
+import { calendarDate } from '../validators/calendar.js';
 
 const offsetMs = env.REPORT_TIMEZONE_OFFSET_MINUTES * 60_000;
 
 // Converts a local calendar boundary into its UTC instant for database filtering.
 const localBoundary = (dateText, extraDays = 0) => {
+  calendarDate.parse(dateText);
   const [year, month, day] = dateText.split('-').map(Number);
   return new Date(Date.UTC(year, month - 1, day + extraDays) - offsetMs);
 };

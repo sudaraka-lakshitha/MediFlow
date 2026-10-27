@@ -6,7 +6,7 @@ export const userRepository = {
     where: { id },
     select: {
       id: true, email: true, fullName: true, phone: true, role: true, cashierAccess: true, pharmacyReconciliationAccess: true, active: true,
-      mustChangePassword: true, lastLoginAt: true, passwordChangedAt: true, patientProfile: true, createdAt: true,
+      mustChangePassword: true, lastLoginAt: true, passwordChangedAt: true, patientProfile: true, createdAt: true, updatedAt: true,
       deliveryRefundApprovalAccess: true,
     },
   }),

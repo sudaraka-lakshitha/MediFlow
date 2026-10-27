@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { historySearch } from '../utils/historySearch.js';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
@@ -18,9 +19,9 @@ import { invoiceDispensingInclude } from '../utils/patientMedicineInstructions.j
 const saleDetailInclude = { patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } }, cashier: { select: { fullName: true } }, paymentRequest: { select: { requestNumber: true } }, items: { include: { product: true, batch: true } }, discountApplications: true };
 
 export const saleService = {
-  async list(user, { page = 1, pageSize = 300 } = {}) {
+  async list(user, { page = 1, pageSize = 300, search } = {}) {
     const sales = await prisma.sale.findMany({
-      where: user.role === 'PATIENT' ? { patientId: user.id } : {},
+      where: { ...(user.role === 'PATIENT' ? { patientId: user.id } : {}), ...historySearch(search, ['invoiceNumber', 'patient.fullName', 'paymentRequest.requestNumber']) },
       include: { refunds: { include: { lines: true } }, patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } }, cashier: { select: { fullName: true } }, paymentRequest: { select: { requestNumber: true } }, items: { include: { product: true, batch: true } }, discountApplications: true },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize,
     });

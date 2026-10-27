@@ -2,9 +2,11 @@ import crypto from 'node:crypto';
 import bcrypt from 'bcrypt';
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
+import { patientDirections } from '../utils/patientDirections.js';
+import { historySearch } from '../utils/historySearch.js';
 
 const include = {
-  user: { select: { id:true, fullName:true, email:true, phone:true, active:true, createdAt:true } },
+  user: { select: { id:true, fullName:true, email:true, phone:true, active:true, createdAt:true, updatedAt:true } },
   registeredBy: { select: { id:true, fullName:true, role:true } },
 };
 
@@ -52,8 +54,13 @@ export const patientService = {
   update(id,data) {
     return prisma.$transaction(async (tx) => {
       const profile=await tx.patientProfile.findUniqueOrThrow({where:{id}});
-      await tx.user.update({where:{id:profile.userId},data:{email:data.email?data.email.toLowerCase():undefined,fullName:data.fullName,phone:data.phone||null}});
-      return tx.patientProfile.update({where:{id},data:{dateOfBirth:data.dateOfBirth,address:data.address,allergies:data.allergies,chronicConditions:data.chronicConditions||null},include});
+      const userData = {email:data.email?data.email.toLowerCase():undefined,fullName:data.fullName,phone:data.phone === undefined ? undefined : data.phone || null};
+      if (data.expectedUpdatedAt) {
+        const expected = new Date(data.expectedUpdatedAt);
+        const claimed = await tx.user.updateMany({ where: { id: profile.userId, updatedAt: expected }, data: { ...userData, updatedAt: new Date(Math.max(Date.now(), expected.getTime() + 1)) } });
+        if (claimed.count !== 1) throw new AppError(409, 'This patient record changed. Refresh and review the latest details before saving.');
+      } else await tx.user.update({where:{id:profile.userId},data:userData});
+      return tx.patientProfile.update({where:{id},data:{dateOfBirth:data.dateOfBirth,address:data.address,allergies:data.allergies,chronicConditions:data.chronicConditions === undefined ? undefined : data.chronicConditions || null},include});
     });
   },
   async resetPassword(id,password) {
@@ -80,16 +87,18 @@ export const patientService = {
     await prisma.user.update({ where: { id: profile.userId }, data: { active, tokenVersion: { increment: 1 } } });
     return prisma.patientProfile.findUnique({ where: { id }, include });
   },
-  async healthRecord(id, { page = 1, pageSize = 300 } = {}) {
+  async healthRecord(id, { page = 1, pageSize = 300, search } = {}) {
     const profile = await prisma.patientProfile.findUniqueOrThrow({
       where: { id },
       include: {
         user: { select: { id:true, fullName:true, email:true, phone:true, active:true, createdAt:true } },
         registeredBy: { select: { id:true, fullName:true, role:true } },
         prescriptions: {
+          where: historySearch(search, ['prescriptionNumber', 'prescriberName', 'recipientName']),
           orderBy: [{ prescriptionDate: 'desc' }, { id: 'desc' }],
           skip: (page - 1) * pageSize, take: pageSize,
           include: {
+            paymentRequest: { select: { status: true } },
             items: {
               include: {
                 product: { select: { genericName:true, strength:true, dosageForm:true, unit:true } },
@@ -105,6 +114,11 @@ export const patientService = {
   async healthRecordForUser(userId, pagination) {
     const profile = await prisma.patientProfile.findUnique({ where: { userId }, select: { id: true } });
     if (!profile) throw new AppError(404, 'Patient profile not found.');
-    return this.healthRecord(profile.id, pagination);
+    const record = await this.healthRecord(profile.id, pagination);
+    return { ...record, prescriptions: record.prescriptions.map(prescription => ({
+      id: prescription.id, prescriptionNumber: prescription.prescriptionNumber, prescriptionDate: prescription.prescriptionDate,
+      status: prescription.status, prescriberTitle: prescription.prescriberTitle, prescriberName: prescription.prescriberName,
+      items: patientDirections(prescription), dispensings: prescription.dispensings,
+    })) };
   },
 };

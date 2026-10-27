@@ -1,9 +1,10 @@
 import axios from 'axios';
-import { clearSession, sessionToken } from '../auth/authStorage';
+import { clearSession, sessionToken, sessionUser } from '../auth/authStorage';
+import { operationAttempt, finishOperation, retryProtectedPath } from '../utils/operationAttempt';
 import { pendingWrites, setWorkspaceLocked, trackWrite, workspaceLocked } from '../auth/workspaceLock';
 import type { InternalAxiosRequestConfig } from 'axios';
 import { workflowClientId, workflowLeaseToken, waitForWorkflow } from './workflowState';
-type TrackedConfig = InternalAxiosRequestConfig & { workspaceWrite?: boolean };
+type TrackedConfig = InternalAxiosRequestConfig & { workspaceWrite?: boolean; operationStorageKey?: string };
 const sessionControl = (url = '') => url.startsWith('/auth/session');
 const finishWrite = (config?: TrackedConfig) => {
   if (config?.workspaceWrite) { config.workspaceWrite = false; trackWrite(-1); }
@@ -22,6 +23,12 @@ api.interceptors.request.use(async (config) => {
   }
   const token = sessionToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  const actor = sessionUser<{ id: number }>();
+  if (token && actor && retryProtectedPath(config.method || '', config.url || '')) {
+    const attempt = await operationAttempt(actor.id, config.url!, config.data);
+    config.headers['Idempotency-Key'] = attempt.key;
+    (config as TrackedConfig).operationStorageKey = attempt.storageKey;
+  }
   config.headers['X-Workflow-Client'] = workflowClientId;
   const lease = workflowLeaseToken();
   if (lease && !config.url?.startsWith('/workflow-locks')) config.headers['X-Workflow-Lease'] = lease;
@@ -32,6 +39,7 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 api.interceptors.response.use((response) => {
+  finishOperation((response.config as TrackedConfig).operationStorageKey);
   finishWrite(response.config);
   window.dispatchEvent(new CustomEvent('mediflow:connectivity', { detail: true }));
   const method = response.config.method?.toUpperCase();

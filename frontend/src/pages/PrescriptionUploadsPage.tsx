@@ -3,7 +3,7 @@ import { uploadAttemptKey, completeUploadAttempt } from '../utils/uploadAttempt'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api/client";
 import { stockQuantityStep } from "../utils/unitMeasure";
-import { pagedList } from "../api/pagedList";
+import { useHistoryPage } from "../api/useHistoryPage";
 import { useAuth } from "../auth/useAuth";
 import { useNavigate } from "react-router-dom";
 import { Modal, ModalActions } from "../components/Modal";
@@ -184,7 +184,8 @@ export function PrescriptionUploadsPage() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [additionalFiles, setAdditionalFiles] = useState<File[]>([]);
   const [editingUpload, setEditingUpload] = useState<Upload | null>(null);
-  const closeUpload = () => { setUploadOpen(false); setEditingUpload(null); setAdditionalFiles([]); };
+  const [removedAttachments, setRemovedAttachments] = useState<number[]>([]);
+  const closeUpload = () => { setUploadOpen(false); setEditingUpload(null); setAdditionalFiles([]); setRemovedAttachments([]); };
   const [review, setReview] = useState<Upload | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
@@ -196,6 +197,7 @@ export function PrescriptionUploadsPage() {
     null,
   );
   const [statusFilter, setStatusFilter] = useState("");
+  const { get: readHistory, controls: historyControls } = useHistoryPage('Uploaded prescriptions', { status: statusFilter });
   const fitDocumentViewer = useCallback(() => {
     const availableHeight = Math.max(320, Math.min(760, window.innerHeight - 230));
     setDocumentViewerHeight(availableHeight);
@@ -260,14 +262,14 @@ export function PrescriptionUploadsPage() {
   const load = useCallback(async () => {
     try {
       setError("");
-      const response = await pagedList("/prescription-uploads");
+      const response = await readHistory("/prescription-uploads");
       setRows(response.data.data);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [readHistory]);
   useEffect(() => {
     load();
     // Load bank accounts for patient slip upload & cashier review
@@ -454,8 +456,12 @@ export function PrescriptionUploadsPage() {
     const file =
       uploadForm.file ||
       (typedText ? new File([typedText], 'typed-prescription.txt', { type: "text/plain" }) : null);
-    const extraFiles = editingUpload ? [] : additionalFiles;
-    if (extraFiles.length > 4 || extraFiles.some(item => item.size > 2_500_000 || !['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(item.type)))
+    const extraFiles = additionalFiles;
+    const attachmentCount = editingUpload
+      ? (editingUpload.attachments || []).filter(item => !removedAttachments.includes(item.id)).length + extraFiles.length + (file || !removedAttachments.includes(0) ? 1 : 0)
+      : 1 + extraFiles.length;
+    if (attachmentCount < 1 || attachmentCount > 5) return setError('Keep between one and five attachments in this request.');
+    if (extraFiles.some(item => item.size > 2_500_000 || !['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(item.type)))
       return setError('Select up to five PDF or image files, each 2.5 MB or smaller.');
     if (file && file.size > 2_500_000)
       return setError("Prescription files must be 2.5 MB or smaller.");
@@ -482,13 +488,13 @@ export function PrescriptionUploadsPage() {
         reader.readAsDataURL(file);
       }) : null;
       const payload = {
-        ...(!editingUpload ? { additionalAttachments: await Promise.all(extraFiles.map(async item => ({
+        additionalAttachments: await Promise.all(extraFiles.map(async item => ({
           originalName: item.name, mimeType: item.type,
           fileBase64: await new Promise<string>((resolve, reject) => {
             const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]);
             reader.onerror = () => reject(reader.error); reader.readAsDataURL(item);
           }),
-        }))) } : {}),
+        }))),
         ...(file && dataUrl ? { originalName: file.name, mimeType: file.type, fileBase64: dataUrl.split(",")[1] } : {}),
         patientNote: patientNote || null,
         prepareRequested: uploadForm.prepareRequested,
@@ -503,7 +509,7 @@ export function PrescriptionUploadsPage() {
         recipientAllergies: uploadForm.orderedForSelf ? null : (uploadForm.recipientAllergies.trim() || null),
         recipientConditions: uploadForm.orderedForSelf ? null : (uploadForm.recipientConditions.trim() || null),
       };
-      if (editingUpload) await api.put(`/prescription-uploads/${editingUpload.id}`, { ...payload, updatedAt: editingUpload.updatedAt });
+      if (editingUpload) await api.put(`/prescription-uploads/${editingUpload.id}`, { ...payload, removeAttachmentIds: removedAttachments, updatedAt: editingUpload.updatedAt });
       else {
         const submissionKey = await uploadAttemptKey(user!.id, payload);
         await api.post('/prescription-uploads', { ...payload, submissionKey });
@@ -879,6 +885,7 @@ export function PrescriptionUploadsPage() {
         )}
       </div>
       <Alert message={error} />
+      {historyControls}
       {admin && (
         <div className="panel mb-3">
           <div className="d-flex flex-wrap align-items-end gap-3">
@@ -1264,7 +1271,7 @@ export function PrescriptionUploadsPage() {
               )}
               {patient && item.status === 'PENDING' && !item.prescription && !item.attachmentRemovedAt && (
                 <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => {
-                  setError(''); setEditingUpload(item);
+                  setError(''); setEditingUpload(item); setRemovedAttachments([]); setAdditionalFiles([]);
                   setUploadForm({ file: null, prescriptionText: '', patientNote: item.patientNote || '', prepareRequested: item.prepareRequested,
                     deliveryRequested: item.deliveryRequested, deliveryRecipientName: item.deliveryRecipientName || '', deliveryAddress: item.deliveryAddress || '', deliveryPhone: item.deliveryPhone || '',
                     orderedForSelf: item.orderedForSelf, recipientName: item.recipientName || '', recipientRelationship: item.recipientRelationship || '',
@@ -1329,7 +1336,9 @@ export function PrescriptionUploadsPage() {
           size="sm"
         >
           <form onSubmit={submitUpload}>
-            {editingUpload && <div className="alert alert-info small">Current file: {editingUpload.originalName}. Leave both file and typed details empty to keep it. Choosing a file or entering typed details replaces the current attachment. Editing is available only before pharmacy review.</div>}
+            {editingUpload && <div className="alert alert-info small">Manage the pages below before pharmacy review. New files are added to this request. Typing a new prescription replaces the first attachment. At least one and at most five attachments must remain.
+              {[{ id: 0, originalName: editingUpload.originalName }, ...(editingUpload.attachments || [])].map(file => <label key={file.id} className="d-block mt-2"><input type="checkbox" disabled={busy} checked={removedAttachments.includes(file.id)} onChange={e => setRemovedAttachments(current => e.target.checked ? [...current, file.id] : current.filter(id => id !== file.id))} /> Remove: {file.originalName}</label>)}
+            </div>}
             <div className="alert alert-info small">
               Upload a clear PDF/image, type the prescription and retail-item request, or both. The pharmacy will review it; the estimate is not a final invoice.
             </div>
@@ -1340,13 +1349,14 @@ export function PrescriptionUploadsPage() {
                 authoritative pharmacist validation.
               </span>
             </div>
-            <label className="form-label">{editingUpload ? 'Replace first attachment (other attachments are kept)' : 'Prescription files (up to five, 2.5 MB each)'}</label>
-            <input className="form-control" type="file" multiple={!editingUpload} accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => {
+            <label className="form-label">{editingUpload ? 'Add attachments (remove old pages above to replace them)' : 'Prescription files (up to five, 2.5 MB each)'}</label>
+            <input className="form-control" disabled={busy} type="file" multiple accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => {
               const files = Array.from(event.target.files || []);
               if (files.length > 5 || files.some(file => file.size > 2_500_000)) { setError('Select at most five files, each 2.5 MB or smaller.'); event.target.value = ''; setUploadForm({ ...uploadForm, file: null }); setAdditionalFiles([]); return; }
-              setError(''); setUploadForm({ ...uploadForm, file: files[0] || null }); setAdditionalFiles(files.slice(1));
+              setError(''); setUploadForm({ ...uploadForm, file: editingUpload ? null : files[0] || null }); setAdditionalFiles(editingUpload ? files : files.slice(1));
             }} />
             {!editingUpload && additionalFiles.length > 0 && <small className="d-block text-secondary">{additionalFiles.length + 1} attachments will be saved together as one request.</small>}
+            {editingUpload && additionalFiles.map((file, index) => <div key={index} className="small mt-1">New: {file.name} <button type="button" disabled={busy} className="btn btn-sm btn-link" onClick={() => setAdditionalFiles(files => files.filter((_, i) => i !== index))}>Remove new file</button></div>)}
             <label className="form-label mt-3">Type prescription / retail items (optional)</label>
             <textarea className="form-control" rows={6} maxLength={5000} value={uploadForm.prescriptionText} onChange={(event) => setUploadForm({ ...uploadForm, prescriptionText: event.target.value })} placeholder={'Type each prescribed medicine and direction on a new line.\n\nRetail items (optional): include product name and quantity.'} />
             <small className="text-secondary">Provide a file, type the details, or both — include medicine names, strengths, directions, and any non-prescription retail products with quantities.</small>

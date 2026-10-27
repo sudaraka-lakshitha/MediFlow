@@ -1,4 +1,5 @@
 import { prisma } from '../config/prisma.js';
+import { historySearch } from '../utils/historySearch.js';
 import { prescriptionSupplySummary } from '../utils/prescriptionSupplySummary.js';
 
 const include = {
@@ -14,7 +15,7 @@ const include = {
 };
 
 export const prescriptionRepository = {
-  list: async (where = {}, { page = 1, pageSize = 300 } = {}) => (await prisma.prescription.findMany({ where, include, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize })).map(withRefillAllowance),
+  list: async (where = {}, { page = 1, pageSize = 300, search, status } = {}) => (await prisma.prescription.findMany({ where: { ...where, ...(status ? { status } : {}), ...historySearch(search, ['prescriptionNumber', 'patient.user.fullName', 'recipientName', 'prescriberName']) }, include, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize })).map(withRefillAllowance),
   findById: async (id, db = prisma) => withRefillAllowance(await db.prescription.findUnique({ where: { id }, include })),
 };
 

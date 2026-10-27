@@ -1,4 +1,5 @@
 import { serializable } from '../utils/serializable.js';
+import { historySearch } from '../utils/historySearch.js';
 import crypto from 'node:crypto';
 import { invoiceMaterialChanged } from '../utils/invoiceRevision.js';
 import { prisma } from '../config/prisma.js';
@@ -84,8 +85,12 @@ export const prescriptionUploadService = {
   },
   async retention() { const setting = await prisma.systemSetting.findUnique({ where: { key: 'prescriptionUploadRetentionDays' } }); return { days: Number(setting?.value || 30) }; },
   async setRetention(days) { await prisma.systemSetting.upsert({ where: { key: 'prescriptionUploadRetentionDays' }, update: { value: String(days) }, create: { key: 'prescriptionUploadRetentionDays', value: String(days) } }); return { days }; },
-  async list(user, { page = 1, pageSize = 300 } = {}) { await this.cleanupExpired(); return prisma.prescriptionUpload.findMany({
-    where: user.role === 'PATIENT' ? { patientId: user.id } : {}, select: summarySelect,
+  async list(user, { page = 1, pageSize = 300, search, status } = {}) { await this.cleanupExpired(); return prisma.prescriptionUpload.findMany({
+    where: { ...(user.role === 'PATIENT' ? { patientId: user.id } : {}), ...historySearch(search, ['originalName', 'patient.fullName', 'patientNote', 'recipientName']),
+      ...(status ? { AND: [{ OR: [
+        ...(['AWAITING_PAYMENT', 'SLIP_SUBMITTED', 'PAID', 'FULFILLED', 'CANCELLED'].includes(status) ? [{ prescription: { paymentRequest: { status } } }] : []),
+        ...(['PENDING', 'AVAILABLE', 'PARTIALLY_AVAILABLE', 'UNAVAILABLE', 'REJECTED', 'QUOTE_SENT', 'QUOTE_ACCEPTED', 'PAYMENT_PENDING', 'PAYMENT_SUBMITTED', 'READY_TO_PREPARE'].includes(status) ? [{ status, OR: [{ prescription: { is: null } }, { prescription: { paymentRequest: { is: null } } }] }] : []),
+      ] }] } : {}) }, select: summarySelect,
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize,
   }); },
   async create(data, userId) {
@@ -147,16 +152,32 @@ export const prescriptionUploadService = {
   },
   async edit(id, data, user) {
     if (user.role !== 'PATIENT') throw new AppError(403, 'Only the patient can edit their upload.');
-    const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { patientId: true } });
+    return serializable(async tx => {
+    const record = await tx.prescriptionUpload.findUnique({ where: { id }, select: { patientId: true, attachments: { select: { id: true }, orderBy: { id: 'asc' } } } });
     ensureAccess(record, user);
+    const removed = new Set(data.removeAttachmentIds || []);
+    const existing = record.attachments || [];
+    if ([...removed].some(attachmentId => attachmentId !== 0 && !existing.some(file => file.id === attachmentId))) throw new AppError(409, 'An attachment changed or does not belong to this request. Refresh before editing.');
+    const decode = file => {
+      const fileData = Buffer.from(file.fileBase64, 'base64');
+      if (!fileData.length || fileData.length > 2_500_000) throw new AppError(413, 'Prescription files must be 2.5 MB or smaller.');
+      if (!validSignature(fileData, file.mimeType)) throw new AppError(400, 'The file content does not match its type.');
+      return { fileData, originalName: file.originalName.replace(/[\\/\r\n"]/g, '_'), mimeType: file.mimeType };
+    };
+    const additions = (data.additionalAttachments || []).map(decode);
+    const retained = existing.filter(file => !removed.has(file.id));
+    const count = retained.length + additions.length + (data.fileBase64 !== undefined || !removed.has(0) ? 1 : 0);
+    if (count < 1 || count > 5) throw new AppError(400, 'Keep between one and five attachments in this request.');
     const replacement = {};
     if (data.fileBase64 !== undefined) {
-      const fileData = Buffer.from(data.fileBase64, 'base64');
-      if (!fileData.length || fileData.length > 2_500_000) throw new AppError(413, 'Prescription files must be 2.5 MB or smaller.');
-      if (!validSignature(fileData, data.mimeType)) throw new AppError(400, 'The file content does not match its type.');
-      Object.assign(replacement, { fileData, originalName: data.originalName.replace(/[\\/\r\n"]/g, '_'), mimeType: data.mimeType });
+      Object.assign(replacement, decode(data));
+    } else if (removed.has(0)) {
+      if (retained.length) {
+        const promoted = await tx.prescriptionUploadAttachment.findUnique({ where: { id: retained[0].id }, select: { fileData: true, originalName: true, mimeType: true } });
+        Object.assign(replacement, promoted); removed.add(retained[0].id);
+      } else Object.assign(replacement, additions.shift());
     }
-    const result = await prisma.prescriptionUpload.updateMany({
+    const result = await tx.prescriptionUpload.updateMany({
       where: { id, patientId: user.id, status: 'PENDING', prescription: { is: null }, attachmentRemovedAt: null, updatedAt: new Date(data.updatedAt) },
       data: {
         ...replacement, patientNote: data.patientNote || null, prepareRequested: data.prepareRequested,
@@ -170,7 +191,10 @@ export const prescriptionUploadService = {
       },
     });
     if (result.count !== 1) throw new AppError(409, 'This upload changed or pharmacy review has started. Close the form and refresh before continuing.');
-    return prisma.prescriptionUpload.findUnique({ where: { id }, select: summarySelect });
+    if (removed.size) await tx.prescriptionUploadAttachment.deleteMany({ where: { uploadId: id, id: { in: [...removed].filter(value => value !== 0) } } });
+    if (additions.length) await tx.prescriptionUploadAttachment.createMany({ data: additions.map(file => ({ ...file, uploadId: id })) });
+    return tx.prescriptionUpload.findUnique({ where: { id }, select: summarySelect });
+    });
   },
   async review(id, data, userId) {
     const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true, status: true, attachmentRemovedAt: true } });

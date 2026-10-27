@@ -1,7 +1,7 @@
 import { personNameInputProps } from '../utils/personName';
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api/client";
-import { pagedList } from "../api/pagedList";
+import { useHistoryPage } from "../api/useHistoryPage";
 import { useAuth } from "../auth/useAuth";
 import { ActionsDropdown } from "../components/ActionsDropdown";
 import { Modal, ModalActions } from "../components/Modal";
@@ -27,6 +27,7 @@ type Patient = {
     phone?: string;
     active: boolean;
     createdAt: string;
+    updatedAt: string;
   };
 };
 const empty = {
@@ -41,6 +42,8 @@ const empty = {
 const prescriberLabel = (rx: { prescriberTitle?: string; prescriberName?: string }) =>
   [rx.prescriberTitle, rx.prescriberName].filter(Boolean).join(" ") || "Not mentioned";
 export function PatientsPage() {
+  const [historyPatientId, setHistoryPatientId] = useState<number | null>(null);
+  const { get: readHistory, controls: historyControls } = useHistoryPage('Patient prescription history', {}, String(historyPatientId || ''));
   const { user } = useAuth();
   const admin = user!.role === "ADMIN";
   const [rows, setRows] = useState<Patient[]>([]);
@@ -61,19 +64,16 @@ export function PatientsPage() {
   const [total, setTotal] = useState(0);
   const debouncedSearch = useDebouncedValue(search);
 
-  const viewHealthRecord = async (p: Patient) => {
-    setBusy(true);
-    setError("");
-    try {
-      const res = await pagedList(`/patients/${p.id}/health-record`, "prescriptions");
-      setHealthRecord(res.data.data);
-      setShowHealthRecord(true);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const viewHealthRecord = (p: Patient) => { setHealthRecord(null); setHistoryPatientId(p.id); setShowHealthRecord(true); };
+  useEffect(() => {
+    if (!showHealthRecord || !historyPatientId) return;
+    let current = true; setBusy(true); setError('');
+    readHistory(`/patients/${historyPatientId}/health-record`, 'prescriptions')
+      .then(response => { if (current) setHealthRecord(response.data.data); })
+      .catch(caught => { if (current) setError(errorMessage(caught)); })
+      .finally(() => { if (current) setBusy(false); });
+    return () => { current = false; };
+  }, [historyPatientId, showHealthRecord, readHistory]);
   const load = useCallback(
     () =>
       api
@@ -144,6 +144,7 @@ export function PatientsPage() {
         });
       if (modal === "edit" && selected)
         await api.put(`/patients/${selected.id}`, {
+          expectedUpdatedAt: selected.user.updatedAt,
           fullName: form.fullName,
           ...(selected.onlineAccess === false ? {} : { email: form.email }),
           phone: form.phone,
@@ -328,18 +329,17 @@ export function PatientsPage() {
                   <input
                     className="form-control"
                     type={type}
-                    inputMode={key === "phone" ? "numeric" : undefined}
-                    pattern={key === "phone" ? "0[0-9]{9}" : undefined}
-                    maxLength={key === "phone" ? 10 : undefined}
+                    inputMode={key === "phone" ? "tel" : undefined}
+                    pattern={key === "phone" ? "(?:0[0-9]{9}|\\+94[0-9]{9})" : undefined}
+                    maxLength={key === "phone" ? 12 : undefined}
+                    placeholder={key === "phone" ? "0701234567 or +94701234567" : undefined}
                     {...(key === "fullName" ? personNameInputProps((fullName) => setForm((previous) => ({ ...previous, fullName }))) : {})}
                     value={form[key as keyof typeof form]}
                     onChange={(e) =>
                       setForm({
                         ...form,
                         [key]:
-                          key === "phone"
-                            ? e.target.value.replace(/\D/g, "").slice(0, 10)
-                            : e.target.value,
+                          e.target.value,
                       })
                     }
                     required={[
@@ -460,6 +460,7 @@ export function PatientsPage() {
           }}
           size="lg"
         >
+          {historyControls}
           <div className="patient-health-record-summary mb-4">
             <div className="row g-3">
               <div className="col-md-6">

@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
 import { operationSettingsService } from './operationSettings.service.js';
 import { exportPages } from '../utils/exportPages.js';
+import { operationContext } from '../utils/operationContext.js';
 
 const offsetMs = env.REPORT_TIMEZONE_OFFSET_MINUTES * 60_000;
 const roleCache = new Map();
@@ -63,6 +64,7 @@ const userRole = async (userId) => {
 export const recordAudit = async ({
   userId, action, entityType, entityId, details, success = true, ipAddress, requestId, method, path,
 }) => {
+  if (operationContext.getStore()?.replayed) return;
   try {
     // Successful patient self-service is intentionally excluded, while patient
     // failures remain available to administrators for system troubleshooting.

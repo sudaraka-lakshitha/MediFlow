@@ -3,9 +3,10 @@ import { AppError } from './AppError.js';
 // Call inside the same Serializable transaction that records the payment.
 // Keep historical/cancelled payments in this check: a refund does not make the
 // original bank transfer available to spend again.
-export async function assertUnusedBankReference(tx, reference) {
+export async function assertUnusedBankReference(tx, reference, { registeringLedger = false } = {}) {
   const value = reference?.trim();
   if (!value) throw new AppError(400, 'Record the bank transaction reference.');
+  if (!registeringLedger && tx.bankTransfer && await tx.bankTransfer.findFirst({ where: { reference: value }, select: { id: true } })) throw new AppError(409, 'This reference is in the verified bank-transfer ledger. Allocate its remaining balance from that ledger instead of recording another payment.');
   const bill = await tx.paymentRequest.findFirst({ where: {
     paymentMethod: 'BANK_TRANSFER', paymentReference: value, paidAt: { not: null },
   }, select: { id: true } });

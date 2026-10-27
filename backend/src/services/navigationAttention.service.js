@@ -44,12 +44,13 @@ export const navigationAttentionService = {
     }
 
     if (user.role === 'CASHIER') {
-      const [awaitingPayment, slipsToReview] = await Promise.all([
+      const [awaitingPayment, slipsToReview, pendingPayouts] = await Promise.all([
         prisma.paymentRequest.count({ where: { status: { in: ['AWAITING_PAYMENT', 'SLIP_SUBMITTED'] } } }),
         prisma.uploadPaymentSlip.count({ where: { status: 'PENDING' } }),
+        prisma.refund.count({ where: { status: 'PENDING' } }),
       ]);
       return {
-        cashier: badge(awaitingPayment, 'Payments awaiting cashier action', awaitingPayment ? 'danger' : 'neutral'),
+        cashier: badge(awaitingPayment + pendingPayouts, `${awaitingPayment} payments, ${pendingPayouts} refund payouts awaiting cashier action`, awaitingPayment + pendingPayouts ? 'danger' : 'neutral'),
         prescriptionUploads: badge(slipsToReview, 'Bank transfer receipts awaiting verification', slipsToReview ? 'warning' : 'neutral'),
       };
     }
@@ -69,6 +70,8 @@ export const navigationAttentionService = {
       nearExpiryBatches,
       products,
       failedAudits,
+      pendingApprovals,
+      pendingPayouts,
     ] = await Promise.all([
       prisma.prescription.count({
         where: {
@@ -131,6 +134,8 @@ export const navigationAttentionService = {
             },
           })
         : Promise.resolve(0),
+      user.role === 'ADMIN' ? prisma.refundApproval.count({ where: { status: 'PENDING' } }) : Promise.resolve(0),
+      user.role === 'ADMIN' || user.cashierAccess ? prisma.refund.count({ where: { status: 'PENDING' } }) : Promise.resolve(0),
     ]);
 
     const lowStockProducts = products.filter(
@@ -151,9 +156,9 @@ export const navigationAttentionService = {
         uploads ? 'danger' : 'neutral',
       ),
       cashier: badge(
-        awaitingPayment,
-        'Payments awaiting cashier action',
-        awaitingPayment ? 'danger' : 'neutral',
+        awaitingPayment + pendingApprovals + pendingPayouts,
+        `${awaitingPayment} payments, ${pendingApprovals} admin approvals, ${pendingPayouts} refund payouts awaiting action`,
+        awaitingPayment + pendingApprovals + pendingPayouts ? 'danger' : 'neutral',
       ),
       inventory: badge(
         inventoryAttention,

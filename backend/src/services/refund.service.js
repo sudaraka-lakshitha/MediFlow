@@ -3,6 +3,9 @@ import { prisma } from '../config/prisma.js';
 import { serializable } from '../utils/serializable.js';
 import { AppError } from '../utils/AppError.js';
 import { stockQuantity } from '../utils/stockQuantity.js';
+import { patientRefund } from '../utils/patientRefund.js';
+import { historySearch } from '../utils/historySearch.js';
+import { invoiceItemTotal } from '../utils/reportFinancials.js';
 
 const money = (value) => new Prisma.Decimal(value || 0);
 const include = { lines: true, sale: { select: { invoiceNumber: true, patientId: true } }, paymentRequest: { select: { requestNumber: true, patientId: true } } };
@@ -16,8 +19,17 @@ export const queueRefund = async (tx, { paymentRequestId, saleId, amount, reason
 };
 
 export const refundService = {
-  async list(user) {
-    return prisma.refund.findMany({ where: user.role === 'PATIENT' ? { OR: [{ sale: { patientId: user.id } }, { paymentRequest: { patientId: user.id } }] } : {}, include, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
+  async list(user, { page = 1, pageSize = 50, search, status } = {}) {
+    const records = await prisma.refund.findMany({ where: { ...(status ? { status } : {}), AND: [user.role === 'PATIENT' ? { OR: [{ sale: { patientId: user.id } }, { paymentRequest: { patientId: user.id } }] } : {}, historySearch(search, ['sale.invoiceNumber', 'paymentRequest.requestNumber', 'reason', 'reference'])] }, include, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize });
+    return user.role === 'PATIENT' ? records.map(patientRefund) : records;
+  },
+  async context(saleId, user) {
+    cashier(user);
+    const sale = await prisma.sale.findUnique({ where: { id: saleId }, select: { id: true, status: true, refunds: { select: { lines: { select: { saleItemId: true, quantity: true } } } } } });
+    if (!sale || sale.status !== 'PAID') throw new AppError(409, 'Choose a completed paid invoice.');
+    const quantities = {};
+    for (const line of sale.refunds.flatMap(refund => refund.lines)) quantities[line.saleItemId] = Number(money(quantities[line.saleItemId]).add(line.quantity));
+    return { expectedRefundCount: sale.refunds.length, quantities };
   },
   async saleQuote(tx, saleId, input) {
     const sale = await tx.sale.findUnique({ where: { id: saleId }, include: { items: { include: { product: true } }, refunds: { include: { lines: true } }, paymentRequest: { select: { delivery: { select: { status: true } } } } } });
@@ -35,7 +47,11 @@ export const refundService = {
       const already = priorLines.filter((line) => line.saleItemId === itemId).reduce((sum, line) => sum.add(line.quantity), money(0));
       if (!quantity.greaterThan(0) || quantity.decimalPlaces() > 3 || quantity.greaterThan(money(item.quantity).sub(already))) throw new AppError(409, 'Refund quantity exceeds the remaining sold quantity.');
       stockQuantity(quantity, item.product.unit);
-      const lineAmount = money(sale.subtotal).isZero() ? money(0) : money(sale.total).mul(item.lineTotal).div(sale.subtotal).mul(quantity).div(item.quantity).toDecimalPlaces(2);
+      const alreadyCredited = priorLines.filter(line => line.saleItemId === itemId).reduce((sum, line) => sum.add(line.amount), money(0));
+      const cumulative = invoiceItemTotal(item, sale).mul(already.add(quantity)).div(item.quantity).toDecimalPlaces(2);
+      // Prior receipts are authoritative, including credits issued before this
+      // allocation rule. Never create a negative refund to rewrite their cents.
+      const lineAmount = Prisma.Decimal.max(0, cumulative.sub(alreadyCredited));
       lines.push({ saleItemId: item.id, productId: item.productId, batchId: item.batchId, name: item.product.genericName, quantity, amount: lineAmount });
     }
     const priorAmount = sale.refunds.reduce((sum, refund) => sum.add(refund.amount), money(0));

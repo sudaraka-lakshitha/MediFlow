@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { errorMessage } from "../api/client";
-import { pagedList } from "../api/pagedList";
+import { useHistoryPage } from "../api/useHistoryPage";
 import { Alert, Empty, Loading, Status } from "../components/Ui";
 import { Pagination } from "../components/Pagination";
 import { useClientPagination } from "../utils/useClientPagination";
@@ -22,18 +22,19 @@ export function StockMovementsPage() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [type, setType] = useState("");
+  const { get: readHistory, controls: historyControls } = useHistoryPage('Stock movements', { status: type, search });
 
   const load = useCallback(async () => {
     try {
       setError("");
-      const response = await pagedList("/inventory/movements");
+      const response = await readHistory("/inventory/movements");
       setRows(response.data.data);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [readHistory]);
   useEffect(() => {
     load();
   }, [load]);
@@ -65,6 +66,7 @@ export function StockMovementsPage() {
         </div>
       </div>
       <Alert message={error} />
+      {historyControls}
       <div className="panel">
         <div className="d-flex justify-content-between align-items-center gap-2 mb-3 flex-wrap">
           <div className="search-select" style={{ maxWidth: 340 }}>

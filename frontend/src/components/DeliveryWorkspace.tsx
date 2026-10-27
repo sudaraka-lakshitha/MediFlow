@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorMessage } from '../api/client';
-import { pagedList } from '../api/pagedList';
+import { useHistoryPage } from '../api/useHistoryPage';
 import { useAuth } from '../auth/useAuth';
 import { Alert } from './Ui';
 import { DeliveryBulkModal } from './DeliveryBulkModal';
@@ -9,6 +9,7 @@ import { Modal } from './Modal';
 import { personNameInputProps } from '../utils/personName';
 
 export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unknown> }) {
+  const { get: readInvoices, controls: invoiceHistoryControls } = useHistoryPage('Paid invoices eligible for delivery');
   const { user } = useAuth();
   const patient = user?.role === 'PATIENT';
   const pharmacist = user?.role === 'ADMIN' || user?.role === 'PHARMACIST';
@@ -26,31 +27,34 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
   const [returnAction, setReturnAction] = useState<{ id: number; version: string; action: string; reason: string; courier: string; tracking: string; checked: boolean } | null>(null);
   const [contact, setContact] = useState<{ id: number; recipientName: string; address: string; phone: string; version: string } | null>(null);
   const [courierFilter, setCourierFilter] = useState('');
+  const [courierOptions, setCourierOptions] = useState<string[]>([]);
   const [dateField, setDateField] = useState('createdAt');
   const [from, setFrom] = useState(''), [to, setTo] = useState('');
   const [references, setReferences] = useState<Record<number, string>>({});
   const [couriers, setCouriers] = useState<Record<number, string>>({});
+  const [draftVersions, setDraftVersions] = useState<Record<number, string>>({});
+  const discardTracking = (id: number) => {
+    setDraftVersions(current => { const next = { ...current }; delete next[id]; return next; });
+    setReferences(current => { const next = { ...current }; delete next[id]; return next; });
+    setCouriers(current => { const next = { ...current }; delete next[id]; return next; });
+  };
   const [queue, setQueue] = useState('ALL');
   const [search, setSearch] = useState('');
+  const deliveryFilters: Record<string, string> = { queue, search, courier: courierFilter, dateField };
+  if (from) deliveryFilters.from = new Date(`${from}T00:00:00`).toISOString();
+  if (to) { const end = new Date(`${to}T00:00:00`); end.setDate(end.getDate() + 1); deliveryFilters.to = end.toISOString(); }
+  const { get: readDeliveries, controls: deliveryHistoryControls } = useHistoryPage('Deliveries', deliveryFilters);
   const loadVersion = useRef(0);
   const load = useCallback(async () => {
     const version = ++loadVersion.current;
     try {
-      const params = new URLSearchParams();
-      if (!patient) {
-        if (search.trim()) params.set('search', search.trim());
-        if (courierFilter) params.set('courier', courierFilter);
-        params.set('dateField', dateField);
-        if (from) params.set('from', new Date(`${from}T00:00:00`).toISOString());
-        if (to) { const end = new Date(`${to}T00:00:00`); end.setDate(end.getDate() + 1); params.set('to', end.toISOString()); }
-      }
-      const [deliveries, settings] = await Promise.all([pagedList(`/deliveries?${params}`), api.get('/delivery-settings')]);
+      const [deliveries, settings, options] = await Promise.all([readDeliveries('/deliveries'), api.get('/delivery-settings'), api.get('/deliveries/couriers')]);
       if (version !== loadVersion.current) return;
       setRows(deliveries.data.data); setFee(settings.data.data.fee);
-      setReferences({}); setCouriers({});
-      if (patient) { const result = await pagedList('/payment-requests'); if (version === loadVersion.current) setInvoices(result.data.data); }
+      setCourierOptions(options.data.data);
+      if (patient) { const result = await readInvoices('/payment-requests?status=PAID'); if (version === loadVersion.current) setInvoices(result.data.data); }
     } catch (e) { if (version === loadVersion.current) setError(errorMessage(e)); }
-  }, [patient, search, courierFilter, dateField, from, to]);
+  }, [patient, readDeliveries, readInvoices]);
   useEffect(() => { const timer = setTimeout(() => { void load(); }, 300); return () => clearTimeout(timer); }, [load]);
   const run = async (operation: () => Promise<unknown>, success: string) => {
     setBusy(true); setError(''); setMessage('');
@@ -66,7 +70,7 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
     } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
   const eligible = invoices.filter(invoice => {
-    const previous = rows.find(row => row.paymentRequestId === invoice.id);
+    const previous = invoice.delivery || rows.find(row => row.paymentRequestId === invoice.id);
     return invoice.prescriptionId && invoice.status === 'PAID' && !invoice.customerCancellationReason
       && Number(invoice.amountPaid) - Number(invoice.refundedAmount || 0) >= Number(invoice.total)
       && !invoice.refunds?.some((refund: any) => ['PENDING', 'AWAITING_APPROVAL'].includes(refund.status))
@@ -91,6 +95,8 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
     <h3>Home delivery</h3>
     <p className="text-secondary">Medicines and delivery fees must be paid and cashier-verified before dispatch. Request delivery before collecting your medicines.</p>
     <Alert message={error} />
+    {deliveryHistoryControls}
+    {patient && invoiceHistoryControls}
     {message && <div className="alert alert-success" role="status">{message}</div>}
     <p>Standard delivery fee: {fee === null ? 'Not configured' : `Rs. ${fee.toFixed(2)}`}. Pharmacy confirmation is required.</p>
     {user?.role === 'ADMIN' && <form className="d-flex flex-wrap align-items-end gap-2 mb-3" onSubmit={e => { e.preventDefault(); void saveFee(); }}>
@@ -111,17 +117,17 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
     </form>}
     <button className="btn btn-sm btn-outline-secondary mb-3" type="button" disabled={busy} onClick={() => void load()}>Refresh delivery status</button>
     <div className="d-flex flex-wrap gap-2 mb-3" role="group" aria-label="Delivery queues">
-      {[['ALL', 'All'], ['ATTENTION', 'Needs attention'], ['READY', 'Ready to dispatch'], ['DISPATCHED', 'Dispatched'], ['DELIVERY_FAILED', 'Delivery failed'], ['RETURNING', 'Returning to pharmacy'], ['DELIVERED', 'Delivered'], ['RETURNED', 'Returned'], ['RESHIP_REQUESTED', 'Reshipment requested'], ['CANCELLED', 'Cancelled']].map(([value, label]) => <button type="button" key={value} aria-pressed={queue === value} className={`btn btn-sm ${queue === value ? 'btn-primary' : 'btn-outline-secondary'}`} onClick={() => setQueue(value)}>{label} ({rows.filter(row => inQueue(row, value)).length})</button>)}
+      {[['ALL', 'All'], ['ATTENTION', 'Needs attention'], ['READY', 'Ready to dispatch'], ['DISPATCHED', 'Dispatched'], ['DELIVERY_FAILED', 'Delivery failed'], ['RETURNING', 'Returning to pharmacy'], ['DELIVERED', 'Delivered'], ['RETURNED', 'Returned'], ['RESHIP_REQUESTED', 'Reshipment requested'], ['CANCELLED', 'Cancelled']].map(([value, label]) => <button type="button" key={value} aria-pressed={queue === value} className={`btn btn-sm ${queue === value ? 'btn-primary' : 'btn-outline-secondary'}`} onClick={() => setQueue(value)}>{label}</button>)}
     </div>
     <label className="d-block mb-3">Search invoice, customer, courier or tracking number<input className="form-control" value={search} onChange={e => setSearch(e.target.value)} /></label>
     <div className="d-flex flex-wrap gap-2 mb-3 align-items-end">
-      <label>Courier<select className="form-select" value={courierFilter} onChange={e => setCourierFilter(e.target.value)}><option value="">All couriers</option>{[...new Set(rows.map(row => row.courierService).filter(Boolean))].sort().map(value => <option key={value}>{value}</option>)}</select></label>
+      <label>Courier<select className="form-select" value={courierFilter} onChange={e => setCourierFilter(e.target.value)}><option value="">All couriers</option>{courierOptions.map(value => <option key={value}>{value}</option>)}</select></label>
       <label>Date filter<select className="form-select" value={dateField} onChange={e => setDateField(e.target.value)}><option value="createdAt">Requested date</option><option value="dispatchedAt">Dispatch date</option><option value="deliveredAt">Delivered date</option></select></label>
       <label>From<input className="form-control" type="date" value={from} max={to || undefined} onChange={e => setFrom(e.target.value)} /></label>
       <label>To<input className="form-control" type="date" value={to} min={from || undefined} onChange={e => setTo(e.target.value)} /></label>
       <button className="btn btn-outline-secondary" onClick={() => { setQueue('ALL'); setSearch(''); setCourierFilter(''); setFrom(''); setTo(''); }}>Clear filters</button>
     </div>
-    <p>{filtered.length} matching deliveries. Date filters use your local calendar dates.</p>
+    <p>{filtered.length} matching deliveries on this history page. Exports include this page only. Date filters use your local calendar dates.</p>
     {pharmacist && <div className="d-flex flex-wrap gap-2 mb-3">
       <button className="btn btn-primary" disabled={busy || !filtered.length || filtered.length > 500} onClick={async () => {
         setBusy(true); setError('');
@@ -161,9 +167,11 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
       {row.feePaymentRequest?.customerCancellationReason && !['CANCELLED', 'FULFILLED'].includes(row.feePaymentRequest.status) && <p className="text-warning">Delivery is on hold for cancellation review: {row.feePaymentRequest.customerCancellationReason}. The cashier or administrator must review the fee invoice.</p>}
       {['REQUESTED', 'AWAITING_FEE'].includes(row.status) && row.feePaymentRequest?.status === 'CANCELLED' && <p className="text-warning">The previous delivery-fee invoice was cancelled. The pharmacy can issue a replacement after any pending refund is settled, or cancel delivery for pharmacy collection.</p>}
       {pharmacist && (row.status === 'REQUESTED' || (row.status === 'AWAITING_FEE' && row.feePaymentRequest?.status === 'CANCELLED')) && <button disabled={busy || Boolean(row.feePaymentRequest?.refunds?.length)} className="btn btn-outline-primary" onClick={() => { if (row.feePaymentRequest && !window.confirm('Issue a new delivery-fee invoice? The cancelled invoice remains in the payment history.')) return; void run(() => api.put(`/payment-requests/${row.paymentRequestId}/delivery`, { expectedUpdatedAt: row.updatedAt, action: 'CONFIRM' }), 'Delivery confirmed and fee invoice created. The patient must pay before dispatch.'); }}>{row.feePaymentRequest ? 'Reissue delivery-fee invoice' : 'Confirm delivery and issue fee invoice'}</button>}
-      {pharmacist && ['AWAITING_FEE', 'DISPATCHED', 'DELIVERY_FAILED', 'RETURNING'].includes(row.status) && <form className="d-flex flex-wrap gap-2" onSubmit={e => { e.preventDefault(); if (row.status === 'AWAITING_FEE' && !window.confirm('Confirm medicines have been checked and are ready for courier handover? This will dispense stock and record dispatch.')) return; void run(() => api.put(`/payment-requests/${row.paymentRequestId}/delivery`, { expectedUpdatedAt: row.updatedAt, action: row.status !== 'AWAITING_FEE' ? 'UPDATE_TRACKING' : 'DISPATCH', trackingReference: references[row.id] ?? row.trackingReference, courierService: couriers[row.id] ?? row.courierService }), row.status !== 'AWAITING_FEE' ? 'Courier tracking updated. Original dispatch time preserved.' : 'Medicines dispensed and delivery dispatched.'); }}>
-        <label>Courier service<input className="form-control" required minLength={2} maxLength={120} value={couriers[row.id] ?? row.courierService ?? ''} onChange={e => setCouriers({ ...couriers, [row.id]: e.target.value })} /></label>
-        <label>Tracking number<input className="form-control" required minLength={3} maxLength={160} value={references[row.id] ?? row.trackingReference ?? ''} onChange={e => setReferences({ ...references, [row.id]: e.target.value })} /></label>
+      {pharmacist && ['AWAITING_FEE', 'DISPATCHED', 'DELIVERY_FAILED', 'RETURNING'].includes(row.status) && <form className="d-flex flex-wrap gap-2" onSubmit={e => { e.preventDefault(); if (row.status === 'AWAITING_FEE' && !window.confirm('Confirm medicines have been checked and are ready for courier handover? This will dispense stock and record dispatch.')) return; void run(async () => { await api.put(`/payment-requests/${row.paymentRequestId}/delivery`, { expectedUpdatedAt: draftVersions[row.id] ?? row.updatedAt, action: row.status !== 'AWAITING_FEE' ? 'UPDATE_TRACKING' : 'DISPATCH', trackingReference: references[row.id] ?? row.trackingReference, courierService: couriers[row.id] ?? row.courierService }); discardTracking(row.id); }, row.status !== 'AWAITING_FEE' ? 'Courier tracking updated. Original dispatch time preserved.' : 'Medicines dispensed and delivery dispatched.'); }}>
+        <label>Courier service<input className="form-control" disabled={busy} required minLength={2} maxLength={120} value={couriers[row.id] ?? row.courierService ?? ''} onChange={e => { setDraftVersions(current => ({ ...current, [row.id]: current[row.id] ?? row.updatedAt })); setCouriers({ ...couriers, [row.id]: e.target.value }); }} /></label>
+        <label>Tracking number<input className="form-control" disabled={busy} required minLength={3} maxLength={160} value={references[row.id] ?? row.trackingReference ?? ''} onChange={e => { setDraftVersions(current => ({ ...current, [row.id]: current[row.id] ?? row.updatedAt })); setReferences({ ...references, [row.id]: e.target.value }); }} /></label>
+        {draftVersions[row.id] && <button type="button" className="btn btn-outline-secondary align-self-end" disabled={busy} onClick={() => discardTracking(row.id)}>Discard tracking edits</button>}
+        {draftVersions[row.id] && draftVersions[row.id] !== row.updatedAt && <p className="text-danger w-100">This delivery changed while you were editing. Your draft is preserved. Discard it and review the latest details before saving.</p>}
         <button className="btn btn-primary align-self-end" disabled={busy || (row.status === 'AWAITING_FEE' && !ready(row))}>{row.status !== 'AWAITING_FEE' ? 'Update courier / tracking' : 'Dispense and dispatch'}</button>
       </form>}
       {pharmacist && ['DISPATCHED', 'DELIVERY_FAILED'].includes(row.status) && <button disabled={busy} className="btn btn-outline-primary" onClick={() => { if (!window.confirm('Confirm the courier or recipient has verified that this parcel was delivered? Do not confirm based only on dispatch.')) return; void run(() => api.put(`/payment-requests/${row.paymentRequestId}/delivery`, { expectedUpdatedAt: row.updatedAt, action: 'DELIVERED' }), 'Delivery marked as delivered.'); }}>Confirm delivered to recipient</button>}

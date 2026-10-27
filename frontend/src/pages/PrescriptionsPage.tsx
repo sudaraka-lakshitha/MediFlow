@@ -9,7 +9,7 @@ import {
   type FormEvent,
 } from "react";
 import { api, errorMessage } from "../api/client";
-import { pagedList } from "../api/pagedList";
+import { useHistoryPage } from "../api/useHistoryPage";
 import { DocumentPreview, type DocumentTarget } from "../components/DocumentPreview";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
@@ -385,9 +385,10 @@ export function PrescriptionsPage() {
   const [listSearch, setListSearch] = useState("");
   const [processorFilter, setProcessorFilter] = useState<string | number>("");
   const [statusFilter, setStatusFilter] = useState("");
+  const { get: readHistory, controls: historyControls } = useHistoryPage('Prescriptions', { status: statusFilter, search: listSearch });
   const load = useCallback(async () => {
     try {
-      const requests = [pagedList("/prescriptions")];
+      const requests = [readHistory("/prescriptions")];
       if (staff)
         requests.push(
           api.get("/patients"),
@@ -406,7 +407,7 @@ export function PrescriptionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [staff]);
+  }, [staff, readHistory]);
   const searchPatients = useCallback(async (query: string) => {
     if (query.length < 2) return;
     try {
@@ -1463,6 +1464,7 @@ export function PrescriptionsPage() {
         )}
       </div>
       <Alert message={error} />
+      {historyControls}
       <div className="panel prescription-filters">
         <div className="prescription-filter-grid">
           <div>

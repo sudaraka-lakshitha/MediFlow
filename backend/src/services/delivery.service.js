@@ -7,16 +7,27 @@ import { paymentRequestService } from './paymentRequest.service.js';
 import { validateDeliveryAction } from '../utils/deliveryAction.js';
 import { billCancellationPolicy } from '../utils/billCancellation.js';
 import { assertParcelReshippable, parcelContents, reshipmentSaleSelect } from '../utils/reshipment.js';
+import { deliveryQueuePage } from '../utils/deliveryQueue.js';
 
-const feeSelect = { id: true, requestNumber: true, status: true, total: true, amountPaid: true, paidAt: true, refundedAmount: true, customerCancellationReason: true, refunds: { where: { status: 'PENDING' }, select: { id: true } } };
+const feeSelect = { id: true, requestNumber: true, status: true, total: true, amountPaid: true, paidAt: true, refundedAmount: true, customerCancellationReason: true, refunds: { where: { status: { in: ['PENDING', 'AWAITING_APPROVAL'] } }, select: { id: true } } };
 const include = { feePaymentRequest: { select: feeSelect }, paymentRequest: { select: { ...feeSelect, patientId: true, prescriptionId: true, patient: { select: { fullName: true } }, events: { where: { kind: { in: ['DELIVERY_RETURNED', 'DELIVERY_RESHIP', 'DELIVERY_DISPATCH', 'DELIVERY_DELIVERED', 'DELIVERY_DELIVERY_FAILED', 'DELIVERY_RETURNING', 'DELIVERY_RETRY_DELIVERY', 'DELIVERY_CORRECT_DELIVERED'] } }, orderBy: { createdAt: 'asc' }, select: { kind: true, createdAt: true, details: true } } } } };
 export const deliveryService = {
-  async list(user, { page = 1, pageSize = 300, search, courier, dateField = 'createdAt', from, to } = {}) {
+  async couriers(user) {
+    const rows = await prisma.deliveryRequest.findMany({
+      where: { courierService: { not: null }, ...(user.role === 'PATIENT' ? { paymentRequest: { patientId: user.id } } : {}) },
+      distinct: ['courierService'], select: { courierService: true }, orderBy: { courierService: 'asc' },
+    });
+    return rows.map(row => row.courierService).filter(Boolean);
+  },
+  async list(user, { page = 1, pageSize = 300, search, courier, dateField = 'createdAt', from, to, queue = 'ALL' } = {}) {
     const where = { ...(user.role === 'PATIENT' ? { paymentRequest: { patientId: user.id } } : {}),
       ...(courier ? { courierService: courier } : {}),
       ...((from || to) ? { [dateField]: { ...(from ? { gte: new Date(from) } : {}), ...(to ? { lt: new Date(to) } : {}) } } : {}),
       ...(search ? { OR: [{ recipientName: { contains: search } }, { courierService: { contains: search } }, { trackingReference: { contains: search } }, { paymentRequest: { requestNumber: { contains: search } } }, { paymentRequest: { patient: { fullName: { contains: search } } } }] } : {}) };
-    const records = await prisma.deliveryRequest.findMany({ where, include: { ...include, paymentRequest: { select: { ...include.paymentRequest.select, sale: { select: reshipmentSaleSelect } } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize });
+    const calculatedQueue = ['READY', 'ATTENTION'].includes(queue);
+    if (calculatedQueue) where.id = { in: (await deliveryQueuePage(prisma, user, { page, pageSize, queue, search, courier, dateField, from, to })).map(row => row.id) };
+    else if (queue !== 'ALL') where.status = queue;
+    const records = await prisma.deliveryRequest.findMany({ where, include: { ...include, paymentRequest: { select: { ...include.paymentRequest.select, sale: { select: reshipmentSaleSelect } } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: calculatedQueue ? 0 : (page - 1) * pageSize, take: pageSize });
     return records.map(record => {
       const { sale, ...paymentRequest } = record.paymentRequest;
       const fee = record.feePaymentRequest;

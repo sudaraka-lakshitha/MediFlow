@@ -7,5 +7,6 @@ export const listPagination = (query = {}, statuses = []) => {
     throw new AppError(400, 'Choose a valid page and a page size between 1 and 300.');
   }
   if (query.status && !statuses.includes(query.status)) throw new AppError(400, 'Unknown list status.');
-  return { page, pageSize, status: query.status || undefined };
+  if (query.search !== undefined && (typeof query.search !== 'string' || query.search.length > 190)) throw new AppError(400, 'Search must be at most 190 characters.');
+  return { page, pageSize, status: query.status || undefined, ...(query.search?.trim() ? { search: query.search.trim() } : {}) };
 };

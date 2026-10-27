@@ -2,15 +2,17 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
 } from "react";
 import { api, errorMessage } from "../api/client";
 import { Link } from "react-router-dom";
 import { stockQuantityStep } from "../utils/unitMeasure";
-import { pagedList } from "../api/pagedList";
+import { useHistoryPage } from "../api/useHistoryPage";
 import { DocumentPreview, type DocumentTarget } from "../components/DocumentPreview";
 import { RefundWorkspace } from "../components/RefundWorkspace";
+import { BankTransferLedger } from '../components/BankTransferLedger';
 import { DailyBalance } from "../components/DailyBalance";
 import { useAuth } from "../auth/useAuth";
 import { Modal, ModalActions } from "../components/Modal";
@@ -40,6 +42,7 @@ export function CashierPage() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("AWAITING_PAYMENT");
+  const { get: readHistory, controls: historyControls } = useHistoryPage('Payment requests', { status, search });
   const [payment, setPayment] = useState<any>(null);
   const [paid, setPaid] = useState<any>(null);
   const [pinReset, setPinReset] = useState<any>(null);
@@ -48,7 +51,7 @@ export function CashierPage() {
   const [cancelBill, setCancelBill] = useState<any>(null);
   const [partialCancel, setPartialCancel] = useState<any>(null);
   const [cancellationPreview, setCancellationPreview] = useState<any>(null);
-  const [collections, setCollections] = useState({ payments: 0, netCollected: 0 });
+  const [collections, setCollections] = useState({ payments: 0, netCollected: 0, awaitingPayment: 0 });
   const [slipReview, setSlipReview] = useState<any>(null);
   const [cancellationOverride, setCancellationOverride] = useState<any>(null);
   const [slipUrl, setSlipUrl] = useState("");
@@ -57,6 +60,19 @@ export function CashierPage() {
     products: any[];
     patients: any[];
   }>({ products: [], patients: [] });
+  const patientSearchVersion = useRef(0);
+  const selectedPatientId = retail?.patientId;
+  const searchRetailPatients = useCallback(async (query: string) => {
+    const version = ++patientSearchVersion.current;
+    try {
+      const response = await api.get('/cashier/patients', { params: { search: query } });
+      if (version !== patientSearchVersion.current) return;
+      setRetailOptions(current => ({ ...current, patients: [
+        ...current.patients.filter(patient => String(patient.id) === String(selectedPatientId) && !response.data.data.some((match: any) => match.id === patient.id)),
+        ...response.data.data,
+      ] }));
+    } catch (caught) { if (version === patientSearchVersion.current) setError(errorMessage(caught)); }
+  }, [selectedPatientId]);
   const [operationSettings, setOperationSettings] = useState({
     requirePickupPin: true,
     cashierCanDispenseAtPayment: false,
@@ -65,7 +81,7 @@ export function CashierPage() {
     try {
       setError("");
       const [rowsResponse, settingsResponse, collectionsResponse] = await Promise.all([
-        pagedList("/payment-requests"),
+        readHistory("/payment-requests"),
         api.get("/settings/operations"),
         api.get("/cashier/collections-today"),
       ]);
@@ -77,7 +93,7 @@ export function CashierPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [readHistory]);
   useEffect(() => {
     setCancellationPreview(null);
     if (!partialCancel?.selectedItemIds?.length) return;
@@ -121,7 +137,6 @@ export function CashierPage() {
       ),
     [rows, search, status],
   );
-  const awaiting = rows.filter((row) => row.status === "AWAITING_PAYMENT");
   const openPayment = (row: any) => {
     const total = Number(row.total);
     setPayment({ ...row, paymentMethod: "CASH", paymentReference: "", tenderedAmount: String(total), splitCashAmount: "", splitNonCashMethod: "CARD", splitNonCashAmount: "", splitNonCashReference: "", splitCashTendered: "" });
@@ -447,10 +462,11 @@ export function CashierPage() {
         </div>
       </div>
       <Alert message={error} />
+      {historyControls}
       <div className="metric-grid">
         <Metric
           label="Awaiting payment"
-          value={awaiting.length}
+          value={collections.awaitingPayment}
           icon="hourglass-split"
           tone="amber"
         />
@@ -1876,11 +1892,12 @@ export function CashierPage() {
                   options={retailOptions.patients.map((patient) => ({
                     value: patient.id,
                     label: patient.fullName,
-                    description: patient.phone || patient.email,
+                    description: [patient.patientProfile?.patientNumber, patient.phone, patient.email].filter(Boolean).join(' · '),
                   }))}
                   value={retail.patientId}
+                  onQueryChange={searchRetailPatients}
                   onChange={(patientId) => setRetail({ ...retail, patientId })}
-                  placeholder="Walk-in customer"
+                  placeholder="Search name, phone, email or patient number"
                 />
               </div>
               <div>
@@ -2167,6 +2184,7 @@ export function CashierPage() {
       {documentPreview && <DocumentPreview document={documentPreview} onClose={() => setDocumentPreview(null)} />}
       <div className="mt-4"><Link className="btn btn-outline-primary" to="/sales">Find a completed invoice / create a refund</Link></div>
       <RefundWorkspace refreshToken={rows} />
+      <BankTransferLedger onAllocated={load} />
     </WorkflowGuard>
   );
 }

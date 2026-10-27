@@ -5,9 +5,12 @@ import { stockQuantity } from '../utils/stockQuantity.js';
 import { operationSettingsService } from './operationSettings.service.js';
 import { lowStockState } from '../utils/lowStock.js';
 import { usableStockTotal } from '../utils/stock.js';
+import { serializable } from '../utils/serializable.js';
+import { historySearch } from '../utils/historySearch.js';
 
 export const inventoryService = {
-  listBatches: ({ page = 1, pageSize = 300 } = {}) => prisma.inventoryBatch.findMany({
+  listBatches: ({ page = 1, pageSize = 300, search } = {}) => prisma.inventoryBatch.findMany({
+    where: historySearch(search, ['batchNumber', 'product.genericName', 'product.strength', 'supplier.name']),
     include: {
       product: { include: { category: true, manufacturer: true } },
       supplier: true,
@@ -21,7 +24,7 @@ export const inventoryService = {
     orderBy: [{ expiryDate: 'asc' }, { receivedAt: 'asc' }, { id: 'asc' }],
     skip: (page - 1) * pageSize, take: pageSize,
   }),
-  listMovements: ({ page = 1, pageSize = 300 } = {}) => prisma.stockMovement.findMany({ include: { product: true, batch: true, performedBy: { select: { fullName: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
+  listMovements: ({ page = 1, pageSize = 300, search, status } = {}) => prisma.stockMovement.findMany({ where: { ...(status ? { type: status } : {}), ...historySearch(search, ['batch.batchNumber', 'product.genericName', 'product.strength', 'performedBy.fullName', 'reason']) }, include: { product: true, batch: true, performedBy: { select: { fullName: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
   async alerts() {
     const today = new Date();
     const settings = await operationSettingsService.get();
@@ -75,7 +78,7 @@ export const inventoryService = {
     return { cleared: result.count > 0 };
   },
   receive(data, userId) {
-    return prisma.$transaction(async (tx) => {
+    return serializable(async (tx) => {
       const product = await tx.product.findUnique({ where: { id: data.productId }, select: { unit: true } });
       if (!product) throw new AppError(404, 'Product not found.');
       const quantity = stockQuantity(data.quantity, product.unit);
@@ -112,7 +115,7 @@ export const inventoryService = {
     });
   },
   adjust(batchId, data, userId) {
-    return prisma.$transaction(async (tx) => {
+    return serializable(async (tx) => {
       const batch = await tx.inventoryBatch.findUnique({ where: { id: batchId }, include: { product: true } });
       if (!batch) throw new AppError(404, 'Inventory batch not found.');
       const change = stockQuantity(data.quantityChange, batch.product.unit, { signed: true });
@@ -123,10 +126,10 @@ export const inventoryService = {
       await tx.lowStockAcknowledgement.deleteMany({ where: { productId: batch.productId } });
       await tx.stockMovement.create({ data: { productId: batch.productId, batchId, type: 'ADJUSTMENT', quantityChange: new Prisma.Decimal(data.quantityChange), quantityBefore: batch.quantityAvailable, quantityAfter, reason: data.reason, performedById: userId } });
       return updated;
-    }, { isolationLevel: 'Serializable' });
+    });
   },
   disposeExpired(batchId, data, userId) {
-    return prisma.$transaction(async (tx) => {
+    return serializable(async (tx) => {
       const batch = await tx.inventoryBatch.findUnique({
         where: { id: batchId },
         include: { product: true, supplier: true },
@@ -168,7 +171,7 @@ export const inventoryService = {
         action: data.action,
         destinationName: data.destinationName || null,
       };
-    }, { isolationLevel: 'Serializable' });
+    });
   },
   async deleteBatch(batchId) {
     return prisma.$transaction(async (tx) => {

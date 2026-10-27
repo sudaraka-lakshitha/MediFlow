@@ -1,0 +1,23 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { authenticate } from '../middleware/authenticate.js';
+import { authorizeCashier } from '../middleware/authorizeCashier.js';
+import { validate } from '../middleware/validate.js';
+import { withWorkflowLease } from '../middleware/workflowLease.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
+import { listPagination } from '../utils/listPagination.js';
+import { idParams } from '../validators/common.validator.js';
+import { calendarDate } from '../validators/calendar.js';
+import { moneySchema } from '../validators/money.js';
+import { localDateKey } from '../utils/localDate.js';
+import { bankTransferService } from '../services/bankTransfer.service.js';
+import { paymentRequestService } from '../services/paymentRequest.service.js';
+export const bankTransferRoutes = Router();
+bankTransferRoutes.use(['/bank-transfers', '/payment-requests/:id/bank-allocation'], authenticate, authorizeCashier);
+bankTransferRoutes.get('/bank-transfers', asyncHandler(async (req,res) => {
+  const pagination = listPagination(req.query); const data = await bankTransferService.list(req.user, pagination);
+  res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } });
+}));
+bankTransferRoutes.post('/bank-transfers', validate({ body: z.object({ bankAccountId: z.number().int().positive(), patientId: z.number().int().positive(), reference: z.string().trim().min(3).max(80), amount: moneySchema.refine(value => value > 0, 'Amount must be positive.'), paidOn: calendarDate.refine(value => value <= localDateKey(new Date()), 'Payment date cannot be in the future.'), bankVerified: z.literal(true) }) }), asyncHandler(async (req,res) => res.status(201).json({ data: await bankTransferService.create(req.body, req.user) })));
+bankTransferRoutes.get('/bank-transfers/:id/invoices', validate({ params: idParams, query: z.object({ search: z.string().trim().max(150).default('') }) }), asyncHandler(async (req,res) => res.json({ data: await bankTransferService.invoices(Number(req.params.id), req.query.search, req.user) })));
+bankTransferRoutes.post('/payment-requests/:id/bank-allocation', validate({ params: idParams, body: z.object({ transferId: z.number().int().positive(), revision: z.number().int().positive() }) }), asyncHandler(withWorkflowLease(async (req,res) => res.json({ data: await paymentRequestService.allocateBankTransfer(Number(req.params.id), req.body, req.user) }))));

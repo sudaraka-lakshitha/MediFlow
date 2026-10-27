@@ -1,6 +1,8 @@
 import { invoiceSnapshot, invoiceMaterialChanged } from '../utils/invoiceRevision.js';
 import { queueRefund } from './refund.service.js';
 import { assertUnusedBankReference } from '../utils/bankReference.js';
+import { historySearch } from '../utils/historySearch.js';
+import { allocateVerifiedTransfer } from '../utils/bankAllocation.js';
 import { synchronizeDeliveryCancellation } from '../utils/deliveryCancellation.js';
 import { cleanupExpiredCashReservations } from '../utils/reservationExpiry.js';
 import { cancellationQuote } from '../utils/cancellationQuote.js';
@@ -37,7 +39,7 @@ const slipSelect = {
 };
 
 const include = {
-  delivery: { select: { status: true, trackingReference: true } },
+  delivery: { select: { status: true, trackingReference: true, dispatchedAt: true, feePaymentRequest: { select: { status: true, refunds: { select: { id: true } } } } } },
   deliveryFeeFor: { select: { paymentRequestId: true, status: true } },
   refunds: { include: { lines: true }, orderBy: { createdAt: 'asc' } },
   events: { orderBy: { createdAt: 'asc' } },
@@ -60,8 +62,9 @@ const visibleDirections = (record, user) => user.role === 'PATIENT' && !['PAID',
 // Both ways of paying a bill - cash at the counter, or a verified bank transfer - have to
 // end in exactly the same state: a PIN issued and the stock held in reserve. Keeping that
 // in one place stops the two routes drifting apart.
-const settleAsPaid = async (tx, { id, fromStatus, paymentMethod, paymentReference, cashierId, amountPaid, splitDetails = null }) => {
-  if (paymentMethod === 'BANK_TRANSFER') paymentReference = await assertUnusedBankReference(tx, paymentReference);
+const settleAsPaid = async (tx, { id, fromStatus, paymentMethod, paymentReference, cashierId, amountPaid, splitDetails = null, ledgerBill = null, transferId = null }) => {
+  if (transferId && ledgerBill) paymentReference = (await allocateVerifiedTransfer(tx, transferId, ledgerBill, cashierId)).reference;
+  else if (paymentMethod === 'BANK_TRANSFER') paymentReference = await assertUnusedBankReference(tx, paymentReference);
   if (splitDetails?.isSplit && splitDetails.nonCashMethod === 'BANK_TRANSFER' && Number(splitDetails.nonCashAmount) > 0) {
     splitDetails = { ...splitDetails, nonCashReference: await assertUnusedBankReference(tx, splitDetails.nonCashReference) };
   }
@@ -87,6 +90,26 @@ const settleAsPaid = async (tx, { id, fromStatus, paymentMethod, paymentReferenc
 };
 
 export const paymentRequestService = {
+  async allocateBankTransfer(id, input, user) {
+    if (!(user.role === 'ADMIN' || user.role === 'CASHIER' || (user.role === 'PHARMACIST' && user.cashierAccess))) throw new AppError(403, 'Cashier access is required.');
+    return serializable(async tx => {
+      const bill = await tx.paymentRequest.findUnique({ where: { id }, include: { prescription: { select: { isOnline: true, sourceUploadId: true } } } });
+      const previous = await tx.bankTransferAllocation.findFirst({ where: { transferId: input.transferId, paymentRequestId: id, revision: input.revision } });
+      if (previous) return { alreadyAllocated: true, amount: previous.amount };
+      if (!bill || bill.revision !== input.revision || !['AWAITING_PAYMENT', 'SLIP_SUBMITTED'].includes(bill.status) || bill.customerCancellationReason) throw new AppError(409, 'Invoice changed or is not ready for payment. Refresh and review it.');
+      if (bill.prescription?.isOnline || bill.prescription?.sourceUploadId) {
+        if (bill.acknowledgedRevision !== bill.revision || bill.customerPaymentChoice !== 'BANK_TRANSFER') throw new AppError(409, 'The customer must acknowledge this invoice and choose bank transfer first.');
+      }
+      const transfer = await tx.bankTransfer.findUnique({ where: { id: input.transferId } });
+      const slips = await tx.paymentSlip.findMany({ where: { paymentRequestId: id, status: 'PENDING' } });
+      if (slips.some(slip => slip.bankAccountId && slip.bankAccountId !== transfer?.bankAccountId)) throw new AppError(409, 'The uploaded receipt names a different bank account. Reject or correct that receipt before allocating.');
+      await settleAsPaid(tx, { id, fromStatus: bill.status, paymentMethod: 'BANK_TRANSFER', cashierId: user.id, amountPaid: bill.total, transferId: input.transferId, ledgerBill: bill });
+      await tx.paymentSlip.updateMany({ where: { paymentRequestId: id, status: 'PENDING' }, data: { status: 'VERIFIED', reviewedById: user.id, reviewedAt: new Date(), rejectionReason: null } });
+      await tx.paymentRequestEvent.create({ data: { paymentRequestId: id, revision: bill.revision, actorId: user.id, kind: 'BANK_TRANSFER_ALLOCATED', details: { transferId: input.transferId, allocatedAmount: String(bill.total), reference: transfer.reference, bankAccountId: transfer.bankAccountId } } });
+      await tx.auditLog.create({ data: { userId: user.id, action: 'BANK_TRANSFER_ALLOCATED', entityType: 'PAYMENT_REQUEST', entityId: id, details: { transferId: input.transferId, amount: String(bill.total) } } });
+      return { amount: bill.total, data: safeRecord(await tx.paymentRequest.findUnique({ where: { id }, include })) };
+    });
+  },
   async cancellationPreview(id, input, user) {
     const bill = await prisma.paymentRequest.findUnique({ where: { id }, include: { items: { include: { product: true } } } });
     const policy = billCancellationPolicy(bill, user);
@@ -98,7 +121,8 @@ export const paymentRequestService = {
     const now = new Date();
     const start = new Date(Date.parse(`${localDateKey(now)}T00:00:00Z`) - env.REPORT_TIMEZONE_OFFSET_MINUTES * 60_000);
     const events = await prisma.paymentRequestEvent.findMany({ where: { createdAt: { gte: start, lte: now }, kind: { in: ['PAYMENT_RECEIVED', 'REFUND'] } }, select: { kind: true, amount: true } });
-    return { payments: events.filter((event) => event.kind === 'PAYMENT_RECEIVED').length, netCollected: events.reduce((sum, event) => sum.add(event.amount), new Prisma.Decimal(0)) };
+    const awaitingPayment = await prisma.paymentRequest.count({ where: { status: 'AWAITING_PAYMENT' } });
+    return { awaitingPayment, payments: events.filter((event) => event.kind === 'PAYMENT_RECEIVED').length, netCollected: events.reduce((sum, event) => sum.add(event.amount), new Prisma.Decimal(0)) };
   },
   async resetPickupPin(id, reason, user) {
     if (user.role !== 'ADMIN') throw new AppError(403, 'Only an administrator can reissue a collection PIN.');
@@ -113,10 +137,10 @@ export const paymentRequestService = {
       return { data: safeRecord(await tx.paymentRequest.findUnique({ where: { id }, include })), pickupPin: pin };
     });
   },
-  async list(user, { page = 1, pageSize = 300, status } = {}) {
+  async list(user, { page = 1, pageSize = 300, status, search, type } = {}) {
     await cleanupExpiredCashReservations();
     return (await prisma.paymentRequest.findMany({
-      where: { ...(user.role === 'PATIENT' ? { patientId: user.id } : {}), ...(status ? { status } : {}) },
+      where: { ...(user.role === 'PATIENT' ? { patientId: user.id } : {}), ...(status ? { status } : {}), ...(type ? { type } : {}), ...historySearch(search, ['requestNumber', 'patient.fullName', 'patient.phone', 'paymentReference', 'prescription.prescriptionNumber']) },
       include,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       skip: (page - 1) * pageSize, take: pageSize,
@@ -243,8 +267,8 @@ export const paymentRequestService = {
       const data = await tx.paymentRequest.findUnique({ where: { id }, include });
       return safeRecord({ ...data, refundAmount: Number(refund) });
   },
-  async partialCancel(id, { itemIds, quantities, reason, revision, skipCustomerReconfirmation = false }, user) {
-    return serializable(async (tx) => {
+  async partialCancel(id, { itemIds, quantities, reason, revision, skipCustomerReconfirmation = false }, user, tx = null) {
+    if (!tx) return serializable(transaction => this.partialCancel(id, { itemIds, quantities, reason, revision, skipCustomerReconfirmation }, user, transaction));
       const current = await tx.paymentRequest.findUnique({
         where: { id },
         include: {
@@ -375,7 +399,6 @@ export const paymentRequestService = {
       } });
       const updated = await tx.paymentRequest.findUnique({ where: { id }, include });
       return safeRecord({ ...updated, refundAmount: Number(refundDiff) });
-    });
   },
   async requestCancellation(id, reason, user) {
     return serializable(async (tx) => {
@@ -399,6 +422,12 @@ export const paymentRequestService = {
       return safeRecord(await tx.paymentRequest.findUnique({ where: { id }, include }));
     });
   },
+  async retailPatients(search = '') {
+    return prisma.user.findMany({ where: { role: 'PATIENT',
+      AND: [{ OR: [{ active: true }, { email: { endsWith: '@patients.mediflow.invalid' } }] },
+        ...(search ? [{ OR: [{ fullName: { contains: search } }, { email: { contains: search } }, { phone: { contains: search.startsWith('+94') ? `0${search.slice(3)}` : search } }, { patientProfile: { patientNumber: { contains: search } } }] }] : [])],
+    }, select: { id: true, fullName: true, phone: true, email: true, patientProfile: { select: { patientNumber: true } } }, orderBy: [{ fullName: 'asc' }, { id: 'asc' }], take: 50 });
+  },
   async retailOptions() {
     const [products, patients] = await Promise.all([
       prisma.product.findMany({
@@ -409,17 +438,18 @@ export const paymentRequestService = {
         },
         orderBy: { genericName: 'asc' },
       }),
-      prisma.user.findMany({ where: { role: 'PATIENT', OR: [{ active: true }, { email: { endsWith: '@patients.mediflow.invalid' } }] }, select: { id: true, fullName: true, phone: true, email: true }, orderBy: { fullName: 'asc' }, take: 500 }),
+      this.retailPatients(),
     ]);
     return { products, patients };
   },
   async createRetail(input, pharmacistId) {
+    return serializable(async tx => {
     if (input.patientId) {
-      const patient = await prisma.user.findFirst({ where: { id: input.patientId, role: 'PATIENT', OR: [{ active: true }, { email: { endsWith: '@patients.mediflow.invalid' } }] }, select: { id: true } });
+      const patient = await tx.user.findFirst({ where: { id: input.patientId, role: 'PATIENT', OR: [{ active: true }, { email: { endsWith: '@patients.mediflow.invalid' } }] }, select: { id: true } });
       if (!patient) throw new AppError(400, 'The selected patient account is unavailable.');
     }
     const requestedIds = [...new Set(input.items.map((item) => item.productId))];
-    const products = await prisma.product.findMany({ where: { id: { in: requestedIds }, active: true, prescriptionRequired: false }, include: { category: true, batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: new Date() }, restricted: false } } } });
+    const products = await tx.product.findMany({ where: { id: { in: requestedIds }, active: true, prescriptionRequired: false }, include: { category: true, batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: new Date() }, restricted: false } } } });
     await assertRetailAgeSuitability(input.patientId, products);
     const byId = new Map(products.map((product) => [product.id, product]));
     const lines = []; const allocations = []; let subtotal = new Prisma.Decimal(0);
@@ -435,10 +465,10 @@ export const paymentRequestService = {
       allocations.push({ productId: product.id, categoryId: product.categoryId, quantity, unitPrice: product.sellingPrice, lineTotal });
     }
     subtotal = subtotal.toDecimalPlaces(2);
-    const discountResult = assertCouponMatched(await calculateDiscounts(prisma, allocations, subtotal, input.couponCode));
+    const discountResult = assertCouponMatched(await calculateDiscounts(tx, allocations, subtotal, input.couponCode));
     const tax = new Prisma.Decimal(input.tax).toDecimalPlaces(2);
     const total = Prisma.Decimal.max(0, subtotal.sub(discountResult.amount).add(tax)).toDecimalPlaces(2);
-    return withUniqueRetry(() => prisma.paymentRequest.create({
+    return withUniqueRetry(() => tx.paymentRequest.create({
       data: {
         type: 'RETAIL', requestNumber: `RET-${Date.now()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`,
         patientId: input.patientId || null, pharmacistId, subtotal, discount: discountResult.amount, tax, total, couponCode: input.couponCode || null,
@@ -446,6 +476,7 @@ export const paymentRequestService = {
       },
       include,
     }));
+    });
   },
   async pay(id, paymentMethod, cashierId, paymentReference, extraDetails = {}) {
     await cleanupExpiredCashReservations();

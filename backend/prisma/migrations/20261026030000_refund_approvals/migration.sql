@@ -1,0 +1,20 @@
+CREATE TABLE `refund_approvals` (
+  `id` INTEGER NOT NULL AUTO_INCREMENT,
+  `payment_request_id` INTEGER NOT NULL,
+  `pending_payment_request_id` INTEGER NULL,
+  `request_number` VARCHAR(80) NOT NULL,
+  `status` VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+  `amount` DECIMAL(12,2) NOT NULL,
+  `reason` VARCHAR(500) NOT NULL,
+  `selection` JSON NOT NULL,
+  `snapshot_hash` VARCHAR(64) NOT NULL,
+  `requested_by_id` INTEGER NOT NULL,
+  `decided_by_id` INTEGER NULL,
+  `decision_reason` VARCHAR(500) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `decided_at` DATETIME(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `refund_approvals_pending_payment_request_id_key` (`pending_payment_request_id`),
+  INDEX `refund_approvals_payment_request_id_idx` (`payment_request_id`),
+  CONSTRAINT `refund_approvals_payment_request_fk` FOREIGN KEY (`payment_request_id`) REFERENCES `payment_requests` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

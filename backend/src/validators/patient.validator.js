@@ -1,11 +1,12 @@
 import { personNameSchema } from './personName.js';
 import { z } from 'zod';
+import { phoneSchema } from './phone.js';
 
 const birthDate = z.coerce.date().refine((value) => value <= new Date(), 'Date of birth cannot be in the future.');
 const profileFields = {
   fullName: personNameSchema,
   email: z.string().email().max(190),
-  phone: z.string().trim().regex(/^0\d{9}$/, 'Phone number must contain exactly 10 digits and start with 0.').optional().nullable().or(z.literal('')),
+  phone: phoneSchema.optional().nullable().or(z.literal('')),
   dateOfBirth: birthDate.optional().nullable(),
   address: z.string().trim().max(300).optional().nullable(),
   allergies: z.string().trim().max(1000).optional().nullable(),
@@ -15,7 +16,7 @@ const password = z.string().min(8, 'Password requires at least 8 characters.').m
 export const createPatientSchema = z.object({
   ...profileFields,
   email: z.string().email().max(190).optional().nullable().or(z.literal('')),
-  phone: z.string().trim().regex(/^0\d{9}$/, 'Phone number must contain exactly 10 digits and start with 0.'),
+  phone: phoneSchema,
   dateOfBirth: birthDate,
   password: password.optional().or(z.literal('')),
   onlineAccess: z.boolean().default(true),
@@ -24,11 +25,13 @@ export const createPatientSchema = z.object({
 });
 export const updatePatientSchema = z.object({
   ...profileFields,
+  expectedUpdatedAt: z.iso.datetime(),
   email: z.string().email().max(190).optional(),
 });
 export const updateOwnProfileSchema = z.object({
+  expectedUpdatedAt: z.iso.datetime(),
   fullName: personNameSchema.optional(),
-  phone: z.string().trim().regex(/^0\d{9}$/, 'Phone number must contain exactly 10 digits and start with 0.').optional().nullable().or(z.literal('')),
+  phone: phoneSchema.optional().nullable().or(z.literal('')),
   dateOfBirth: birthDate.optional().nullable(),
   address: z.string().trim().max(300).optional().nullable(),
   allergies: z.string().trim().max(1000).optional().nullable(),

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { moneySchema } from './money.js';
 
 export const batchRestrictionSchema = z.object({
   restricted: z.boolean(),
@@ -10,7 +11,7 @@ export const batchRestrictionSchema = z.object({
 export const receiveStockSchema = z.object({
   productId: z.coerce.number().int().positive(), supplierId: z.coerce.number().int().positive().optional().nullable(),
   batchNumber: z.string().trim().min(1).max(80), quantity: z.coerce.number().positive(),
-  purchasePrice: z.coerce.number().nonnegative(), expiryDate: z.coerce.date(), note: z.string().trim().max(300).optional().nullable(),
+  purchasePrice: moneySchema, expiryDate: z.coerce.date(), note: z.string().trim().max(300).optional().nullable(),
 }).refine((data) => data.expiryDate > new Date(), { path: ['expiryDate'], message: 'Expiry date must be in the future.' });
 
 export const adjustmentSchema = z.object({
@@ -33,5 +34,5 @@ export const expiredStockDispositionSchema = z.object({
 });
 export const updateBatchSchema = z.object({
   supplierId:z.coerce.number().int().positive().optional().nullable(), batchNumber:z.string().trim().min(1).max(80),
-  purchasePrice:z.coerce.number().nonnegative(), expiryDate:z.coerce.date(),
+  purchasePrice:moneySchema, expiryDate:z.coerce.date(),
 });

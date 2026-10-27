@@ -50,5 +50,6 @@ export const errorHandler = (error, req, res, _next) => {
       path: req.originalUrl,
     });
   }
-  res.status(status).json({ message, details, requestId: req.requestId });
+  const unexpected = status >= 500 && !error.isOperational;
+  res.status(status).json({ message: unexpected ? 'Something went wrong. Please contact the pharmacy with this request reference.' : message, details: unexpected ? undefined : details, requestId: req.requestId });
 };

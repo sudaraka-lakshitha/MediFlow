@@ -65,7 +65,8 @@ export const invoiceAcknowledgementSchema = z.object({
   customerNote: z.string().trim().max(500).optional().nullable(),
 });
 import { protectWorkflowController } from '../middleware/workflowLease.js';
-export const paymentRequestController = protectWorkflowController({
+import { protectRetryController } from '../utils/operationContext.js';
+export const paymentRequestController = protectRetryController(protectWorkflowController({
   preview: async (req,res) => {
     const bill = await paymentRequestService.get(Number(req.params.id),req.user);
     res.setHeader('Cache-Control','no-store');
@@ -80,6 +81,7 @@ export const paymentRequestController = protectWorkflowController({
   changePaymentChoice: async (req, res) => res.json({ data: await paymentRequestService.acknowledge(Number(req.params.id), req.body, req.user, true) }),
   list: async (req, res) => {
     const pagination = listPagination(req.query, ['AWAITING_PAYMENT', 'SLIP_SUBMITTED', 'PAID', 'FULFILLED', 'CANCELLED']);
+    if (req.query.type) pagination.type = z.enum(['PRESCRIPTION', 'RETAIL']).parse(req.query.type);
     const data = await paymentRequestService.list(req.user, pagination);
     res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } });
   },
@@ -153,6 +155,7 @@ export const paymentRequestController = protectWorkflowController({
     res.json(await paymentRequestService.resetPickupPin(Number(req.params.id), req.body.reason, req.user));
   },
   retailOptions: async (_req, res) => res.json({ data: await paymentRequestService.retailOptions() }),
+  retailPatients: async (req, res) => res.json({ data: await paymentRequestService.retailPatients(req.query.search) }),
   createRetail: async (req, res) => {
     const data = await paymentRequestService.createRetail(req.body, req.user.id);
     await recordAudit({ userId: req.user.id, action: 'RETAIL_PAYMENT_REQUEST_CREATED', entityType: 'PAYMENT_REQUEST', entityId: data.id, details: { requestNumber: data.requestNumber, total: data.total }, ipAddress: req.ip });
@@ -238,4 +241,4 @@ export const paymentRequestController = protectWorkflowController({
     res.setHeader('Cache-Control', 'no-store');
     res.type('application/pdf').send(await createPaymentRequestPdf(data, true, Number(req.query.width) === 58 ? 58 : 80));
   },
-});
+}));

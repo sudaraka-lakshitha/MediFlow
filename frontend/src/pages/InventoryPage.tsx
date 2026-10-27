@@ -7,7 +7,7 @@ import {
 } from "react";
 import { Link } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
-import { pagedList } from "../api/pagedList";
+import { useHistoryPage } from "../api/useHistoryPage";
 import { stockQuantityStep } from "../utils/unitMeasure";
 import { useAuth } from "../auth/useAuth";
 import { ActionsDropdown } from "../components/ActionsDropdown";
@@ -112,6 +112,7 @@ const dispositionLabels: Record<DispositionAction, string> = {
 };
 
 export function InventoryPage() {
+  const { get: readHistory, controls: historyControls } = useHistoryPage('Inventory batches');
   const [batches, setBatches] = useState<Batch[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -170,7 +171,7 @@ export function InventoryPage() {
       setError("");
       const [batchResponse, productResponse, supplierResponse, alertResponse] =
         await Promise.all([
-          pagedList("/inventory/batches"),
+          readHistory("/inventory/batches"),
           api.get("/catalog/products"),
           api.get("/catalog/suppliers"),
           api.get("/inventory/alerts"),
@@ -184,7 +185,7 @@ export function InventoryPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [readHistory]);
 
   useEffect(() => {
     load();
@@ -428,6 +429,7 @@ export function InventoryPage() {
         </div>
       </div>
       <Alert message={error} />
+      {historyControls}
 
       <div className="metric-grid">
         <Metric

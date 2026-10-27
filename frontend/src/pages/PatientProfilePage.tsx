@@ -18,6 +18,7 @@ export function PatientProfilePage() {
   const [success, setSuccess] = useState("");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [editVersion, setEditVersion] = useState(user?.updatedAt);
   const restore = useCallback(() => {
     setFullName(user?.fullName || ''); setPhone(user?.phone || '');
     setDateOfBirth(user?.patientProfile?.dateOfBirth?.slice(0, 10) || '');
@@ -34,6 +35,7 @@ export function PatientProfilePage() {
     setSuccess("");
     try {
       const response = await api.patch("/auth/profile", {
+        expectedUpdatedAt: editVersion,
         fullName,
         phone,
         dateOfBirth: dateOfBirth || null,
@@ -107,6 +109,9 @@ export function PatientProfilePage() {
               <label className="form-label" htmlFor="profile-phone">Phone Number</label>
               <input
                 id="profile-phone"
+                pattern="(?:0[0-9]{9}|\+94[0-9]{9})"
+                maxLength={12}
+                placeholder="0701234567 or +94701234567"
                 className="form-control"
                 type="tel"
                 value={phone}
@@ -158,7 +163,7 @@ export function PatientProfilePage() {
 
           </fieldset>
           <div className="d-flex justify-content-end gap-2 mt-4">
-            {!editing ? <button type="button" className="btn btn-primary" onClick={() => { restore(); setError(''); setSuccess(''); setEditing(true); }}>Edit profile</button> : <>
+            {!editing ? <button type="button" className="btn btn-primary" onClick={() => { restore(); setEditVersion(user?.updatedAt); setError(''); setSuccess(''); setEditing(true); }}>Edit profile</button> : <>
             <button type="button" className="btn btn-light" disabled={busy} onClick={() => { restore(); setError(''); setEditing(false); }}>Cancel</button>
             <button
               className="btn btn-primary"

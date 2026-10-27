@@ -1,10 +1,12 @@
 import { prisma } from '../config/prisma.js';
-import { itemFinancials, saleFinancials, combineFinancials } from '../utils/reportFinancials.js';
+import { itemFinancials, itemCreditFinancials, saleFinancials, combineFinancials } from '../utils/reportFinancials.js';
+import { Prisma } from '@prisma/client';
 
 const include = {
   patient: { select: { id: true, fullName: true } }, pharmacist: { select: { id: true, fullName: true } },
   dispensing: { include: { prescription: { select: { prescriptionNumber: true } } } },
   items: { include: { product: { include: { category: true } }, batch: true } },
+  refunds: { where: { status: { in: ['PENDING', 'SETTLED'] } }, select: { id: true, createdAt: true, lines: true } },
 };
 const signed = (values, factor) => Object.fromEntries(Object.entries(values).map(([key, value]) => [key, key === 'margin' ? value : Number((value * factor).toFixed(2))]));
 const event = (sale, item, date, kind, quantity, financials, suffix = '') => ({ sale, item, date, kind, quantity, financials, key: `${kind}-${sale.id}-${item.id}-${suffix}` });
@@ -53,7 +55,15 @@ export async function reportEvents({ start, end }, tx = prisma) {
       if (refund.createdAt >= start && refund.createdAt < end) {
         const values = signed(original, -Number(line.quantity) / Number(item.quantity));
         // A voided part-paid sale cancels the entire receivable, not only its deposit.
-        if (sale.status !== 'VOIDED' && line.amount != null) exactCredit(values, line.amount, sale);
+        if (sale.status !== 'VOIDED') {
+          const prior = (sale.refunds || []).filter(entry => entry.createdAt < refund.createdAt || (+entry.createdAt === +refund.createdAt && entry.id < refund.id))
+            .flatMap(entry => entry.lines).filter(entry => entry.saleItemId === item.id);
+          const quantityBefore = prior.reduce((sum, entry) => sum.add(entry.quantity), new Prisma.Decimal(0));
+          const amountBefore = prior.every(entry => entry.amount != null) ? prior.reduce((sum, entry) => sum.add(entry.amount), new Prisma.Decimal(0)) : null;
+          const before = itemCreditFinancials(item, sale, quantityBefore, amountBefore);
+          const after = itemCreditFinancials(item, sale, quantityBefore.add(line.quantity), amountBefore != null && line.amount != null ? amountBefore.add(line.amount) : null);
+          for (const field of ['grossSales', 'discount', 'containerFee', 'tax', 'netRevenue']) values[field] = round(before[field] - after[field]);
+        }
         // Returning money alone does not recover the cost of goods.
         values.cost = 0; values.profit = values.netRevenue; values.margin = values.netRevenue ? 100 : 0;
         events.push(event(sale, item, refund.createdAt, 'CREDIT', -Number(line.quantity), values, line.id));

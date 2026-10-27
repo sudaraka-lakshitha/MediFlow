@@ -4,10 +4,14 @@ import { stockQuantityStep } from "../utils/unitMeasure";
 import { useAuth } from '../auth/useAuth';
 import { Modal, ModalActions } from './Modal';
 import { Alert } from './Ui';
+import { RefundApprovalPanel } from './RefundApprovalPanel';
+import { useHistoryPage } from '../api/useHistoryPage';
 const money = (value: unknown) => `Rs. ${Number(value || 0).toFixed(2)}`;
 const noSales: any[] = [];
 
 export function RefundWorkspace({ sales = noSales, refreshToken }: { sales?: any[]; refreshToken?: unknown }) {
+  const [statusFilter, setStatusFilter] = useState('');
+  const { get: readRefunds, controls: refundHistoryControls } = useHistoryPage('Refunds', { status: statusFilter });
   const { user } = useAuth();
   const staff = user?.role !== 'PATIENT';
   const canPay = user?.role === 'ADMIN' || user?.role === 'CASHIER' || !!user?.cashierAccess;
@@ -21,7 +25,7 @@ export function RefundWorkspace({ sales = noSales, refreshToken }: { sales?: any
   const [action, setAction] = useState<any>(null);
   const [feeDecision, setFeeDecision] = useState<{ id: number; approved: boolean; reason: string } | null>(null);
   const canApproveFee = user?.role === 'ADMIN' || Boolean(user?.deliveryRefundApprovalAccess);
-  const load = useCallback(async () => { try { const result = await api.get('/refunds'); setRefunds(result.data.data); } catch (caught) { setError(errorMessage(caught)); } }, []);
+  const load = useCallback(async () => { try { const result = await readRefunds('/refunds'); setRefunds(result.data.data); } catch (caught) { setError(errorMessage(caught)); } }, [readRefunds]);
   useEffect(() => { load(); }, [load, sales, refreshToken]);
   const payload = () => ({ expectedRefundCount: draft.refundCount, reason: draft.reason, items: Object.entries(draft.quantities).filter(([,quantity]) => Number(quantity) > 0).map(([id,quantity]) => ({ saleItemId: Number(id), quantity: Number(quantity) })) });
   const save = async (operation: () => Promise<unknown>) => { setBusy(true); setError(''); try { await operation(); setDraft(null); setAction(null); setPreview(null); await load(); } catch (caught) { setError(errorMessage(caught)); } finally { setBusy(false); } };
@@ -29,7 +33,10 @@ export function RefundWorkspace({ sales = noSales, refreshToken }: { sales?: any
     <div className="d-flex flex-wrap align-items-center justify-content-between gap-2"><h3 className="h5 mb-0">Refunds {staff ? '& returned stock' : ''}</h3><button className="btn btn-sm btn-outline-secondary" onClick={load}>Refresh refunds</button></div>
     <p className="small text-secondary mt-2">Refund authorization and confirmed payout are tracked separately.{staff && ' Returned goods are not added to saleable stock until a pharmacist reviews them.'}</p>
     <Alert message={error} />
-    {canPay && sales.some((sale) => sale.status === 'PAID') && <div className="d-flex flex-wrap gap-2 mb-3"><label className="visually-hidden" htmlFor="refund-sale">Completed invoice to refund</label><select id="refund-sale" className="form-select" style={{ maxWidth: 460 }} value={saleId} onChange={(event) => setSaleId(event.target.value)}><option value="">Choose a completed prescription or retail invoice</option>{sales.filter((sale) => sale.status === 'PAID').map((sale) => <option key={sale.id} value={sale.id}>{sale.invoiceNumber} — {sale.patient?.fullName || 'Walk-in'} — {money(sale.total)}</option>)}</select><button className="btn btn-outline-danger" disabled={!saleId} onClick={() => { const sale = sales.find((record) => record.id === Number(saleId)); setDraft({ sale, reason: '', quantities: {}, refundCount: refunds.filter((refund) => refund.saleId === sale.id).length }); setPreview(null); }}>Create refund / return</button></div>}
+    {staff && <RefundApprovalPanel onDecision={load} />}
+    <label className="d-block mt-3">Refund status<select className="form-select" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="">All refunds</option><option value="PENDING">Awaiting payout</option><option value="AWAITING_APPROVAL">Delivery-fee exception awaiting approval</option><option value="SETTLED">Payout completed</option><option value="REJECTED">Rejected</option></select></label>
+    {refundHistoryControls}
+    {canPay && sales.some((sale) => sale.status === 'PAID') && <div className="d-flex flex-wrap gap-2 mb-3"><label className="visually-hidden" htmlFor="refund-sale">Completed invoice to refund</label><select id="refund-sale" className="form-select" style={{ maxWidth: 460 }} value={saleId} onChange={(event) => setSaleId(event.target.value)}><option value="">Choose a completed invoice from the current invoice page</option>{sales.filter((sale) => sale.status === 'PAID').map((sale) => <option key={sale.id} value={sale.id}>{sale.invoiceNumber} — {sale.patient?.fullName || 'Walk-in'} — {money(sale.total)}</option>)}</select><button className="btn btn-outline-danger" disabled={!saleId || busy} onClick={async () => { setBusy(true); try { const sale = sales.find((record) => record.id === Number(saleId)); const context = (await api.get(`/refunds/sale/${sale.id}/context`)).data.data; setDraft({ sale, reason: '', quantities: {}, priorQuantities: context.quantities, refundCount: context.expectedRefundCount }); setPreview(null); } catch (caught) { setError(errorMessage(caught)); } finally { setBusy(false); } }}>Create refund / return</button></div>}
     {!refunds.length && <p className="text-secondary mb-0">No refunds recorded.</p>}
     {refunds.map((refund) => <article className="border rounded p-3 mt-2" key={refund.id}>
       <div className="d-flex flex-wrap justify-content-between gap-2"><strong>Refund #{refund.id} · {refund.sale?.invoiceNumber || refund.paymentRequest?.requestNumber}{refund.category === 'DELIVERY_FEE' ? ' · Delivery-fee exception' : ''}</strong><strong>{money(refund.amount)} — {({ SETTLED: 'Payout confirmed', PENDING: 'Payout pending', AWAITING_APPROVAL: 'Awaiting separate approval', REJECTED: 'Exception rejected' } as Record<string, string>)[refund.status] || refund.status}</strong></div>
@@ -50,7 +57,7 @@ export function RefundWorkspace({ sales = noSales, refreshToken }: { sales?: any
     </form></Modal>}
     {draft && <Modal title={`Refund / return — ${draft.sale.invoiceNumber}`} onClose={() => !busy && setDraft(null)} size="lg"><form onSubmit={(event) => { event.preventDefault(); if (preview) save(() => api.post(`/refunds/sale/${draft.sale.id}`,payload())); }}><fieldset disabled={busy}>
       <p>Enter only the quantities being refunded. Original invoice and dispensing records remain unchanged.</p>
-      {draft.sale.items.map((item: any) => { const prior = refunds.filter((refund) => refund.saleId === draft.sale.id).flatMap((refund) => refund.lines).filter((line: any) => line.saleItemId === item.id).reduce((sum: number,line: any) => sum + Number(line.quantity),0); const remaining = Number(item.quantity) - prior; return <div className="row g-2 align-items-center mb-2" key={item.id}><label className="col-sm-8" htmlFor={`refund-qty-${item.id}`}>{item.product.genericName} · batch {item.batch?.batchNumber}<small className="d-block text-secondary">Refundable: {remaining} {item.product.unit}</small></label><div className="col-sm-4"><input id={`refund-qty-${item.id}`} className="form-control" type="number" min="0" max={remaining} step={stockQuantityStep(item.product.unit)} disabled={remaining <= 0} value={draft.quantities[item.id] || ''} onChange={(event) => { setPreview(null); setDraft({ ...draft, quantities: { ...draft.quantities, [item.id]: event.target.value } }); }} /></div></div>; })}
+      {draft.sale.items.map((item: any) => { const remaining = Number(item.quantity) - Number(draft.priorQuantities[item.id] || 0); return <div className="row g-2 align-items-center mb-2" key={item.id}><label className="col-sm-8" htmlFor={`refund-qty-${item.id}`}>{item.product.genericName} · batch {item.batch?.batchNumber}<small className="d-block text-secondary">Refundable: {remaining} {item.product.unit}</small></label><div className="col-sm-4"><input id={`refund-qty-${item.id}`} className="form-control" type="number" min="0" max={remaining} step={stockQuantityStep(item.product.unit)} disabled={remaining <= 0} value={draft.quantities[item.id] || ''} onChange={(event) => { setPreview(null); setDraft({ ...draft, quantities: { ...draft.quantities, [item.id]: event.target.value } }); }} /></div></div>; })}
       <label htmlFor="refund-reason" className="form-label">Reason</label><textarea id="refund-reason" className="form-control" minLength={3} maxLength={500} required value={draft.reason} onChange={(event) => { setPreview(null); setDraft({ ...draft, reason: event.target.value }); }} />
       <Alert message={error} />
       {preview && <div className="alert alert-info mt-3">Refund to authorize: <strong>{money(preview.amount)}</strong>. Payout remains pending; no stock is automatically restored.</div>}

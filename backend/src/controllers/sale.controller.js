@@ -14,7 +14,8 @@ export const retailSaleSchema = z.object({
 export const voidSaleSchema = z.object({ reason: z.string().trim().min(3).max(500) });
 
 import { protectWorkflowController } from '../middleware/workflowLease.js';
-export const saleController = protectWorkflowController({
+import { protectRetryController } from '../utils/operationContext.js';
+export const saleController = protectRetryController(protectWorkflowController({
   preview: async (req,res) => {
     const sale = await saleService.getForUser(Number(req.params.id),req.user);
     res.setHeader('Cache-Control','no-store');
@@ -47,4 +48,4 @@ export const saleController = protectWorkflowController({
     await recordAudit({ userId: req.user.id, action: 'SALE_VOIDED', entityType: 'SALE', entityId: data.id, details: { invoiceNumber: data.invoiceNumber, reason: req.body.reason }, ipAddress: req.ip });
     res.json({ data });
   },
-});
+}));

@@ -1,0 +1,21 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { authenticate } from '../middleware/authenticate.js';
+import { authorize } from '../middleware/authorize.js';
+import { validate } from '../middleware/validate.js';
+import { withWorkflowLease } from '../middleware/workflowLease.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
+import { listPagination } from '../utils/listPagination.js';
+import { idParams } from '../validators/common.validator.js';
+import { refundApprovalService } from '../services/refundApproval.service.js';
+const selection = z.object({ revision: z.number().int().positive(), itemIds: z.array(z.number().int().positive()).max(100).optional(), quantities: z.record(z.string(), z.number().positive()).optional(), reason: z.string().trim().min(3).max(500) });
+export const refundApprovalRoutes = Router();
+refundApprovalRoutes.use(['/refund-approvals', '/payment-requests/:id/refund-approval'], authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER'));
+refundApprovalRoutes.get('/refund-approvals/options', validate({ query: z.object({ search: z.string().trim().max(150).default('') }) }), asyncHandler(async (req,res) => res.json({ data: await refundApprovalService.options(req.user, req.query.search) })));
+refundApprovalRoutes.get('/refund-approvals', asyncHandler(async (req,res) => {
+  const pagination = listPagination({ ...req.query, status: req.query.status || 'PENDING' }, ['PENDING', 'APPROVED', 'REJECTED']); const data = await refundApprovalService.list(req.user, pagination);
+  res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } });
+}));
+refundApprovalRoutes.post('/payment-requests/:id/refund-approval/preview', validate({ params: idParams, body: selection }), asyncHandler(withWorkflowLease(async (req,res) => res.json({ data: await refundApprovalService.preview(Number(req.params.id), req.body, req.user) }))));
+refundApprovalRoutes.post('/payment-requests/:id/refund-approval', validate({ params: idParams, body: selection.extend({ hash: z.string().regex(/^[a-f0-9]{64}$/) }) }), asyncHandler(withWorkflowLease(async (req,res) => res.status(201).json({ data: await refundApprovalService.request(Number(req.params.id), req.body, req.user) }))));
+refundApprovalRoutes.post('/payment-requests/:id/refund-approval/decision', authorize('ADMIN'), validate({ params: idParams, body: z.object({ approvalId: z.number().int().positive(), approved: z.boolean(), reason: z.string().trim().min(3).max(500) }) }), asyncHandler(withWorkflowLease(async (req,res) => res.json({ data: await refundApprovalService.decide(Number(req.params.id), req.body.approvalId, req.body, req.user) }))));

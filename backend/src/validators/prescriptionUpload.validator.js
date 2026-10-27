@@ -44,7 +44,8 @@ export const uploadPrescriptionSchema = z.object({
 export const editUploadSchema = uploadPrescriptionSchema.safeExtend({
   submissionKey: z.undefined().optional(),
   deliveryRequested: z.boolean().optional(),
-  additionalAttachments: z.undefined().optional(),
+  additionalAttachments: z.array(attachmentSchema).max(5).optional(),
+  removeAttachmentIds: z.array(z.number().int().nonnegative()).max(5).refine(ids => new Set(ids).size === ids.length, 'Choose each attachment once.').optional(),
   originalName: uploadPrescriptionSchema.shape.originalName.optional(),
   mimeType: uploadPrescriptionSchema.shape.mimeType.optional(),
   fileBase64: uploadPrescriptionSchema.shape.fileBase64.optional(),

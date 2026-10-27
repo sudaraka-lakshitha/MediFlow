@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { patientDirections } from '../utils/patientDirections.js';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { prescriptionRepository } from '../repositories/prescription.repository.js';
@@ -40,8 +41,6 @@ const validatePatientAge = async (data, products, db = prisma) => {
 };
 
 const patientView = (prescription) => {
-  const paymentConfirmed = prescription.status === 'DISPENSED'
-    || ['PAID', 'FULFILLED'].includes(prescription.paymentRequest?.status);
   return {
     ...prescription,
     createdBy: prescription.createdBy ? { id: prescription.createdBy.id, fullName: prescription.createdBy.fullName } : null,
@@ -52,26 +51,7 @@ const patientView = (prescription) => {
     // Clinical directions are strictly locked until the cashier confirms payment.
     // Mask ALL intake/schedule fields so patients cannot read dosing instructions
     // before completing payment — not just dosageInstructions and specialInstructions.
-    items: prescription.items?.map((item) => paymentConfirmed
-      ? item
-      : {
-          ...item,
-          dosageInstructions: null,
-          specialInstructions: null,
-          frequency: null,
-          duration: null,
-          administrationRoute: null,
-          mealTiming: null,
-          timesPerDay: null,
-          quantityPerDose: null,
-          doseInputAmount: null,
-          doseInputUnit: null,
-          concentrationAmount: null,
-          concentrationUnit: null,
-          concentrationVolume: null,
-          asNeeded: null,
-          notes: null,
-        }),
+    items: patientDirections(prescription),
   };
 };
 

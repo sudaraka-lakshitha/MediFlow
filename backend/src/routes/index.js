@@ -1,6 +1,9 @@
 import { Router } from 'express';
+import { calendarDate, calendarMonth, reportRange } from '../validators/calendar.js';
 import { deliveryRoutes } from './delivery.routes.js';
 import { refundRoutes } from './refund.routes.js';
+import { refundApprovalRoutes } from './refundApproval.routes.js';
+import { bankTransferRoutes } from './bankTransfer.routes.js';
 import { workflowLeaseRoutes } from './workflowLease.routes.js';
 import { reconciliationRoutes } from './reconciliation.routes.js';
 import { z } from 'zod';
@@ -35,6 +38,8 @@ import { cleanupExpiredCashReservations } from '../utils/reservationExpiry.js';
 
 export const apiRoutes = Router();
 apiRoutes.use(deliveryRoutes);
+apiRoutes.use(refundApprovalRoutes);
+apiRoutes.use(bankTransferRoutes);
 apiRoutes.use('/workflow-locks', workflowLeaseRoutes);
 apiRoutes.use('/staff-activity-report', staffActivityReportRoutes);
 // Refresh stock holds before any authenticated availability or order operation.
@@ -65,6 +70,7 @@ apiRoutes.get('/payment-requests', authenticate, authorize('ADMIN', 'PHARMACIST'
 apiRoutes.get('/payment-requests/:id/collection-slip', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams }), asyncHandler(paymentRequestController.collectionSlip));
 apiRoutes.get('/payment-requests/:id/preview', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams }), asyncHandler(paymentRequestController.preview));
 apiRoutes.get('/cashier/retail-options', authenticate, authorizeCashier, asyncHandler(paymentRequestController.retailOptions));
+apiRoutes.get('/cashier/patients', authenticate, authorizeCashier, validate({ query: z.object({ search: z.string().trim().max(190).default('') }) }), asyncHandler(paymentRequestController.retailPatients));
 apiRoutes.get('/cashier/collections-today', authenticate, authorizeCashier, asyncHandler(paymentRequestController.collectionsToday));
 apiRoutes.post('/payment-requests/retail', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ body: retailPaymentRequestSchema }), asyncHandler(paymentRequestController.createRetail));
 apiRoutes.post('/payment-requests/:id/pay', authenticate, authorizeCashier, validate({ params: idParams, body: cashierPaymentSchema }), asyncHandler(paymentRequestController.pay));
@@ -110,11 +116,11 @@ apiRoutes.put('/settings/operations', authenticate, authorize('ADMIN'), validate
 const exportDataset = z.object({ dataset: z.enum(['products','categories','manufacturers','suppliers','inventory','stockMovements','patients']) });
 apiRoutes.get('/admin-exports/:dataset.csv', authenticate, authorize('ADMIN'), validate({ params: exportDataset }), asyncHandler(adminExportController.download));
 const format = z.object({ format: z.enum(['csv', 'pdf']) });
-apiRoutes.get('/reports/daily.:format', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ params: format, query: z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }) }), asyncHandler(reportController.daily));
-apiRoutes.get('/reports/monthly.:format', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ params: format, query: z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }) }), asyncHandler(reportController.monthly));
-const rangeQuery=z.object({from:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),to:z.string().regex(/^\d{4}-\d{2}-\d{2}$/)}).refine(data=>data.from<=data.to,{message:'Start date must be before or equal to end date.'});
+apiRoutes.get('/reports/daily.:format', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ params: format, query: z.object({ date: calendarDate }) }), asyncHandler(reportController.daily));
+apiRoutes.get('/reports/monthly.:format', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ params: format, query: z.object({ month: calendarMonth }) }), asyncHandler(reportController.monthly));
+const rangeQuery=reportRange;
 apiRoutes.get('/reports/period.:format',authenticate,authorize('ADMIN','PHARMACIST'),validate({params:format,query:rangeQuery}),asyncHandler(reportController.range));
 apiRoutes.get('/reports/analytics',authenticate,authorize('ADMIN','PHARMACIST'),validate({query:rangeQuery}),asyncHandler(reportController.analytics));
-const customReportQuery=z.object({from:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),to:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),groupBy:z.enum(['date','product','category','batch','pharmacist','patient','paymentMethod','saleStatus'])}).refine(data=>data.from<=data.to,{message:'Start date must be before or equal to end date.'});
+const customReportQuery=reportRange.safeExtend({groupBy:z.enum(['date','product','category','batch','pharmacist','patient','paymentMethod','saleStatus'])});
 apiRoutes.get('/reports/custom',authenticate,authorize('ADMIN','PHARMACIST'),validate({query:customReportQuery}),asyncHandler(reportController.custom));
 apiRoutes.get('/reports/custom.:format',authenticate,authorize('ADMIN','PHARMACIST'),validate({params:format,query:customReportQuery}),asyncHandler(reportController.customExport));

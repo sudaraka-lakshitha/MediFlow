@@ -37,6 +37,9 @@ deliveryRoutes.get('/deliveries', authorize('PATIENT', 'ADMIN', 'PHARMACIST', 'C
   const pagination = listPagination(req.query); const data = await deliveryService.list(req.user, { ...pagination, ...deliveryFilterSchema.parse(req.query) });
   res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } });
 }));
+deliveryRoutes.get('/deliveries/couriers', authorize('PATIENT', 'ADMIN', 'PHARMACIST', 'CASHIER'), asyncHandler(async (req, res) => {
+  res.json({ data: await deliveryService.couriers(req.user) });
+}));
 deliveryRoutes.post('/payment-requests/:id/delivery', authorize('PATIENT'), validate({ params: idParams, body: deliveryContactSchema }), asyncHandler(withWorkflowLease(async (req, res) => res.status(201).json({ data: await deliveryService.request(Number(req.params.id), req.body, req.user) }))));
 deliveryRoutes.post('/payment-requests/:id/delivery/reshipment', authorize('PATIENT'), validate({ params: idParams }), asyncHandler(withWorkflowLease(async (req, res) => res.json({ data: await deliveryService.requestReshipment(Number(req.params.id), req.user) }))));
 deliveryRoutes.post('/payment-requests/:id/delivery/reshipment/withdraw', authorize('PATIENT'), validate({ params: idParams }), asyncHandler(withWorkflowLease(async (req, res) => res.json({ data: await deliveryService.requestReshipment(Number(req.params.id), req.user, true) }))));

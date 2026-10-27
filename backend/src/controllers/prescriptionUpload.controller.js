@@ -5,7 +5,7 @@ import { listPagination } from '../utils/listPagination.js';
 import { protectWorkflowController } from '../middleware/workflowLease.js';
 export const prescriptionUploadController = protectWorkflowController({
   attachments: async (req, res) => res.json({ data: await prescriptionUploadService.attachments(Number(req.params.id), req.user) }),
-  list: async (req, res) => { const pagination = listPagination(req.query); const data = await prescriptionUploadService.list(req.user,pagination); res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } }); },
+  list: async (req, res) => { const pagination = listPagination(req.query, ['PENDING', 'AVAILABLE', 'PARTIALLY_AVAILABLE', 'UNAVAILABLE', 'REJECTED', 'QUOTE_SENT', 'QUOTE_ACCEPTED', 'PAYMENT_PENDING', 'AWAITING_PAYMENT', 'SLIP_SUBMITTED', 'PAID', 'FULFILLED', 'CANCELLED', 'PAYMENT_SUBMITTED', 'READY_TO_PREPARE']); const data = await prescriptionUploadService.list(req.user,pagination); res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } }); },
   create: async (req, res) => {
     const { replayed, ...data } = await prescriptionUploadService.create(req.body, req.user.id);
     if (!replayed) await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOADED', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id, details: { fileName: data.originalName, prepareRequested: data.prepareRequested }, ipAddress: req.ip });
@@ -25,7 +25,7 @@ export const prescriptionUploadController = protectWorkflowController({
   edit: async (req, res) => {
     const data = await prescriptionUploadService.edit(Number(req.params.id), req.body, req.user);
     await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOAD_EDITED', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id,
-      details: { attachmentReplaced: Boolean(req.body.fileBase64) }, ipAddress: req.ip });
+      details: { attachmentReplaced: Boolean(req.body.fileBase64), attachmentsAdded: req.body.additionalAttachments?.length || 0, removedAttachmentIds: req.body.removeAttachmentIds || [] }, ipAddress: req.ip });
     res.json({ data });
   },
   sendQuotation: async (req, res) => {

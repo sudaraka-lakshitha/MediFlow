@@ -8,6 +8,7 @@ export interface User {
   fullName: string;
   role: Role;
   phone?: string | null;
+  updatedAt?: string;
   cashierAccess?: boolean;
   pharmacyReconciliationAccess?: boolean;
   deliveryRefundApprovalAccess?: boolean;

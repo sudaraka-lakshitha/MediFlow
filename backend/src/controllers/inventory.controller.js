@@ -1,8 +1,9 @@
 import { inventoryService } from '../services/inventory.service.js';
 import { recordAudit } from '../services/audit.service.js';
 import { listPagination } from '../utils/listPagination.js';
+import { protectRetryController } from '../utils/operationContext.js';
 
-export const inventoryController = {
+export const inventoryController = protectRetryController({
   batches: async (req, res) => {
     const pagination = listPagination(req.query);
     const batches = await inventoryService.listBatches(pagination);
@@ -25,7 +26,7 @@ export const inventoryController = {
       }),
     });
   },
-  movements: async (req, res) => { const pagination = listPagination(req.query); const data = await inventoryService.listMovements(pagination); res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } }); },
+  movements: async (req, res) => { const pagination = listPagination(req.query, ['RECEIPT', 'DISPENSING', 'RETAIL_SALE', 'ADJUSTMENT', 'REVERSAL', 'EXPIRED', 'DAMAGED', 'RETURN']); const data = await inventoryService.listMovements(pagination); res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } }); },
   alerts: async (_req, res) => res.json({ data: await inventoryService.alerts() }),
   acknowledgeLowStock: async (req, res) => {
     const data = await inventoryService.acknowledgeLowStock(Number(req.params.id), req.user.id);
@@ -94,4 +95,4 @@ export const inventoryController = {
     });
     res.json({ message: 'Inventory batch deleted successfully.' });
   },
-};
+});

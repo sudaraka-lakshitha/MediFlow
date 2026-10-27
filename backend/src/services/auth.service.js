@@ -14,6 +14,8 @@ const safeUser = (user) => ({
   email: user.email,
   fullName: user.fullName,
   phone: user.phone,
+  updatedAt: user.updatedAt,
+  ...(user.patientProfile ? { patientProfile: user.patientProfile } : {}),
   role: user.role,
   cashierAccess: user.cashierAccess,
   pharmacyReconciliationAccess: user.pharmacyReconciliationAccess,
@@ -156,13 +158,15 @@ export const authService = {
       });
       if (!user) throw new AppError(404, 'User not found.');
       
-      const updatedUser = await tx.user.update({
-        where: { id: userId },
+      const updatedUser = await tx.user.updateMany({
+        where: { id: userId, ...(data.expectedUpdatedAt ? { updatedAt: new Date(data.expectedUpdatedAt) } : {}) },
         data: {
+          updatedAt: new Date(Math.max(Date.now(), new Date(data.expectedUpdatedAt || user.updatedAt).getTime() + 1)),
           fullName: data.fullName ? data.fullName.trim() : user.fullName,
           phone: data.phone !== undefined ? data.phone : user.phone,
         }
       });
+      if (updatedUser.count !== 1) throw new AppError(409, 'Your profile changed. Reload it and review the latest details before saving.');
       
       if (user.role === 'PATIENT') {
         await tx.patientProfile.update({
@@ -178,6 +182,7 @@ export const authService = {
       
       const refreshed = await tx.user.findUnique({
         where: { id: userId },
+        include: { patientProfile: true },
       });
       
       return {

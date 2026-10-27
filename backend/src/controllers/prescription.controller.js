@@ -5,7 +5,7 @@ import { listPagination } from '../utils/listPagination.js';
 
 import { protectWorkflowController } from '../middleware/workflowLease.js';
 export const prescriptionController = protectWorkflowController({
-  list: async (req, res) => { const pagination = listPagination(req.query); const data = await prescriptionService.list(req.user,pagination); res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } }); },
+  list: async (req, res) => { const pagination = listPagination(req.query, ['PENDING', 'VERIFIED', 'PARTIALLY_DISPENSED', 'DISPENSED', 'REJECTED', 'CANCELLED']); const data = await prescriptionService.list(req.user,pagination); res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } }); },
   get: async (req, res) => {
     const data = await prescriptionService.get(Number(req.params.id), req.user);
     if (!data) throw new AppError(404, 'Prescription not found.');

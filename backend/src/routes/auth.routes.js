@@ -8,24 +8,29 @@ import { validate } from '../middleware/validate.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { changePasswordSchema, forgotPasswordSchema, loginSchema, registerSchema, selfResetPasswordSchema, verifyResetOtpSchema } from '../validators/auth.validator.js';
 import { updateOwnProfileSchema } from '../validators/patient.validator.js';
-import { createRateLimiter } from '../middleware/rateLimit.js';
+import { createSharedRateLimiter as createRateLimiter } from '../middleware/sharedRateLimit.js';
 
 export const authRoutes = Router();
 const loginLimiter = createRateLimiter({
+  namespace: 'login', ipMax: 60,
   windowMs: 15 * 60_000,
   max: 10,
   message: 'Too many sign-in attempts. Wait before trying again.',
 });
 const resetRequestLimiter = createRateLimiter({
+  namespace: 'reset-request', ipMax: 20,
   windowMs: 15 * 60_000,
   max: 5,
   message: 'Too many password reset requests. Wait before requesting another code.',
 });
 const resetVerificationLimiter = createRateLimiter({
+  namespace: 'reset-verify', ipMax: 40,
   windowMs: 15 * 60_000,
   max: 10,
   message: 'Too many reset-code attempts. Wait before trying again.',
 });
+const registrationLimiter = createRateLimiter({ namespace: 'register', windowMs: 60 * 60_000, max: 5, ipMax: 20,
+  message: 'Too many account creation attempts. Please wait before trying again.' });
 /**
  * @openapi
  * /auth/login:
@@ -42,7 +47,7 @@ const resetVerificationLimiter = createRateLimiter({
  *     summary: Register a patient account
  *     responses: { '201': { description: Patient registered } }
  */
-authRoutes.post('/register', validate({ body: registerSchema }), asyncHandler(authController.register));
+authRoutes.post('/register', registrationLimiter, validate({ body: registerSchema }), asyncHandler(authController.register));
 authRoutes.post('/login', loginLimiter, validate({ body: loginSchema }), asyncHandler(authController.login));
 authRoutes.post('/forgot-password', resetRequestLimiter, validate({ body: forgotPasswordSchema }), asyncHandler(authController.forgotPassword));
 authRoutes.post('/verify-reset-otp', resetVerificationLimiter, validate({ body: verifyResetOtpSchema }), asyncHandler(authController.verifyResetOtp));

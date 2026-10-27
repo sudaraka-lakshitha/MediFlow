@@ -1,22 +1,23 @@
 import { useEffect, useState } from "react";
 import { errorMessage } from "../api/client";
-import { pagedList } from "../api/pagedList";
+import { useHistoryPage } from "../api/useHistoryPage";
 import { Alert, Empty, Loading, Status } from "../components/Ui";
 
 const prescriberLabel = (rx: { prescriberTitle?: string; prescriberName?: string }) =>
   [rx.prescriberTitle, rx.prescriberName].filter(Boolean).join(" ") || "Not mentioned";
 
 export function PatientHealthRecordPage() {
+  const { get: readHistory, controls: historyControls } = useHistoryPage('Prescription history');
   const [record, setRecord] = useState<any>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    pagedList("/patients/me/health-record", "prescriptions")
+    readHistory("/patients/me/health-record", "prescriptions")
       .then((response) => setRecord(response.data.data))
       .catch((caught) => setError(errorMessage(caught)))
       .finally(() => setLoading(false));
-  }, []);
+  }, [readHistory]);
 
   if (loading) return <Loading />;
   return (
@@ -31,6 +32,7 @@ export function PatientHealthRecordPage() {
         </div>
       </div>
       <Alert message={error} />
+      {historyControls}
       {record && (
         <>
           <div className="panel patient-health-record-summary mb-4">

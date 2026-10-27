@@ -7,7 +7,7 @@ import {
 } from "react";
 import { api, errorMessage } from "../api/client";
 import { stockQuantityStep } from "../utils/unitMeasure";
-import { pagedList } from "../api/pagedList";
+import { useHistoryPage } from "../api/useHistoryPage";
 import { useAuth } from "../auth/useAuth";
 import { Modal, ModalActions } from "../components/Modal";
 import { SearchableSelect } from "../components/SearchableSelect";
@@ -74,8 +74,10 @@ function BankAccountDetails({
 
 import { WorkflowGuard } from '../components/WorkflowGuard';
 export function SalesPage() {
+  const { get: readSales, controls: salesHistoryControls } = useHistoryPage('Final invoices');
   const { user } = useAuth();
   const staff = user!.role !== "PATIENT";
+  const { get: readOrders, controls: orderHistoryControls } = useHistoryPage('Order invoices', staff ? { type: 'RETAIL' } : {});
   const isCashier = user!.role === "CASHIER";
   const isAdmin = user!.role === "ADMIN";
   const canDirectRetail =
@@ -110,7 +112,7 @@ export function SalesPage() {
     setInvoiceLoadFailed(false);
     try {
       // Supporting queries must not hide successfully loaded invoices/returns.
-      const requests = [pagedList("/sales").then((result) => setRows(result.data.data)).catch((caught) => {
+      const requests = [readSales("/sales").then((result) => setRows(result.data.data)).catch((caught) => {
         setRows([]); setInvoiceLoadFailed(true); throw caught;
       })];
       if (staff) {
@@ -123,10 +125,10 @@ export function SalesPage() {
           requests.push(api.get("/catalog/products").then((result) => setProducts(result.data.data)));
           requests.push(api.get("/patients").then((result) => setPatients(result.data.data)));
         }
-        requests.push(pagedList("/payment-requests").then((result) => setRetailRequests(result.data.data.filter((request: any) => request.type === "RETAIL"))));
+        requests.push(readOrders("/payment-requests").then((result) => setRetailRequests(result.data.data.filter((request: any) => request.type === "RETAIL"))));
         requests.push(api.get("/settings/operations").then((result) => setOperationSettings(result.data.data)));
       } else {
-        requests.push(pagedList("/payment-requests").then((result) => setMyInvoices(result.data.data)));
+        requests.push(readOrders("/payment-requests").then((result) => setMyInvoices(result.data.data)));
         requests.push(api.get("/bank-accounts").then((result) => setBankAccounts(result.data.data)));
       }
       const results = await Promise.allSettled(requests);
@@ -137,15 +139,15 @@ export function SalesPage() {
     } finally {
       setLoading(false);
     }
-  }, [staff, isCashier]);
+  }, [staff, isCashier, readSales, readOrders]);
   const searchPatients = useCallback(async (query: string) => {
-    if (isCashier) return; // Cashier-safe options are already loaded and locally searchable.
     if (query.length < 2) return;
     try {
-      const response = await api.get("/patients", { params: { search: query } });
+      const response = await api.get(isCashier ? '/cashier/patients' : '/patients', { params: { search: query } });
+      const matches = isCashier ? response.data.data.map((patient: any) => ({ id: patient.id, user: patient, patientNumber: patient.patientProfile?.patientNumber || 'Customer' })) : response.data.data;
       setPatients((prev) => {
         const byId = new Map(prev.map((patient: any) => [patient.id, patient]));
-        for (const patient of response.data.data) byId.set(patient.id, patient);
+        for (const patient of matches) byId.set(patient.id, patient);
         return [...byId.values()];
       });
     } catch {
@@ -442,6 +444,8 @@ export function SalesPage() {
         )}
       </div>
       <Alert message={error} />
+      {orderHistoryControls}
+      {salesHistoryControls}
 
       {!staff &&
         (() => {
