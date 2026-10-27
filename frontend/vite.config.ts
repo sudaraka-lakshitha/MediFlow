@@ -10,10 +10,18 @@ export default defineConfig({
       output: {
         // Split vendor code into stable long-lived cache chunks.
         // React/router/axios rarely change → users keep cached versions across deploys.
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          'vendor-http': ['axios'],
-          'vendor-bootstrap': ['bootstrap', 'bootstrap-icons'],
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router-dom')) {
+              return 'vendor-react'
+            }
+            if (id.includes('axios')) {
+              return 'vendor-http'
+            }
+            if (id.includes('bootstrap')) {
+              return 'vendor-bootstrap'
+            }
+          }
         },
       },
     },
