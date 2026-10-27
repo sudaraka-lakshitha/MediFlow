@@ -5,10 +5,16 @@ import { authorize } from '../middleware/authorize.js';
 import { validate } from '../middleware/validate.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { idParams } from '../validators/common.validator.js';
-import { adjustmentSchema, batchRestrictionSchema, expiredStockDispositionSchema, receiveStockSchema, updateBatchSchema } from '../validators/inventory.validator.js';
+import { adjustmentSchema, batchRestrictionSchema, expiredStockDispositionSchema, receiveStockSchema, updateBatchSchema, bulkStockExcelSchema, bulkStockRowsSchema } from '../validators/inventory.validator.js';
 
 export const inventoryRoutes = Router();
 inventoryRoutes.use(authenticate, authorize('ADMIN', 'PHARMACIST'));
+inventoryRoutes.get('/batches/bulk/template.xlsx', asyncHandler(inventoryController.bulkTemplateXlsx));
+inventoryRoutes.get('/batches/bulk/template.csv', asyncHandler(inventoryController.bulkTemplateCsv));
+inventoryRoutes.get('/batches/bulk/export-for-update', asyncHandler(inventoryController.exportStockForUpdate));
+inventoryRoutes.post('/batches/bulk/excel-preview', validate({ body: bulkStockExcelSchema }), asyncHandler(inventoryController.bulkExcelPreview));
+inventoryRoutes.post('/batches/bulk/preview', validate({ body: bulkStockRowsSchema }), asyncHandler(inventoryController.bulkPreview));
+inventoryRoutes.post('/batches/bulk/confirm', validate({ body: bulkStockRowsSchema }), asyncHandler(inventoryController.bulkConfirm));
 inventoryRoutes.get('/batches', asyncHandler(inventoryController.batches));
 inventoryRoutes.get('/movements', asyncHandler(inventoryController.movements));
 inventoryRoutes.get('/alerts', asyncHandler(inventoryController.alerts));

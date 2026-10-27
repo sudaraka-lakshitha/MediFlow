@@ -23,11 +23,26 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
     const id = ++generation.current;
     setRows([]); setResult(null); setConfirmed(false); setError(''); setFileName(file.name); setBusy('Reading file…'); lock.current = true;
     try {
-      if (!/\.csv$/i.test(file.name)) throw new Error('Save the Products sheet as CSV UTF-8 before uploading.');
-      if (file.size > 2_000_000) throw new Error('The CSV must be 2 MB or smaller. Split it into smaller files.');
-      const parsed = parseCsv(await file.text());
-      if (!parsed.length) throw new Error('The file has no product rows.');
-      if (generation.current === id) setRows(parsed);
+      if (/\.xlsx$/i.test(file.name)) {
+        if (file.size > 2_000_000) throw new Error('The Excel file must be 2 MB or smaller.');
+        const fileBase64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result).split(',')[1]);
+          reader.onerror = () => reject(new Error('Cannot read this file.'));
+          reader.readAsDataURL(file);
+        });
+        const r = await api.post('/catalog/products/bulk/excel-preview', { fileBase64 }, { timeout: 130000 });
+        if (generation.current === id) {
+          setRows(r.data.data.rows);
+          setResult(r.data.data);
+        }
+      } else {
+        if (!/\.csv$/i.test(file.name)) throw new Error('Upload an Excel (.xlsx) workbook directly or save as CSV UTF-8.');
+        if (file.size > 2_000_000) throw new Error('The CSV must be 2 MB or smaller. Split it into smaller files.');
+        const parsed = parseCsv(await file.text());
+        if (!parsed.length) throw new Error('The file has no product rows.');
+        if (generation.current === id) setRows(parsed);
+      }
     } catch (e) { if (generation.current === id) setError(errorMessage(e)); }
     finally { if (generation.current === id) setBusy(''); lock.current = false; }
   };
@@ -56,10 +71,10 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
       <button className="btn btn-outline-secondary" disabled={Boolean(busy)} onClick={() => download('/catalog/products/bulk-template.csv', 'mediflow-product-template.csv')}>CSV examples</button>
       <button className="btn btn-outline-secondary" disabled={Boolean(busy)} onClick={() => download('/catalog/products/export-for-update.csv', 'mediflow-products-for-update.csv')}>Export for update</button>
     </div>
-    <p className="small text-secondary">Replace all example rows with your own products. Save only the Excel <strong>Products</strong> sheet as CSV UTF-8. Up to 2,000 rows and 2 MB per file. Split larger exports into files with the same header row.</p>
+    <p className="small text-secondary">Replace all example rows with your own products. You can upload your <strong>.xlsx</strong> Excel template directly or save as CSV UTF-8. Up to 2,000 rows and 2 MB per file.</p>
     {format && <details className="mb-3"><summary>Instructions and column guide</summary><ol className="mt-2">{format.instructions.map((line) => <li key={line}>{line}</li>)}</ol><div className="table-responsive"><table className="table table-sm"><thead><tr><th>Column</th><th>How to fill it in</th><th>Allows [CLEAR]</th></tr></thead><tbody>{format.fields.map((f) => <tr key={f.key}><th scope="row">{f.label}<small className="d-block text-secondary">{f.key}</small></th><td>{f.help}</td><td>{f.clearable ? 'Yes' : 'No'}</td></tr>)}</tbody></table></div></details>}
-    <label htmlFor="bulk-product-file" className="form-label">Choose your product CSV</label>
-    <input id="bulk-product-file" className="form-control" type="file" accept=".csv,text/csv" disabled={Boolean(busy)} onChange={(e) => { void read(e.target.files?.[0]); e.target.value = ''; }} />
+    <label htmlFor="bulk-product-file" className="form-label">Choose your product spreadsheet (.xlsx or .csv)</label>
+    <input id="bulk-product-file" className="form-control" type="file" accept=".xlsx,.csv,text/csv" disabled={Boolean(busy)} onChange={(e) => { void read(e.target.files?.[0]); e.target.value = ''; }} />
     {fileName && <p className="small mt-2">{fileName}{rows.length > 0 ? ` — ${rows.length} product rows loaded` : ''}</p>}
     {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
     {busy && <p role="status" className="mt-3">{busy}</p>}

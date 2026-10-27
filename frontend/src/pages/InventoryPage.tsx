@@ -17,6 +17,7 @@ import { SearchableSelect } from "../components/SearchableSelect";
 import { Alert, Empty, Loading, Metric, Status } from "../components/Ui";
 import { Pagination } from "../components/Pagination";
 import { useClientPagination } from "../utils/useClientPagination";
+import { BulkStockModal } from "../components/BulkStockModal";
 
 type DispositionAction =
   | "DISCARDED"
@@ -122,6 +123,7 @@ export function InventoryPage() {
   const [busy, setBusy] = useState(false);
   const [notingProductId, setNotingProductId] = useState<number | null>(null);
   const [modal, setModal] = useState<InventoryModal | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [selected, setSelected] = useState<Batch | null>(null);
   const [restockProduct, setRestockProduct] = useState<any | null>(null);
   const [filter, setFilter] = useState<BatchFilter>("CURRENT");
@@ -422,6 +424,10 @@ export function InventoryPage() {
             <i className="bi bi-clock-history me-2" />
             Movement history
           </Link>
+          <button type="button" className="btn btn-outline-primary" onClick={() => setBulkOpen(true)}>
+            <i className="bi bi-file-earmark-arrow-up me-2" />
+            Bulk stock update
+          </button>
           <button className="btn btn-primary" onClick={() => open("receive")}>
             <i className="bi bi-box-arrow-in-down me-2" />
             Receive stock
@@ -1176,6 +1182,12 @@ export function InventoryPage() {
           {!restrictionTarget.restricted && <div><label className="form-label">Reason for restriction</label><textarea className="form-control" value={restrictionReason} onChange={(event) => setRestrictionReason(event.target.value)} minLength={3} maxLength={220} placeholder="Describe the quality, recall, or handling concern." required /></div>}
           <div className="modal-actions"><button type="button" className="btn btn-light" onClick={() => setRestrictionTarget(null)}>Cancel</button><button type="button" className={`btn ${restrictionTarget.restricted ? 'btn-primary' : 'btn-danger'}`} disabled={busy || (!restrictionTarget.restricted && restrictionReason.trim().length < 3)} onClick={() => toggleRestriction(restrictionTarget)}>{busy ? 'Working…' : restrictionTarget.restricted ? 'Resume issuing' : 'Stop issuing'}</button></div>
         </Modal>
+      )}
+      {bulkOpen && (
+        <BulkStockModal
+          onClose={() => setBulkOpen(false)}
+          onApplied={() => { void load(); }}
+        />
       )}
     </>
   );

@@ -3,6 +3,7 @@ import { recordAudit } from '../services/audit.service.js';
 import { toCsv, streamCsv } from '../utils/csv.js';
 import { productBulkFields, productTemplateRows, bulkInstructions, CLEAR_VALUE } from '../utils/productBulkFormat.js';
 import { productUpdateExport } from '../services/adminExport.service.js';
+import { readProductWorkbook } from '../services/productWorkbook.service.js';
 
 const save = (entityType, action, operation) => async (req, res) => {
   const result = await operation(req);
@@ -52,5 +53,11 @@ export const catalogController = {
   bulkProducts: async (req, res) => {
     const result = await catalogService.bulkProducts(req.body.rows, req.body.dryRun, { previewToken: req.body.previewToken, fileName: req.body.fileName, userId: req.user.id, ipAddress: req.ip });
     res.json({ data: result, message: req.body.dryRun ? `Validation finished. ${result.errors.length} invalid rows. No products were saved.` : 'Bulk changes saved successfully.' });
+  },
+  bulkProductsExcel: async (req, res) => {
+    const buffer = Buffer.from(req.body.fileBase64, 'base64');
+    const rows = await readProductWorkbook(buffer);
+    const result = await catalogService.bulkProducts(rows, true, { fileName: 'excel-import.xlsx', userId: req.user.id, ipAddress: req.ip });
+    res.json({ data: { ...result, rows } });
   },
 };

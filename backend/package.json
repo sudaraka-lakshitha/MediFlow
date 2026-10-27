@@ -12,7 +12,13 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "prisma:seed": "prisma db seed"
+    "prisma:seed": "prisma db seed",
+    "seed:master-pharmacy": "node scripts/seed-master-pharmacy.mjs",
+    "build:master-pharmacy": "node scripts/build-master-pharmacy.mjs",
+    "seed:real-pharmacy": "node scripts/seed-real-pharmacy.mjs",
+    "seed:kanapathee": "node scripts/seed-kanapathee.mjs",
+    "crawl:kanapathee": "node scripts/crawl-kanapathee.mjs",
+    "generate:pharmacy-data": "node scripts/generate-pharmacy-dataset.mjs"
   },
   "keywords": [],
   "author": "",

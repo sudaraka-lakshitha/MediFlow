@@ -36,3 +36,12 @@ export const updateBatchSchema = z.object({
   supplierId:z.coerce.number().int().positive().optional().nullable(), batchNumber:z.string().trim().min(1).max(80),
   purchasePrice:moneySchema, expiryDate:z.coerce.date(),
 });
+
+export const bulkStockExcelSchema = z.object({
+  fileBase64: z.string().min(8).max(5_000_000),
+});
+
+export const bulkStockRowsSchema = z.object({
+  rows: z.array(z.record(z.string(), z.any())).min(1).max(500),
+  previewToken: z.string().max(2000).optional(),
+});

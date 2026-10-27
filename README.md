@@ -461,6 +461,12 @@ MediFlow/
 - **Quick-Filter Pills**: Application error log includes one-click filter buttons (`400`, `401`, `403`, `404`, `409`, `423`, `429`, `500`) to quickly isolate specific error classes during incident investigations.
 - **Recoverable Audit Trash**: Configurable 30-day retention trash bin for audit logs with granular restore controls.
 
+### 8. Batch Inventory, Bulk Updates & Liquid Dose Dispensing
+- **Bulk Excel (.xlsx) & CSV Stock Updates**: Direct upload of wholesale batches and stocktaking audit counts with interactive pre-flight validation, before/after diff visualizer, and atomic transaction execution.
+- **Direct Excel (.xlsx) Product Catalogue Ingestion**: Upload complete product databases directly in Microsoft Excel (`.xlsx`) or CSV UTF-8 without manual format conversions.
+- **Liquid Medicines & Syrups (`unit: ml`)**: Built-in volume calculation engine that respects exact clinical milliliters (`dose * frequency * days`) and 3-decimal stock tracking (`Decimal(12, 3)`), distinguishing liquid volume dispensing from sealed retail bottles (`unit: bottle`).
+- **Master Formulary Datasets**: Pre-built Excel workbooks (`mediflow_master_products_upload.xlsx` and `mediflow_master_stock_upload.xlsx`) populated with 349 crawled & curated medicines, pediatric syrups, and healthcare supplies.
+
 ---
 
 ## 13. Security & Data Integrity Guarantees
