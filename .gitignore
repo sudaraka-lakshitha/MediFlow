@@ -8,8 +8,10 @@
 .vscode/
 tmp/
 
-# Android app
-android/
+# Android build artifacts (sources tracked, build outputs ignored via android/.gitignore)
+android/build/
+android/signing/
+android/*.apk
 
 # Test files
 **/tests/

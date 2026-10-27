@@ -27,6 +27,7 @@ Local development runs against local MySQL / MariaDB (via XAMPP); hosted deploym
 15. [Hosted Deployment & Upgrade Guide](#15-hosted-deployment--upgrade-guide)
 16. [Troubleshooting & Common Issues](#16-troubleshooting--common-issues)
 17. [Current QA Status & Verification Boundaries](#17-current-qa-status--verification-boundaries)
+18. [MediFlow Android Client App (v2.0)](#18-mediflow-android-client-app-v20)
 
 ---
 
@@ -412,6 +413,12 @@ MediFlow/
 │   ├── ml/                                 Experimental DDI neural classifier (TensorFlow.js)
 │   └── scripts/                            Administrative CLI utilities and data importers
 │
+├── android/                                Native Android Client App v2.0 (WebView, multi-tab, PDF & print)
+│   ├── AndroidManifest.xml                 Application manifest & intent filters
+│   ├── build.ps1                           PowerShell build & signing automation script
+│   ├── README.md                           Android build, architecture & testing guide
+│   └── src/com/mediflow/pharmacy/          Native Java sources (MainActivity, tab manager, PDF viewer)
+│
 ├── package.json                            Root monorepo scripts (`dev:api`, `dev:web`, `verify`)
 └── start-mediflow.bat                      Automated local development environment launcher
 ```
@@ -595,6 +602,33 @@ The following status codes appear in MediFlow's audit logs (`/audit`), applicati
 - **Frontend Build & TypeScript**: Clean compilation with `tsc -b && vite build` with manual bundle chunk optimization.
 - **Database Safety**: Local integration tests run in isolated transactions with automatic rollback of test fixtures.
 - **Operational Boundaries**: Physical thermal printers, hardware barcode scanners, SMTP mail delivery in production networks, and heavy load testing (>500 concurrent connections) must be verified separately in target production environments.
+
+---
+
+## 18. MediFlow Android Client App (v2.0)
+
+MediFlow includes a dedicated, lightweight Android client app in the `android/` directory that wraps the platform in an optimized, app-owned WebView environment:
+
+### Key Android Features:
+- **Embedded App WebView**: Runs `https://mediflow-pharmacy.vercel.app/` in a clean, full-screen WebView without browser address bar clutter or navigation distractions.
+- **Multi-Tab Workspace Switcher**: Native navigation drawer and switcher supporting up to **6 concurrent tabs** for simultaneous prescription reviewing, inventory checking, and billing.
+- **Private Document & PDF Viewer**: In-app PDF viewer with page controls, zoom, and direct Android `PrintManager` integration (`PdfPrintAdapter`) for printing thermal receipts and A4 invoices.
+- **Document Management**: Save prescriptions, receipts, and clinical reports to local Android storage via the Android Storage Access Framework (`ACTION_CREATE_DOCUMENT`).
+- **View Mode Toggle**: Quickly switch between **Mobile View** and **Desktop View** (1280-pixel wide layout with pinch-to-zoom) via the App actions menu (⋮). The preference is persisted across app sessions.
+- **Prescription Camera & Upload Chooser**: Native Android file picker integration for uploading prescription photos and bank transfer slips from the camera or gallery.
+- **Sandbox Security**: Runs strictly against `mediflow-pharmacy.vercel.app`. Native bridge channel is protected against external origins. Only `INTERNET` permission is requested.
+
+### Building the Android APK:
+The build process uses the included PowerShell build script [build.ps1](file:///e:/IAT/All%20Lecture%20Materials%20For%20S1Y3/MediFLow/android/build.ps1) with standard Android Build Tools:
+
+```powershell
+cd android
+./build.ps1 -BuildTools "C:\Users\<user>\AppData\Local\Android\Sdk\build-tools\36.0.0" `
+            -AndroidJar "C:\Users\<user>\AppData\Local\Android\Sdk\platforms\android-36\android.jar" `
+            -JavaBin "C:\Program Files\Java\jdk-21\bin"
+```
+
+Output: `android/build/MediFlow.apk` (signed, zipalign-verified, and installable on Android 6.0+ devices).
 
 ---
 

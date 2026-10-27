@@ -11,9 +11,10 @@ New-Item -ItemType Directory -Force $build, $signing, "$build/classes", "$build/
 function Check-Exit { if ($LASTEXITCODE -ne 0) { throw "Android build tool failed: $LASTEXITCODE" } }
 & "$BuildTools/aapt2.exe" compile --dir "$project/res" -o "$build/resources.zip"
 Check-Exit
-& "$BuildTools/aapt2.exe" link -o "$build/unsigned.apk" --manifest "$project/AndroidManifest.xml" -I $AndroidJar "$build/resources.zip"
+& "$BuildTools/aapt2.exe" link -o "$build/unsigned.apk" --manifest "$project/AndroidManifest.xml" -I $AndroidJar -A "$project/assets" "$build/resources.zip"
 Check-Exit
-& "$JavaBin/javac.exe" --release 8 -classpath $AndroidJar -d "$build/classes" "$project/src/com/mediflow/pharmacy/MainActivity.java"
+$sources = Get-ChildItem "$project/src" -Filter '*.java' -Recurse | Select-Object -ExpandProperty FullName
+& "$JavaBin/javac.exe" --release 8 -classpath $AndroidJar -d "$build/classes" $sources
 Check-Exit
 & "$JavaBin/jar.exe" --create --file "$build/classes.jar" -C "$build/classes" .
 Check-Exit
