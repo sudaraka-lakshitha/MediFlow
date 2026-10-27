@@ -165,12 +165,30 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
     <p>{filtered.length} matching deliveries on this history page. Exports include this page only. Date filters use your local calendar dates.</p>
     {pharmacist && <div className="d-flex flex-wrap gap-2 mb-3">
       <button className="btn btn-primary" type="button" disabled={busy || exportingExcel || filtered.length > 500} onClick={async () => {
+        if (!filtered.length) {
+          // Download blank formatted template directly from static assets
+          const link = document.createElement('a');
+          link.href = '/templates/MediFlow_Delivery_Update_Template.xlsx';
+          link.download = 'mediflow-deliveries-template.xlsx';
+          link.click();
+          return;
+        }
         setExportingExcel(true); setError('');
         try {
           const ids = filtered.map(row => row.id);
           const response = await api.post('/deliveries/export.xlsx', { ids }, { responseType: 'blob', timeout: 60000 });
           const url = URL.createObjectURL(response.data), link = document.createElement('a'); link.href = url; link.download = 'mediflow-deliveries.xlsx'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-        } catch (e) { setError(errorMessage(e)); } finally { setExportingExcel(false); }
+        } catch (e: any) {
+          if (e?.response?.data instanceof Blob) {
+            try {
+              const text = await e.response.data.text();
+              const json = JSON.parse(text);
+              setError(json?.message || errorMessage(e));
+              return;
+            } catch {}
+          }
+          setError(errorMessage(e));
+        } finally { setExportingExcel(false); }
       }}>
         {exportingExcel ? <><span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />Preparing Excel…</> : filtered.length ? `Export formatted Excel template (${filtered.length})` : 'Export formatted Excel template'}
       </button>
