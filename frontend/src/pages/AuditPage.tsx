@@ -6,13 +6,227 @@ import { SearchableSelect } from "../components/SearchableSelect";
 import { Modal } from "../components/Modal";
 import { Alert, Empty, Loading, Metric, Status } from "../components/Ui";
 
-type AuditTab = "staff" | "audit" | "trash" | "errors";
+type AuditTab = "staff" | "audit" | "trash" | "errors" | "codes";
 type AuditConfirmation =
   | "trash"
   | "trash-selected"
   | "restore-all"
   | "clear-errors"
   | null;
+
+export interface AuditStatusCodeInfo {
+  code: number;
+  name: string;
+  category: "4xx Client Errors" | "5xx Server Errors" | "Hosting & Gateway";
+  badgeClass: string;
+  summary: string;
+  scenarios: string[];
+  resolution: string;
+  origin: string;
+}
+
+export const AUDIT_STATUS_CODES: AuditStatusCodeInfo[] = [
+  {
+    code: 400,
+    name: "Bad Request / Input Validation Failed",
+    category: "4xx Client Errors",
+    badgeClass: "text-bg-warning",
+    summary: "The request body, query parameters, or URL failed validation constraints.",
+    scenarios: [
+      "Zod schema validation failed (e.g. empty delivery recipient name, invalid phone pattern like not matching 0701234567 or +94701234567).",
+      "Missing or invalid UUID v4 Idempotency-Key on critical financial or stock operations.",
+      "Cash tendered or change amount does not reconcile with bill total at the cashier checkout.",
+      "Stock adjustment quantity is zero, negative (when unsigned required), or has more than 3 decimal places.",
+      "Discrete dosage units (tablets, capsules) supplied with fractional decimal quantities.",
+      "Attempting to query audit logs or exports with an invalid date range or out-of-bounds page.",
+    ],
+    resolution: "Inspect form inputs for missing required fields or invalid formats. In browser DevTools Network tab, check details.fieldErrors to pinpoint the exact failing field.",
+    origin: "backend/src/middleware/validate.js, paymentAmounts.js, stockQuantity.js, operationContext.js",
+  },
+  {
+    code: 401,
+    name: "Unauthorized / Session Expired",
+    category: "4xx Client Errors",
+    badgeClass: "text-bg-danger",
+    summary: "No valid authentication token provided, session expired, or token was revoked.",
+    scenarios: [
+      "Missing or expired Bearer JWT token in Authorization header.",
+      "Session reached its expiration deadline (JWT_EXPIRES_IN) or was revoked from active sessions table.",
+      "User password was changed or reset, incrementing tokenVersion and invalidating active sessions across all devices.",
+      "Invalid login credentials provided on the sign-in form.",
+    ],
+    resolution: "Sign in again at /login. If an administrator revoked your session or reset your password, use your new credentials.",
+    origin: "backend/src/middleware/authenticate.js, auth.service.js, session.service.js",
+  },
+  {
+    code: 402,
+    name: "Payment Required / Unpaid Prescription",
+    category: "4xx Client Errors",
+    badgeClass: "text-bg-warning",
+    summary: "Financial payment must be verified before proceeding with the requested operation.",
+    scenarios: [
+      "Attempting to dispense medicines for a prescription whose payment request is still AWAITING_PAYMENT or SLIP_SUBMITTED.",
+      "Attempting to dispatch a home delivery before the delivery fee invoice (DEL-...) is verified and marked PAID.",
+    ],
+    resolution: "Have the cashier collect payment, verify the bank transfer slip, or allocate statement balance to mark the invoice as PAID first.",
+    origin: "backend/src/utils/prescriptionDispense.js, deliveryAction.js",
+  },
+  {
+    code: 403,
+    name: "Forbidden / Access Denied",
+    category: "4xx Client Errors",
+    badgeClass: "text-bg-danger",
+    summary: "The authenticated user lacks the required role or administrative permission for this action.",
+    scenarios: [
+      "Role-based authorization guard rejected access (e.g. Cashier attempting to edit prescriptions or dispense medicines; Patient attempting to view pharmacy inventory).",
+      "Attempting to approve a refund escalation without the ADMIN role.",
+      "Pharmacy-wide daily balance reconciliation opened by staff without explicit administrative grant.",
+      "Patient attempting to view or modify another patient's medical records or invoices.",
+    ],
+    resolution: "Sign in with an account having the required role (Admin or Pharmacist). For reconciliation access, have an administrator grant permission in User Management.",
+    origin: "backend/src/middleware/authorize.js, reconciliationAccess.js, invoiceAccess.js",
+  },
+  {
+    code: 404,
+    name: "Not Found / Missing Record",
+    category: "4xx Client Errors",
+    badgeClass: "text-bg-secondary",
+    summary: "The requested record ID or API endpoint does not exist in the database.",
+    scenarios: [
+      "Prescription, payment request, product, batch, delivery request, or user record ID not found in MySQL (Prisma P2025).",
+      "A prescription item was deleted or removed by another user before dispensing was initiated.",
+      "Request sent to an undefined or incorrect API route URL.",
+    ],
+    resolution: "Refresh the page to reload active records. Verify the record ID in the URL.",
+    origin: "backend/src/middleware/errorHandler.js (notFound, Prisma P2025)",
+  },
+  {
+    code: 409,
+    name: "Conflict / Business Rule Violation",
+    category: "4xx Client Errors",
+    badgeClass: "text-bg-warning",
+    summary: "The request conflicts with existing data constraints, historical records, or concurrent modifications.",
+    scenarios: [
+      "Unique Constraint (P2002): Email address, batch number, or invoice reference already exists in the system.",
+      "Foreign Key Constraint (P2003): Attempting to delete a product or category that has historical sales or dispensing records (deactivate instead).",
+      "Stale Record Revision: The record was modified by another staff member while you were viewing it (expectedUpdatedAt mismatch).",
+      "Insufficient Usable Stock: Available batch quantity is lower than the required dispensing or retail quantity.",
+      "Workflow State Conflict: Prescription is already dispensed, partially dispensed, or cancelled.",
+      "Collection PIN Mismatch: The pickup PIN entered at the cashier does not match the issued receipt.",
+      "Retry Key Payload Mismatch: Reusing an Idempotency-Key with a different payload hash.",
+      "Reshipment of restricted/expired batch: Returned parcel contains expired medicines that cannot be reshipped.",
+    ],
+    resolution: "Refresh the workspace to pull the latest revision. For unique key collisions, choose an alternative identifier. For stock shortages, review inventory batches or request pharmacist stock adjustments.",
+    origin: "backend/src/middleware/errorHandler.js, stock.js, prescriptionDispense.js, operationContext.js",
+  },
+  {
+    code: 410,
+    name: "Gone / Expired Resource",
+    category: "4xx Client Errors",
+    badgeClass: "text-bg-secondary",
+    summary: "The target resource was previously valid but has permanently expired or been purged.",
+    scenarios: [
+      "Password-reset OTP code expired after the 10-minute validity window.",
+      "Prescription quotation or estimate reached its acceptance deadline and was automatically closed.",
+    ],
+    resolution: "Request a fresh OTP code or have the pharmacist generate an updated prescription quote.",
+    origin: "backend/src/services/auth.service.js, prescriptionUpload.service.js",
+  },
+  {
+    code: 413,
+    name: "Payload Too Large",
+    category: "4xx Client Errors",
+    badgeClass: "text-bg-warning",
+    summary: "The uploaded file exceeds the maximum allowed file size.",
+    scenarios: [
+      "Bulk Excel import file exceeds the 1 MB archive limit (checkWorkbookArchive).",
+      "Bulk CSV delivery file exceeds the 500 KB limit or contains more than 50 rows.",
+      "Uploaded prescription image attachment exceeds the file size threshold.",
+    ],
+    resolution: "Reduce file size, compress images, or split the bulk import spreadsheet into smaller batches of at most 50 rows.",
+    origin: "backend/src/services/deliveryWorkbook.service.js, productBulk.service.js",
+  },
+  {
+    code: 423,
+    name: "Locked / Concurrency Lease Active",
+    category: "4xx Client Errors",
+    badgeClass: "text-bg-dark",
+    summary: "The target workspace or record is actively locked by another user or session security timeout.",
+    scenarios: [
+      "Workspace Idle Lock (SESSION_LOCKED): Staff inactivity exceeded the configured idle timeout; screen locked until password/PIN unlock.",
+      "Workflow Lease Lock (WORKFLOW_BUSY): Another pharmacist is currently editing or dispensing the same prescription (X-Workflow-Lease header protection).",
+    ],
+    resolution: "For idle timeout: Enter your account password to unlock the workspace. For workflow lease collisions: Wait for the other staff member to finish, or request them to close their edit tab.",
+    origin: "backend/src/middleware/errorHandler.js, workflowLease.service.js",
+  },
+  {
+    code: 429,
+    name: "Too Many Requests / Rate Limited",
+    category: "4xx Client Errors",
+    badgeClass: "text-bg-danger",
+    summary: "The shared brute-force protection rate limiter has temporarily blocked requests from this IP or user account.",
+    scenarios: [
+      "Excessive failed login attempts within the rate-limit window.",
+      "Too many password-reset OTP verification attempts.",
+      "Burst API traffic exceeding rate limits from a single client.",
+    ],
+    resolution: "Wait for the cooldown window (typically 1 to 15 minutes) before re-attempting authentication. Do not repeatedly submit credentials.",
+    origin: "backend/src/middleware/sharedRateLimit.js",
+  },
+  {
+    code: 500,
+    name: "Internal Server Error",
+    category: "5xx Server Errors",
+    badgeClass: "text-bg-danger",
+    summary: "An unhandled server-side exception occurred while processing the request.",
+    scenarios: [
+      "Database driver connection dropout or unexpected MySQL server disconnect.",
+      "Unhandled Prisma ORM driver error or unhandled async rejection.",
+      "PDF generation engine failure (e.g., PDFKit rendering error or corrupted template).",
+    ],
+    resolution: "Check the server logs on Render or the local terminal using the requestId displayed in the error modal. Verify MySQL database connectivity.",
+    origin: "backend/src/middleware/errorHandler.js",
+  },
+  {
+    code: 502,
+    name: "Bad Gateway / Upstream Failure",
+    category: "Hosting & Gateway",
+    badgeClass: "text-bg-secondary",
+    summary: "The API server received an invalid response from an upstream external service or edge gateway.",
+    scenarios: [
+      "External clinical drug APIs (openFDA, RxNorm, PubChem) temporarily down or timing out.",
+      "Render backend proxy gateway error while the API container is restarting.",
+    ],
+    resolution: "Retry the operation in a few moments. If clinical lookup fails, use the curated DDInter database instead of live external queries.",
+    origin: "backend/src/services/drugInformation.service.js, Render edge proxy",
+  },
+  {
+    code: 503,
+    name: "Service Unavailable",
+    category: "Hosting & Gateway",
+    badgeClass: "text-bg-secondary",
+    summary: "The backend server or database is temporarily overloaded or undergoing maintenance.",
+    scenarios: [
+      "Database connection pool exhausted or MySQL instance undergoing maintenance.",
+      "Shared rate limiter database store temporarily unreachable (fails closed for security).",
+    ],
+    resolution: "Check database health in the Aiven console. Wait 30 seconds and retry.",
+    origin: "backend/src/middleware/sharedRateLimit.js, MySQL pool",
+  },
+  {
+    code: 504,
+    name: "Gateway Timeout / Server Cold Start",
+    category: "Hosting & Gateway",
+    badgeClass: "text-bg-secondary",
+    summary: "The upstream server failed to respond within the gateway timeout window.",
+    scenarios: [
+      "Render.com free tier instance was spun down and took longer than the edge gateway timeout to wake up.",
+      "Complex financial report or multi-year PDF generation exceeded the HTTP timeout.",
+    ],
+    resolution: "Wait 15–30 seconds for the Render backend container to fully initialize and refresh. Use an uptime keep-alive ping (e.g. UptimeRobot) to prevent cold starts.",
+    origin: "Render.com / Vercel Edge CDN timeout",
+  },
+];
 
 const dateValue = (date: Date) => {
   const offset = date.getTimezoneOffset() * 60_000;
@@ -28,6 +242,8 @@ export function AuditPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialStaff = searchParams.get("staff") || "";
   const [tab, setTab] = useState<AuditTab>(initialStaff ? "audit" : "staff");
+  const [codeQuery, setCodeQuery] = useState("");
+  const [codeCategory, setCodeCategory] = useState("ALL");
   const [audit, setAudit] = useState<any[]>([]);
   const [staff, setStaff] = useState<any[]>([]);
   const [errors, setErrors] = useState<any[]>([]);
@@ -341,6 +557,23 @@ export function AuditPage() {
       : errors;
   }, [errorQuery, errors]);
 
+  const filteredStatusCodes = useMemo(() => {
+    return AUDIT_STATUS_CODES.filter((item) => {
+      const matchesCat = codeCategory === "ALL" || item.category === codeCategory;
+      if (!matchesCat) return false;
+      if (!codeQuery.trim()) return true;
+      const q = codeQuery.toLowerCase();
+      return (
+        String(item.code).includes(q) ||
+        item.name.toLowerCase().includes(q) ||
+        item.summary.toLowerCase().includes(q) ||
+        item.scenarios.some((s) => s.toLowerCase().includes(q)) ||
+        item.resolution.toLowerCase().includes(q) ||
+        item.origin.toLowerCase().includes(q)
+      );
+    });
+  }, [codeQuery, codeCategory]);
+
   const selectedStaff = staff.find(
     (member) => String(member.id) === String(filters.userId),
   );
@@ -471,8 +704,16 @@ export function AuditPage() {
             Application errors
             <span className="badge text-bg-light ms-1">{errors.length}</span>
           </button>
+          <button
+            className={`btn ${tab === "codes" ? "btn-primary" : "btn-outline-secondary"}`}
+            onClick={() => setTab("codes")}
+          >
+            <i className="bi bi-journal-code me-1" />
+            Error code guide
+            <span className="badge text-bg-light ms-1">{AUDIT_STATUS_CODES.length}</span>
+          </button>
         </div>
-        {tab !== "errors" && (
+        {tab !== "errors" && tab !== "codes" && (
           <div className="audit-period">
             <div>
               <label className="form-label">From</label>
@@ -861,6 +1102,29 @@ export function AuditPage() {
                     </td>
                     <td>
                       <Status value={row.success ? "SUCCESS" : "FAILED"} />
+                      {row.details?.status && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-link p-0 text-decoration-none d-inline-block mt-1"
+                          onClick={() => {
+                            setCodeQuery(String(row.details.status));
+                            setTab("codes");
+                          }}
+                          title={`HTTP ${row.details.status} — Click to view in error code guide`}
+                        >
+                          <span
+                            className={`badge ${
+                              row.details.status >= 500
+                                ? "text-bg-danger"
+                                : row.details.status >= 400
+                                  ? "text-bg-warning"
+                                  : "text-bg-info"
+                            }`}
+                          >
+                            HTTP {row.details.status}
+                          </span>
+                        </button>
+                      )}
                       {!row.success && !row.readAt && tab === "audit" && (
                         <small className="d-block text-danger mt-1">
                           Unread warning
@@ -963,6 +1227,27 @@ export function AuditPage() {
               </button>
             </div>
           </div>
+          <div className="d-flex flex-wrap gap-2 align-items-center mb-3 p-2 bg-light rounded border">
+            <small className="text-secondary fw-semibold">Quick filter by HTTP code:</small>
+            {["400", "401", "402", "403", "404", "409", "410", "413", "423", "429", "500", "502", "503", "504"].map((code) => (
+              <button
+                key={code}
+                type="button"
+                className={`btn btn-sm py-0 px-2 ${errorQuery === code ? "btn-danger" : "btn-outline-secondary"}`}
+                onClick={() => setErrorQuery(errorQuery === code ? "" : code)}
+              >
+                {code}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="btn btn-sm btn-link text-decoration-none ms-auto py-0"
+              onClick={() => setTab("codes")}
+            >
+              <i className="bi bi-journal-code me-1" />
+              Status code reference guide &rarr;
+            </button>
+          </div>
           <div className="table-responsive">
             <table className="table">
               <thead>
@@ -1015,6 +1300,92 @@ export function AuditPage() {
               }
             />
           )}
+        </div>
+      )}
+
+      {tab === "codes" && (
+        <div className="panel">
+          <div className="panel-header">
+            <div>
+              <h3>HTTP Status &amp; Error Code Reference</h3>
+              <small className="text-secondary">
+                Comprehensive dictionary of all HTTP response codes, business rule conflicts, and audit log error sources in MediFlow
+              </small>
+            </div>
+            <div className="d-flex gap-2 align-items-center flex-wrap">
+              <input
+                className="form-control"
+                style={{ maxWidth: '300px' }}
+                value={codeQuery}
+                onChange={(e) => setCodeQuery(e.target.value)}
+                placeholder="Search code, name, keyword…"
+              />
+              {codeQuery && (
+                <button className="btn btn-sm btn-outline-secondary" onClick={() => setCodeQuery("")}>
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="d-flex flex-wrap gap-2 mb-3">
+            {["ALL", "4xx Client Errors", "5xx Server Errors", "Hosting & Gateway"].map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                className={`btn btn-sm ${codeCategory === cat ? "btn-primary" : "btn-outline-secondary"}`}
+                onClick={() => setCodeCategory(cat)}
+              >
+                {cat === "ALL" ? `All Codes (${AUDIT_STATUS_CODES.length})` : cat}
+              </button>
+            ))}
+          </div>
+
+          <div className="row g-3">
+            {filteredStatusCodes.map((item) => (
+              <div key={item.code} className="col-12">
+                <div className="card shadow-sm border">
+                  <div className="card-header d-flex flex-wrap align-items-center justify-content-between gap-2 bg-light">
+                    <div className="d-flex align-items-center gap-2">
+                      <span className={`badge ${item.badgeClass} fs-6`}>HTTP {item.code}</span>
+                      <strong className="fs-6">{item.name}</strong>
+                    </div>
+                    <span className="badge bg-secondary-subtle text-secondary border">{item.category}</span>
+                  </div>
+                  <div className="card-body">
+                    <p className="card-text mb-3">{item.summary}</p>
+                    <div className="row g-3">
+                      <div className="col-md-6">
+                        <h6 className="text-danger-emphasis mb-2">
+                          <i className="bi bi-exclamation-triangle me-1" />
+                          Why this appears in MediFlow audit logs:
+                        </h6>
+                        <ul className="small text-secondary ps-3 mb-0">
+                          {item.scenarios.map((scen, idx) => (
+                            <li key={idx} className="mb-1">{scen}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="col-md-6">
+                        <h6 className="text-success-emphasis mb-2">
+                          <i className="bi bi-check-circle me-1" />
+                          How to resolve:
+                        </h6>
+                        <p className="small text-secondary mb-2">{item.resolution}</p>
+                        <h6 className="text-dark mb-1 small fw-bold">Code origin:</h6>
+                        <code className="small text-break bg-light p-1 rounded d-block border">{item.origin}</code>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {!filteredStatusCodes.length && (
+              <div className="col-12">
+                <Empty text="No status codes match your search query." />
+              </div>
+            )}
+          </div>
         </div>
       )}
 
