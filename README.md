@@ -443,7 +443,7 @@ MediFlow/
 - **Courier Integration**: Assignment of couriers, tracking numbers, and automatic dispatch timestamps.
 - **Patient Self-Cancellation**: Patients can directly cancel unconfirmed delivery requests without pharmacy intervention.
 - **Protected Fee Configuration**: The standard delivery fee setting is toggle-locked to prevent accidental modifications during navigation.
-- **Bulk Excel/CSV Operations**: Import and export delivery status updates using standardized Excel templates.
+- **Bulk Excel/CSV Operations**: Import and export delivery status updates using standardized Excel templates. When no deliveries are selected, the formatted template downloads instantly from static CDN assets; when deliveries are selected, the template is pre-populated with those specific delivery records for editing and re-upload.
 
 ### 5. Returns, Refunds & Administrator Escalation
 - **Stock Quarantine**: Returned medicines enter an isolated quarantine review state and require pharmacist inspection before being restocked or destroyed.
@@ -453,6 +453,13 @@ MediFlow/
 ### 6. Clinical Research & Experimental AI
 - **Multi-Source Drug Information**: Unified search querying RxNorm, PubChem, and openFDA public drug labels.
 - **Experimental Neural DDI Classifier**: Optional TensorFlow.js neural network trained on drug molecular feature vectors to estimate interaction likelihoods when curated pairs are unavailable.
+
+### 7. Administration, Audit Control & Error Diagnostics
+- **Comprehensive Activity Trails**: Immutable audit logging for every significant staff and patient event (logins, dispensing, bill edits, stock adjustments, file previews).
+- **In-App Error Code Reference Guide**: Built-in interactive HTTP status code dictionary under the **Error code guide** tab (`/audit`), cataloging all 14 response codes with clinical MediFlow scenarios and resolution steps.
+- **Clickable HTTP Status Badges**: Audit logs display clickable HTTP status badges (e.g. `HTTP 400`, `HTTP 409`) on failed requests that link directly to the relevant error documentation.
+- **Quick-Filter Pills**: Application error log includes one-click filter buttons (`400`, `401`, `403`, `404`, `409`, `423`, `429`, `500`) to quickly isolate specific error classes during incident investigations.
+- **Recoverable Audit Trash**: Configurable 30-day retention trash bin for audit logs with granular restore controls.
 
 ---
 
@@ -482,6 +489,8 @@ The system incorporates several architecture enhancements to maintain responsive
 | **Navigation Polling** | Uncoupled attention badge polling from route path changes | Stops bursts of redundant API calls during fast screen navigation |
 | **Vite Bundle Splitting** | Custom `manualChunks` function for React, Axios, and Bootstrap packages | Optimizes vendor caching; returning users download only modified application code |
 | **Delivery Management** | Dedicated button loading state and patient request cancellation | Eliminates double-submit race conditions and unnecessary staff support requests |
+| **Static Template Serving** | Blank Excel delivery template served directly from static CDN assets | Zero server latency, bypasses backend API entirely when exporting templates |
+| **Blob Error Decoding** | Added text extraction for failed binary/blob responses in Axios | Unmasks raw status codes to display meaningful clinical error messages in UI |
 
 ---
 
@@ -550,6 +559,27 @@ npm --prefix backend run prisma:generate
 ### Slow Login on the Hosted Demo
 - If accessing a hosted free-tier instance, the first request may take 30–45 seconds due to a cold start.
 - Look for the top banner notice: *"☕ The server is warming up, please wait a moment…"*. Once initialized, subsequent requests respond in milliseconds.
+
+### HTTP Status & Error Codes Reference (Audit Logs Cheat Sheet)
+
+The following status codes appear in MediFlow's audit logs (`/audit`), application error files, and browser Network tab:
+
+| HTTP Code | Status Name | Category | Common MediFlow Triggers | Recommended Resolution |
+|---|---|---|---|---|
+| **`400`** | Bad Request | Client (4xx) | Zod schema validation failed (invalid phone number, missing required fields, non-conforming regex); missing `Idempotency-Key`; cash tendered amount mismatch; non-zero/negative/fractional stock quantity. | Check form inputs. In DevTools Network tab $\rightarrow$ Response, inspect `details.fieldErrors` for the exact field that failed. |
+| **`401`** | Unauthorized | Client (4xx) | Missing Bearer token; expired JWT session; password reset/change incremented `tokenVersion` (invalidating all sessions); invalid login credentials. | Sign in again at `/login`. If password was reset, use new credentials. |
+| **`402`** | Payment Required | Client (4xx) | Attempting to dispense medicines for an unpaid prescription; attempting to dispatch a delivery before the delivery fee invoice (`DEL-...`) is paid. | Have the cashier record payment, verify the bank transfer slip, or allocate bank receipts first. |
+| **`403`** | Forbidden | Client (4xx) | Role unauthorized (e.g. Cashier dispensing medicines; Patient viewing inventory); non-admin approving refunds; staff without reconciliation grant. | Switch to an account with appropriate permissions (Admin/Pharmacist) or grant access in User Management. |
+| **`404`** | Not Found | Client (4xx) | Target record ID (prescription, product, batch, delivery, user) does not exist in MySQL (`P2025`); item was deleted before dispensing; invalid route. | Refresh the workspace to pull current records. Check whether the record was cancelled or deleted. |
+| **`409`** | Conflict | Client (4xx) | Duplicate email/batch/invoice (`P2002`); deleting product with sales history (`P2003`); stale record version (`expectedUpdatedAt` mismatch); insufficient usable stock; prescription already dispensed; collection PIN mismatch; idempotency hash collision. | Refresh the record to fetch the latest revision. For unique key collisions, choose an alternative identifier. For stock shortages, review batches. |
+| **`410`** | Gone | Client (4xx) | Password-reset OTP expired (10-minute window); prescription quotation reached acceptance deadline. | Request a new OTP or have the pharmacist re-quote. |
+| **`413`** | Payload Too Large | Client (4xx) | Excel delivery file > 1 MB; CSV delivery update > 500 KB or > 50 rows; prescription image attachment too large. | Reduce file size, compress images, or split import into batches of $\le 50$ rows. |
+| **`423`** | Locked | Client (4xx) | Workspace idle lock (`SESSION_LOCKED`) after inactivity timeout; active workflow lease held by another pharmacist (`X-Workflow-Lease`). | Re-enter password/PIN to unlock workspace. For workflow conflict, wait for the other user to close their tab. |
+| **`429`** | Too Many Requests | Client (4xx) | Brute-force rate limiter triggered on login or OTP attempts from same IP or account. | Wait for the cooldown window (1–15 minutes) before retrying. |
+| **`500`** | Internal Server Error | Server (5xx) | Unhandled database disconnect, unexpected Prisma exception, or PDFKit generation failure. | Check server logs on Render or local terminal using the `requestId` from the error modal. |
+| **`502`** | Bad Gateway | Gateway | External clinical APIs (openFDA, RxNorm, PubChem) unreachable; Render proxy error during container restart. | Retry after a few moments. Use local DDInter database if external APIs are down. |
+| **`503`** | Service Unavailable | Gateway | MySQL database connection pool exhausted or instance undergoing maintenance; rate-limit store unreachable. | Check database health in Aiven console. Wait 30 seconds and retry. |
+| **`504`** | Gateway Timeout | Gateway | Render free-tier container cold start took longer than edge timeout; long report generation timed out. | Wait 15–30 seconds for the backend instance to finish warming up and refresh. Use UptimeRobot keep-alive. |
 
 ---
 
