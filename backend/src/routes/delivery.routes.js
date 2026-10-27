@@ -16,8 +16,11 @@ import { prisma } from '../config/prisma.js';
 export const deliveryRoutes = Router();
 // Authenticate only matching delivery routes; leave login and registration public.
 deliveryRoutes.use(['/deliveries', '/delivery-settings', '/payment-requests/:id/delivery'], authenticate);
-deliveryRoutes.post('/deliveries/export.xlsx', authorize('ADMIN', 'PHARMACIST'), validate({ body: z.object({ ids: z.array(z.number().int().positive()).min(1).max(500) }) }), asyncHandler(async (req, res) => {
-  const rows = await prisma.deliveryRequest.findMany({ where: { id: { in: req.body.ids } }, include: { paymentRequest: { select: { requestNumber: true, patient: { select: { fullName: true } } } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
+deliveryRoutes.post('/deliveries/export.xlsx', authorize('ADMIN', 'PHARMACIST'), validate({ body: z.object({ ids: z.array(z.number().int().positive()).max(500).default([]) }) }), asyncHandler(async (req, res) => {
+  const ids = req.body?.ids || [];
+  const rows = ids.length
+    ? await prisma.deliveryRequest.findMany({ where: { id: { in: ids } }, include: { paymentRequest: { select: { requestNumber: true, patient: { select: { fullName: true } } } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] })
+    : [];
   const buffer = await exportDeliveryWorkbook(rows);
   res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.set('Content-Disposition', 'attachment; filename="mediflow-deliveries.xlsx"');

@@ -21,6 +21,7 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [exportingExcel, setExportingExcel] = useState(false);
   const [message, setMessage] = useState('');
   const [form, setForm] = useState({ id: '', recipientName: '', address: '', phone: '' });
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -163,16 +164,21 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
     </div>
     <p>{filtered.length} matching deliveries on this history page. Exports include this page only. Date filters use your local calendar dates.</p>
     {pharmacist && <div className="d-flex flex-wrap gap-2 mb-3">
-      <button className="btn btn-primary" disabled={busy || !filtered.length || filtered.length > 500} onClick={async () => {
-        setBusy(true); setError('');
+      <button className="btn btn-primary" type="button" disabled={busy || exportingExcel || filtered.length > 500} onClick={async () => {
+        setExportingExcel(true); setError('');
         try {
-          const response = await api.post('/deliveries/export.xlsx', { ids: filtered.map(row => row.id) }, { responseType: 'blob', timeout: 60000 });
+          const ids = filtered.map(row => row.id);
+          const response = await api.post('/deliveries/export.xlsx', { ids }, { responseType: 'blob', timeout: 60000 });
           const url = URL.createObjectURL(response.data), link = document.createElement('a'); link.href = url; link.download = 'mediflow-deliveries.xlsx'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-        } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
-      }}>Export formatted Excel template</button>
-      <button className="btn btn-outline-primary" disabled={busy || !filtered.length} onClick={() => exportDeliveries(filtered)}>Export filtered CSV template</button>
-      <button className="btn btn-primary" disabled={busy} onClick={() => setBulkOpen(true)}>Upload delivery updates</button>
-      {filtered.length > 500 && <p>Refine the filters to at most 500 deliveries for Excel export.</p>}
+        } catch (e) { setError(errorMessage(e)); } finally { setExportingExcel(false); }
+      }}>
+        {exportingExcel ? <><span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />Preparing Excel…</> : filtered.length ? `Export formatted Excel template (${filtered.length})` : 'Export formatted Excel template'}
+      </button>
+      <button className="btn btn-outline-primary" type="button" disabled={busy} onClick={() => exportDeliveries(filtered)}>
+        {filtered.length ? `Export filtered CSV template (${filtered.length})` : 'Export filtered CSV template'}
+      </button>
+      <button className="btn btn-primary" type="button" disabled={busy} onClick={() => setBulkOpen(true)}>Upload delivery updates</button>
+      {filtered.length > 500 && <p className="text-danger small mt-1">Refine the filters to at most 500 deliveries for Excel export.</p>}
     </div>}
     {filtered.map(row => <article key={row.id} className="border rounded p-3 mb-3">
       <strong>{row.paymentRequest.requestNumber} — {row.paymentRequest.patient?.fullName}</strong>
