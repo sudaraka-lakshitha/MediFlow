@@ -16,6 +16,7 @@ export function BulkStockModal({ onClose, onApplied }: BulkStockModalProps) {
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [search, setSearch] = useState('');
+  const [progress, setProgress] = useState<{ percent: number; stage: string } | null>(null);
 
   const saveBlob = (blob: Blob, name: string) => {
     const url = URL.createObjectURL(blob);
@@ -42,6 +43,7 @@ export function BulkStockModal({ onClose, onApplied }: BulkStockModalProps) {
     setPreview(null);
     setConfirmed(false);
     setRows([]);
+    setProgress({ percent: 30, stage: 'Reading file and validating stock batches against database...' });
 
     try {
       if (/\.xlsx$/i.test(file.name)) {
@@ -68,6 +70,7 @@ export function BulkStockModal({ onClose, onApplied }: BulkStockModalProps) {
       setError(errorMessage(e));
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   };
 
@@ -75,11 +78,13 @@ export function BulkStockModal({ onClose, onApplied }: BulkStockModalProps) {
     if (!confirmed || !preview?.previewToken || busy) return;
     setBusy(true);
     setError('');
+    setProgress({ percent: 45, stage: 'Applying stock movements & batch receipts in transactional chunks...' });
     try {
       await api.post('/inventory/batches/bulk/confirm', {
         rows,
         previewToken: preview.previewToken,
       }, { timeout: 120000 });
+      setProgress({ percent: 100, stage: 'All stock updates applied successfully!' });
       onApplied();
       onClose();
     } catch (e) {
@@ -92,6 +97,7 @@ export function BulkStockModal({ onClose, onApplied }: BulkStockModalProps) {
       }
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   };
 
@@ -163,7 +169,25 @@ export function BulkStockModal({ onClose, onApplied }: BulkStockModalProps) {
         />
       </div>
 
-      {busy && (
+      {progress && (
+        <div className="card bg-light border-primary mt-3 p-3 shadow-sm">
+          <div className="d-flex justify-content-between align-items-center mb-1">
+            <strong className="text-primary small">
+              <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
+              {progress.stage}
+            </strong>
+            <span className="badge bg-primary">{progress.percent}%</span>
+          </div>
+          <div className="progress" style={{ height: '10px' }} role="progressbar" aria-valuenow={progress.percent} aria-valuemin={0} aria-valuemax={100}>
+            <div
+              className="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+              style={{ width: `${progress.percent}%`, transition: 'width 0.4s ease-in-out' }}
+            />
+          </div>
+        </div>
+      )}
+
+      {!progress && busy && (
         <div className="text-center py-4">
           <div className="spinner-border text-primary" role="status" />
           <p className="mt-2 text-secondary small">Processing stock batches, please wait...</p>

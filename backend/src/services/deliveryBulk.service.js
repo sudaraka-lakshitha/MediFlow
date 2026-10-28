@@ -5,13 +5,14 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
+import { chunkedTransaction } from '../utils/chunkedTransaction.js';
 import { deliveryActionSchema } from '../validators/delivery.validator.js';
 import { validateDeliveryAction } from '../utils/deliveryAction.js';
 import { deliveryService } from './delivery.service.js';
 import { workflowLeaseService } from './workflowLease.service.js';
 
 const columns = ['invoice_number', 'version', 'action', 'recipient_name', 'address', 'phone', 'courier', 'tracking', 'current_status', 'dispatched_at', 'delivered_at'];
-export const deliveryBulkSchema = z.object({ rows: z.array(z.record(z.string(), z.string().max(1000))).min(1).max(50), previewToken: z.string().max(2000).optional() });
+export const deliveryBulkSchema = z.object({ rows: z.array(z.record(z.string(), z.string().max(1000))).min(1).max(200), previewToken: z.string().max(2000).optional() });
 const digest = rows => crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 const staff = user => { if (!['ADMIN', 'PHARMACIST'].includes(user.role)) throw new AppError(403, 'Only administrators and pharmacists may update deliveries.'); };
 const unescape = text => text?.replace(/^'(?=[=+\-@])/, '');
@@ -74,14 +75,24 @@ export const deliveryBulkService = {
         for (const lease of leases) await workflowLeaseService.acquire(lease.resourceKey, owner, lease.token);
         leases.push(await workflowLeaseService.begin(resource, owner));
       }
-      return await prisma.$transaction(async tx => {
-        for (const lease of leases) await workflowLeaseService.pinForTransaction(tx, lease, owner);
-        const { plans, errors } = await deliveryBulkPlan(tx, rows);
-        if (errors.length) throw new AppError(409, 'Delivery data changed. Nothing was applied.', { errors });
-        for (const plan of plans) await deliveryService.act(plan.id, plan.input, user, tx);
-        await tx.auditLog.create({ data: { userId: user.id, action: 'DELIVERY_BULK_APPLIED', entityType: 'DELIVERY', details: { invoices: plans.map(plan => plan.invoice), count: plans.length } } });
-        return { applied: plans.length };
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30000 });
+      // Apply in small transactional chunks to stay under gateway timeouts
+      await chunkedTransaction({
+        items: initial.plans,
+        chunkSize: 15,
+        timeout: 25000,
+        async process(tx, chunk) {
+          for (const lease of leases) await workflowLeaseService.pinForTransaction(tx, lease, owner);
+          // Re-validate each chunk's deliveries inside the transaction
+          for (const plan of chunk) {
+            const fresh = await tx.deliveryRequest.findFirst({ where: { paymentRequest: { requestNumber: plan.invoice } }, include: { paymentRequest: true, feePaymentRequest: true } });
+            if (!fresh || fresh.updatedAt.toISOString() !== plan.version) throw new AppError(409, `Delivery ${plan.invoice} changed. Nothing in this batch was applied.`);
+            await deliveryService.act(plan.id, plan.input, user, tx);
+          }
+        },
+      });
+      // Record the overall audit log
+      await prisma.auditLog.create({ data: { userId: user.id, action: 'DELIVERY_BULK_APPLIED', entityType: 'DELIVERY', details: { invoices: initial.plans.map(plan => plan.invoice), count: initial.plans.length } } });
+      return { applied: initial.plans.length };
     } finally {
       // Never report a committed batch as failed solely because lease cleanup fails.
       await Promise.allSettled(leases.map(lease => workflowLeaseService.finish(lease, owner)));

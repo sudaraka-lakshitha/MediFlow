@@ -62,7 +62,7 @@ export const catalogController = {
     await recordAudit({ userId: req.user.id, action: 'PRODUCTS_EXPORTED_FOR_UPDATE', entityType: 'DATA_EXPORT', details: { rowCount }, ipAddress: req.ip });
   },
   bulkProducts: async (req, res) => {
-    const result = await catalogService.bulkProducts(req.body.rows, req.body.dryRun, { previewToken: req.body.previewToken, fileName: req.body.fileName, userId: req.user.id, ipAddress: req.ip });
+    const result = await catalogService.bulkProducts(req.body.rows, req.body.dryRun, { previewToken: req.body.previewToken, batchId: req.body.batchId, fileName: req.body.fileName, userId: req.user.id, ipAddress: req.ip });
     res.json({ data: result, message: req.body.dryRun ? `Validation finished. ${result.errors.length} invalid rows. No products were saved.` : 'Bulk changes saved successfully.' });
   },
   bulkProductsExcel: async (req, res) => {

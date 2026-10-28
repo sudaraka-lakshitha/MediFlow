@@ -6,6 +6,7 @@ import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
 import { stockQuantity } from '../utils/stockQuantity.js';
 import { serializable } from '../utils/serializable.js';
+import { chunkedTransaction } from '../utils/chunkedTransaction.js';
 import { operationContext } from '../utils/operationContext.js';
 import { calendarDate } from '../validators/calendar.js';
 import { moneySchema } from '../validators/money.js';
@@ -120,22 +121,47 @@ export const stockBulkService = {
     try { claim = jwt.verify(previewToken, env.JWT_SECRET); }
     catch { throw new AppError(409, 'Preview expired or invalid. Please re-validate the file.'); }
     if (claim.purpose !== 'stock-bulk' || claim.userId !== user.id || claim.digest !== digest(rows) || !claim.planDigest || !/^[0-9a-f-]{36}$/i.test(claim.jti || '')) throw new AppError(409, 'File or user changed. Re-validate the file.');
-    // The preview ID is persisted even if clients retry with a new HTTP request key.
-    return operationContext.run({ actorId: user.id, key: claim.jti, hash: digest({ purpose: 'stock-bulk', rows }) }, () => serializable(async tx => {
-      const { plans, errors } = await stockBulkPlan(tx, rows);
+
+    return operationContext.run({ actorId: user.id, key: claim.jti, hash: digest({ purpose: 'stock-bulk', rows }) }, async () => {
+      const context = operationContext.getStore();
+      const where = { actorId_key: { actorId: context.actorId, key: context.key } };
+      const existing = await prisma.operationReceipt.findUnique({ where });
+      if (existing) {
+        if (existing.payloadHash !== context.hash) throw new AppError(409, 'This retry key belongs to a different operation. Refresh and review the form.');
+        return existing.result;
+      }
+
+      // Phase 1 — validate the full plan against the current DB state (no locks)
+      const { plans, errors } = await stockBulkPlan(prisma, rows);
       if (errors.length) throw new AppError(422, errors.map(e => 'Row ' + e.row + ': ' + e.message).join('; '));
       if (digest(plans) !== claim.planDigest) throw new AppError(409, 'Stock or batch details changed since preview. Re-validate and review the updated result.');
       const changed = plans.filter(p => p.changes.length);
       if (!changed.length) throw new AppError(400, 'There are no changes to apply.');
-      for (const plan of changed) {
-        const data = { quantityAvailable: new Prisma.Decimal(plan.quantityAfter), purchasePrice: new Prisma.Decimal(plan.purchasePrice), expiryDate: new Date(plan.expiryDate + 'T00:00:00.000Z'), supplierId: plan.supplierId };
-        const batch = plan.existingBatchId ? await tx.inventoryBatch.update({ where: { id: plan.existingBatchId }, data: { ...data, ...(plan.action === 'RECEIVE' ? { quantityReceived: { increment: new Prisma.Decimal(plan.quantityChange) } } : {}) } })
-          : await tx.inventoryBatch.create({ data: { ...data, productId: plan.productId, batchNumber: plan.batchNumber, quantityReceived: new Prisma.Decimal(plan.quantityChange) } });
-        if (plan.quantityChange !== 0) await tx.stockMovement.create({ data: { productId: plan.productId, batchId: batch.id, type: plan.action === 'RECEIVE' ? 'RECEIPT' : 'ADJUSTMENT', quantityChange: new Prisma.Decimal(plan.quantityChange), quantityBefore: new Prisma.Decimal(plan.quantityBefore), quantityAfter: new Prisma.Decimal(plan.quantityAfter), reason: plan.reason, performedById: user.id } });
-      }
-      await tx.lowStockAcknowledgement.deleteMany({ where: { productId: { in: [...new Set(changed.map(p => p.productId))] } } });
-      await tx.auditLog.create({ data: { userId: user.id, action: 'STOCK_BULK_APPLIED', entityType: 'INVENTORY_BATCH', details: { batchesCount: changed.length, changes: changed.map(p => ({ productId: p.productId, batchNumber: p.batchNumber, action: p.action, changes: p.changes, reason: p.reason })) } } });
-      return { applied: true, batchesUpdated: changed.length, message: 'Successfully applied ' + changed.length + ' bulk stock updates.' };
-    }));
+
+      await prisma.operationReceipt.create({ data: { actorId: context.actorId, key: context.key, payloadHash: context.hash, result: {} } });
+
+      // Phase 2 — apply in small transactional chunks to stay under gateway timeouts
+      await chunkedTransaction({
+        items: changed,
+        chunkSize: 15,
+        timeout: 25000,
+        async process(tx, chunk) {
+          for (const plan of chunk) {
+            const data = { quantityAvailable: new Prisma.Decimal(plan.quantityAfter), purchasePrice: new Prisma.Decimal(plan.purchasePrice), expiryDate: new Date(plan.expiryDate + 'T00:00:00.000Z'), supplierId: plan.supplierId };
+            const batch = plan.existingBatchId ? await tx.inventoryBatch.update({ where: { id: plan.existingBatchId }, data: { ...data, ...(plan.action === 'RECEIVE' ? { quantityReceived: { increment: new Prisma.Decimal(plan.quantityChange) } } : {}) } })
+              : await tx.inventoryBatch.create({ data: { ...data, productId: plan.productId, batchNumber: plan.batchNumber, quantityReceived: new Prisma.Decimal(plan.quantityChange) } });
+            if (plan.quantityChange !== 0) await tx.stockMovement.create({ data: { productId: plan.productId, batchId: batch.id, type: plan.action === 'RECEIVE' ? 'RECEIPT' : 'ADJUSTMENT', quantityChange: new Prisma.Decimal(plan.quantityChange), quantityBefore: new Prisma.Decimal(plan.quantityBefore), quantityAfter: new Prisma.Decimal(plan.quantityAfter), reason: plan.reason, performedById: user.id } });
+          }
+          await tx.lowStockAcknowledgement.deleteMany({ where: { productId: { in: [...new Set(chunk.map(p => p.productId))] } } });
+        },
+      });
+
+      // Phase 3 — record the overall audit log and update operation receipt
+      const result = { applied: true, batchesUpdated: changed.length, message: 'Successfully applied ' + changed.length + ' bulk stock updates.' };
+      await prisma.auditLog.create({ data: { userId: user.id, action: 'STOCK_BULK_APPLIED', entityType: 'INVENTORY_BATCH', details: { batchesCount: changed.length, changes: changed.map(p => ({ productId: p.productId, batchNumber: p.batchNumber, action: p.action, changes: p.changes, reason: p.reason })) } } });
+      await prisma.operationReceipt.update({ where, data: { result } });
+      return result;
+    });
   },
 };
+

@@ -36,6 +36,7 @@ export const manufacturerSchema = z.object({
 export const bulkProductsSchema = z.object({
   dryRun: z.boolean().default(true),
   previewToken: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  batchId: z.string().uuid().optional(),
   fileName: z.string().trim().max(180).optional(),
   rows: z.array(z.record(z.string(), z.unknown())).min(1).max(2000),
-}).refine((data) => data.dryRun || Boolean(data.previewToken), { path: ['previewToken'], message: 'Validate the file before applying changes.' });
+}).refine((data) => data.dryRun || Boolean(data.previewToken) || Boolean(data.batchId), { path: ['previewToken'], message: 'Validate the file before applying changes.' });

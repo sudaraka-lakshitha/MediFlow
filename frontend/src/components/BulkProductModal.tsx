@@ -6,6 +6,8 @@ import { parseCsv } from '../utils/csv';
 type Change = { field: string; label: string; before: unknown; after: unknown };
 type Result = { total: number; creates: number; updates: number; unchanged: number; applied: boolean; previewToken?: string; batchId?: string; errors: { row: number; sku: string; errors: string[] }[]; preview?: { row: number; sku: string; action: string; changes: Change[] }[] };
 type Format = { fields: { key: string; label: string; help: string; clearable: boolean }[]; instructions: string[] };
+type ProgressState = { percent: number; stage: string; currentBatch?: number; totalBatches?: number };
+
 const saveBlob = (blob: Blob, name: string) => { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); };
 const display = (v: unknown) => v == null || v === '' ? 'Empty' : typeof v === 'boolean' ? v ? 'Yes' : 'No' : String(v);
 
@@ -13,11 +15,22 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
   const [rows, setRows] = useState<Record<string, string>[]>([]); const [fileName, setFileName] = useState('');
   const [result, setResult] = useState<Result | null>(null); const [format, setFormat] = useState<Format | null>(null);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(''); const [confirmed, setConfirmed] = useState(false);
+  const [progress, setProgress] = useState<ProgressState | null>(null);
   const generation = useRef(0); const lock = useRef(false);
-  useEffect(() => { let active = true; const version = generation; api.get('/catalog/products/bulk-format').then((r) => { if (active) setFormat(r.data.data); }).catch((e) => { if (active) setError(errorMessage(e)); }); return () => { active = false; version.current++; }; }, []);
+
+  useEffect(() => {
+    let active = true;
+    const version = generation;
+    api.get('/catalog/products/bulk-format').then((r) => { if (active) setFormat(r.data.data); }).catch((e) => { if (active) setError(errorMessage(e)); });
+    return () => { active = false; version.current++; };
+  }, []);
+
   const download = async (path: string, name: string) => {
-    setError(''); try { const r = await api.get(path, { responseType: 'blob', timeout: 130000 }); saveBlob(r.data, name); } catch (e) { setError(errorMessage(e)); }
+    setError('');
+    try { const r = await api.get(path, { responseType: 'blob', timeout: 130000 }); saveBlob(r.data, name); }
+    catch (e) { setError(errorMessage(e)); }
   };
+
   const read = async (file?: File) => {
     if (!file || lock.current) return;
     const id = ++generation.current;
@@ -46,24 +59,117 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
     } catch (e) { if (generation.current === id) setError(errorMessage(e)); }
     finally { if (generation.current === id) setBusy(''); lock.current = false; }
   };
+
   const run = async (dryRun: boolean) => {
     if (lock.current || (!dryRun && (!result?.previewToken || !confirmed))) return;
-    const id = generation.current; lock.current = true; setBusy(dryRun ? 'Validating…' : 'Applying changes. Please keep this dialog open…'); setError('');
-    if (dryRun) { setResult(null); setConfirmed(false); }
+    const id = generation.current;
+    lock.current = true;
+    setError('');
+
+    if (dryRun) {
+      setResult(null);
+      setConfirmed(false);
+      setBusy('Validating…');
+      setProgress({ percent: 35, stage: 'Checking product rows against database…' });
+      try {
+        const r = await api.post('/catalog/products/bulk', { rows, dryRun: true, fileName: fileName.slice(0, 180) }, { timeout: 130000 });
+        if (id !== generation.current) return;
+        setProgress({ percent: 100, stage: 'Validation complete.' });
+        setResult(r.data.data);
+      } catch (e: any) {
+        if (id !== generation.current) return;
+        setError(errorMessage(e));
+        if (e?.response?.data?.details?.errors) setResult(e.response.data.details);
+      } finally {
+        lock.current = false;
+        if (id === generation.current) {
+          setBusy('');
+          setProgress(null);
+        }
+      }
+      return;
+    }
+
+    // Applying changes: chunked upload for safe proxy traversal with progress UI
+    const CHUNK_SIZE = 25;
+    setBusy('Applying changes. Please keep this dialog open…');
+
     try {
-      const r = await api.post('/catalog/products/bulk', { rows, dryRun, fileName: fileName.slice(0, 180), previewToken: dryRun ? undefined : result?.previewToken }, { timeout: 130000 });
-      if (id !== generation.current) return;
-      setResult(r.data.data); if (!dryRun) onApplied();
+      if (rows.length > CHUNK_SIZE) {
+        const batchId = crypto.randomUUID();
+        const totalBatches = Math.ceil(rows.length / CHUNK_SIZE);
+        let totalCreates = 0;
+        let totalUpdates = 0;
+        let totalUnchanged = 0;
+
+        for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+          if (id !== generation.current) return;
+          const chunk = rows.slice(i, i + CHUNK_SIZE);
+          const batchNum = Math.floor(i / CHUNK_SIZE) + 1;
+          const pct = Math.round((i / rows.length) * 100);
+          setProgress({
+            percent: pct,
+            stage: `Applying batch ${batchNum} of ${totalBatches} (${i} of ${rows.length} rows processed)…`,
+            currentBatch: batchNum,
+            totalBatches,
+          });
+
+          const r = await api.post('/catalog/products/bulk', {
+            rows: chunk,
+            dryRun: false,
+            batchId,
+            previewToken: result?.previewToken,
+            fileName: fileName.slice(0, 180),
+          }, { timeout: 45000 });
+
+          totalCreates += r.data.data.creates || 0;
+          totalUpdates += r.data.data.updates || 0;
+          totalUnchanged += r.data.data.unchanged || 0;
+        }
+
+        if (id !== generation.current) return;
+        setProgress({ percent: 100, stage: 'All product batches applied successfully!' });
+        setResult({
+          total: rows.length,
+          creates: totalCreates,
+          updates: totalUpdates,
+          unchanged: totalUnchanged,
+          applied: true,
+          batchId,
+          errors: [],
+        });
+        onApplied();
+      } else {
+        setProgress({ percent: 50, stage: 'Applying product records to database…' });
+        const r = await api.post('/catalog/products/bulk', {
+          rows,
+          dryRun: false,
+          fileName: fileName.slice(0, 180),
+          previewToken: result?.previewToken,
+        }, { timeout: 60000 });
+        if (id !== generation.current) return;
+        setProgress({ percent: 100, stage: 'Completed!' });
+        setResult(r.data.data);
+        onApplied();
+      }
     } catch (e: any) {
       if (id !== generation.current) return;
-      setError(errorMessage(e)); setConfirmed(false);
-      if (e?.response) setResult(e.response.data?.details?.errors ? e.response.data.details : null);
-      // A disconnected request may have committed. Keep the same token for a safe retry.
-      else if (!dryRun) setError('The outcome could not be confirmed. Retry Apply with the same file; already completed imports will not run twice.');
-    } finally { lock.current = false; if (id === generation.current) setBusy(''); }
+      setError(errorMessage(e));
+      setConfirmed(false);
+      if (e?.response?.data?.details?.errors) setResult(e.response.data.details);
+      else setError('The outcome could not be fully confirmed. Retry Apply with the same file; already completed products will not run twice.');
+    } finally {
+      lock.current = false;
+      if (id === generation.current) {
+        setBusy('');
+        setProgress(null);
+      }
+    }
   };
+
   const downloadErrors = () => saveBlob(new Blob([result?.errors.map((e) => `Data row ${e.row} (${e.sku || 'no SKU'}): ${e.errors.join('; ')}`).join('\r\n') || ''], { type: 'text/plain;charset=utf-8' }), 'mediflow-import-errors.txt');
   const clears = result?.preview?.flatMap((r) => r.changes).filter((c) => c.after == null && c.before != null).length || 0;
+
   return <Modal title="Bulk create or update products" onClose={() => { if (!lock.current) onClose(); }} size="lg">
     <p>Match products by <strong>SKU</strong>. Blank cells and missing columns keep saved values. Enter <code>[CLEAR]</code> to remove an optional value. Required fields cannot be cleared.</p>
     <div className="d-flex flex-wrap gap-2 mb-3">
@@ -77,7 +183,32 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
     <input id="bulk-product-file" className="form-control" type="file" accept=".xlsx,.csv,text/csv" disabled={Boolean(busy)} onChange={(e) => { void read(e.target.files?.[0]); e.target.value = ''; }} />
     {fileName && <p className="small mt-2">{fileName}{rows.length > 0 ? ` — ${rows.length} product rows loaded` : ''}</p>}
     {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
-    {busy && <p role="status" className="mt-3">{busy}</p>}
+
+    {progress && (
+      <div className="card bg-light border-primary mt-3 p-3 shadow-sm">
+        <div className="d-flex justify-content-between align-items-center mb-1">
+          <strong className="text-primary small">
+            <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
+            {progress.stage}
+          </strong>
+          <span className="badge bg-primary">{progress.percent}%</span>
+        </div>
+        <div className="progress" style={{ height: '10px' }} role="progressbar" aria-valuenow={progress.percent} aria-valuemin={0} aria-valuemax={100}>
+          <div
+            className="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+            style={{ width: `${progress.percent}%`, transition: 'width 0.3s ease-in-out' }}
+          />
+        </div>
+        {progress.totalBatches && (
+          <div className="d-flex justify-content-between mt-2 text-muted" style={{ fontSize: '0.8rem' }}>
+            <span>Chunk {progress.currentBatch} of {progress.totalBatches}</span>
+            <span>Batch size: 25 rows/chunk</span>
+          </div>
+        )}
+      </div>
+    )}
+    {!progress && busy && <p role="status" className="mt-3 text-secondary small"><span className="spinner-border spinner-border-sm me-2" role="status" />{busy}</p>}
+
     {result && <section className="mt-3" aria-live="polite">
       <div className={`alert ${result.errors?.length ? 'alert-danger' : 'alert-success'}`}>
         <strong>{result.applied ? 'Bulk update completed' : 'Validation finished — no changes saved'}</strong>

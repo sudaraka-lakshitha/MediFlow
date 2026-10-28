@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { prisma } from '../config/prisma.js';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
-import { serializable } from '../utils/serializable.js';
+import { chunkedTransaction } from '../utils/chunkedTransaction.js';
 import { operationContext } from '../utils/operationContext.js';
 import { categorySchema, manufacturerSchema, supplierSchema } from '../validators/catalog.validator.js';
 import { updateOwnProfileSchema } from '../validators/patient.validator.js';
@@ -113,25 +113,74 @@ export const masterDataBulkService={
     const {plans,errors}=await masterDataPlan(prisma,dataset,rows);
     return {rows,errors,preview:plans.map(p=>({identifier:p.identifier,changes:p.changes})),previewToken:errors.length?null:jwt.sign({purpose:'master-data',dataset,userId:user.id,digest:hash(rows),planDigest:hash(plans)},env.JWT_SECRET,{expiresIn:'15m',jwtid:randomUUID()})};
   },
-  async apply(dataset,rows,token,user) {
-    let claim;try{claim=jwt.verify(token,env.JWT_SECRET);}catch{throw new AppError(409,'Preview expired. Validate again.');}
-    if(claim.purpose!=='master-data'||claim.dataset!==dataset||claim.userId!==user.id||claim.digest!==hash(rows)||!claim.jti)throw new AppError(409,'The preview does not match this file or user.');
-    return operationContext.run({actorId:user.id,key:claim.jti,hash:hash({dataset,rows})},()=>serializable(async tx=>{
-      const {plans,errors}=await masterDataPlan(tx,dataset,rows);
-      if(errors.length||hash(plans)!==claim.planDigest)throw new AppError(409,'Records changed or are invalid. Export and review them again.');
-      let updated=0;
-      for(const p of plans.filter(p=>p.changes.length)) {
-        const data=Object.fromEntries(p.changes.map(c=>[c.field,p.patch[c.field]]));
-        if(dataset==='patients') {
-          const {fullName,phone,...profile}=data;
-          const expected=new Date(p.before.recordVersion);
-          const claimed=await tx.user.updateMany({where:{id:p.userId,updatedAt:expected},data:{...(fullName!==undefined?{fullName}:{}),...(phone!==undefined?{phone}:{}),updatedAt:new Date(Math.max(Date.now(),expected.getTime()+1))}});
-          if(claimed.count!==1)throw new AppError(409,'Patient details changed. Export again.');
-          await tx.patientProfile.update({where:{id:p.id},data:profile});
-        } else await tx[masterDataDefinitions[dataset].model].update({where:{id:p.id},data});
-        await tx.auditLog.create({data:{userId:user.id,action:'MASTER_DATA_BULK_UPDATED',entityType:dataset.toUpperCase(),entityId:p.id,details:{changes:p.changes}}});updated++;
+  async apply(dataset, rows, token, user) {
+    let claim;
+    try { claim = jwt.verify(token, env.JWT_SECRET); }
+    catch { throw new AppError(409, 'Preview expired. Validate again.'); }
+    if (claim.purpose !== 'master-data' || claim.dataset !== dataset || claim.userId !== user.id || claim.digest !== hash(rows) || !claim.jti) {
+      throw new AppError(409, 'The preview does not match this file or user.');
+    }
+
+    return operationContext.run({ actorId: user.id, key: claim.jti, hash: hash({ dataset, rows }) }, async () => {
+      const context = operationContext.getStore();
+      const where = { actorId_key: { actorId: context.actorId, key: context.key } };
+      const existing = await prisma.operationReceipt.findUnique({ where });
+      if (existing) {
+        if (existing.payloadHash !== context.hash) throw new AppError(409, 'This retry key belongs to a different operation. Refresh and review the form.');
+        return existing.result;
       }
-      return {applied:true,updated};
-    }));
+
+      // Phase 1 — validate plan against current DB state without heavy locks
+      const { plans, errors } = await masterDataPlan(prisma, dataset, rows);
+      if (errors.length || hash(plans) !== claim.planDigest) {
+        throw new AppError(409, 'Records changed or are invalid. Export and review them again.');
+      }
+
+      const changed = plans.filter((p) => p.changes.length);
+      if (!changed.length) return { applied: true, updated: 0 };
+
+      await prisma.operationReceipt.create({ data: { actorId: context.actorId, key: context.key, payloadHash: context.hash, result: {} } });
+
+      // Phase 2 — apply in small transactional chunks to stay under gateway timeouts
+      await chunkedTransaction({
+        items: changed,
+        chunkSize: 25,
+        timeout: 25000,
+        async process(tx, chunk) {
+          for (const p of chunk) {
+            const data = Object.fromEntries(p.changes.map((c) => [c.field, p.patch[c.field]]));
+            if (dataset === 'patients') {
+              const { fullName, phone, ...profile } = data;
+              const expected = new Date(p.before.recordVersion);
+              const claimed = await tx.user.updateMany({
+                where: { id: p.userId, updatedAt: expected },
+                data: {
+                  ...(fullName !== undefined ? { fullName } : {}),
+                  ...(phone !== undefined ? { phone } : {}),
+                  updatedAt: new Date(Math.max(Date.now(), expected.getTime() + 1)),
+                },
+              });
+              if (claimed.count !== 1) throw new AppError(409, 'Patient details changed. Export again.');
+              await tx.patientProfile.update({ where: { id: p.id }, data: profile });
+            } else {
+              await tx[masterDataDefinitions[dataset].model].update({ where: { id: p.id }, data });
+            }
+            await tx.auditLog.create({
+              data: {
+                userId: user.id,
+                action: 'MASTER_DATA_BULK_UPDATED',
+                entityType: dataset.toUpperCase(),
+                entityId: p.id,
+                details: { changes: p.changes },
+              },
+            });
+          }
+        },
+      });
+
+      const result = { applied: true, updated: changed.length };
+      await prisma.operationReceipt.update({ where, data: { result } });
+      return result;
+    });
   },
 };

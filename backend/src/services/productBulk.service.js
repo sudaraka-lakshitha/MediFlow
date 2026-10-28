@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
+import { chunkedTransaction } from '../utils/chunkedTransaction.js';
 import { AppError } from '../utils/AppError.js';
 import { normalizeDrugName } from '../utils/drug.js';
 import { productSchema } from '../validators/catalog.validator.js';
@@ -118,7 +119,7 @@ export const buildBulkPlan = async (db, rows) => {
   return { plans, summary, previewToken };
 };
 
-const applyPlan = async (tx, plan) => {
+const applyPlan = async (tx, plan, cache = {}) => {
   const { next, existing, patch } = plan;
   const data = {};
   const keys = existing ? Object.keys(patch) : productBulkFields.map((f) => f.key);
@@ -128,55 +129,148 @@ const applyPlan = async (tx, plan) => {
   }
   if (!existing) data.sku = next.sku;
   if (!existing || Object.hasOwn(patch, 'categoryName')) {
-    const category = await tx.category.upsert({ where: { name: next.categoryName }, update: {}, create: { name: next.categoryName } });
-    data.categoryId = category.id;
+    let categoryId = cache.categories?.get(next.categoryName);
+    if (!categoryId) {
+      const category = await tx.category.upsert({ where: { name: next.categoryName }, update: {}, create: { name: next.categoryName } });
+      categoryId = category.id;
+      if (cache.categories) cache.categories.set(next.categoryName, categoryId);
+    }
+    data.categoryId = categoryId;
   }
   if (!existing || Object.hasOwn(patch, 'manufacturerName')) {
-    const manufacturer = next.manufacturerName ? await tx.manufacturer.upsert({ where: { name: next.manufacturerName }, update: {}, create: { name: next.manufacturerName } }) : null;
-    data.manufacturerId = manufacturer?.id || null;
+    let manufacturerId = null;
+    if (next.manufacturerName) {
+      manufacturerId = cache.manufacturers?.get(next.manufacturerName);
+      if (manufacturerId === undefined) {
+        const manufacturer = await tx.manufacturer.upsert({ where: { name: next.manufacturerName }, update: {}, create: { name: next.manufacturerName } });
+        manufacturerId = manufacturer?.id || null;
+        if (cache.manufacturers) cache.manufacturers.set(next.manufacturerName, manufacturerId);
+      }
+    }
+    data.manufacturerId = manufacturerId;
     data.manufacturerName = null;
   }
   if (next.productType === 'MEDICINE' && (!existing || Object.hasOwn(patch, 'activeIngredient') || Object.hasOwn(patch, 'productType'))) {
     const ingredient = next.activeIngredient || next.genericName;
-    const concept = await tx.drugConcept.upsert({ where: { normalizedName: normalizeDrugName(ingredient) }, update: {}, create: { normalizedName: normalizeDrugName(ingredient), displayName: ingredient } });
-    data.activeIngredient = ingredient; data.drugConceptId = concept.id;
+    const normalized = normalizeDrugName(ingredient);
+    let conceptId = cache.concepts?.get(normalized);
+    if (!conceptId) {
+      const concept = await tx.drugConcept.upsert({ where: { normalizedName: normalized }, update: {}, create: { normalizedName: normalized, displayName: ingredient } });
+      conceptId = concept.id;
+      if (cache.concepts) cache.concepts.set(normalized, conceptId);
+    }
+    data.activeIngredient = ingredient; data.drugConceptId = conceptId;
   }
   return existing ? tx.product.update({ where: { id: existing.id }, data }) : tx.product.create({ data });
 };
 
 export const productBulkService = {
-  async run(rows, dryRun, { previewToken, userId, ipAddress, fileName } = {}) {
+  async run(rows, dryRun, { previewToken, batchId, userId, ipAddress, fileName } = {}) {
     if (dryRun) {
       const { summary, previewToken: token } = await buildBulkPlan(prisma, rows);
       return { ...summary, applied: false, previewToken: summary.errors.length ? null : token };
     }
-    if (!previewToken) throw new AppError(400, 'Validate this file and review the changes before applying.');
+    if (!previewToken && !batchId) throw new AppError(400, 'Validate this file and review the changes before applying.');
     if (!userId) throw new AppError(403, 'An authenticated administrator is required.');
-    const inputHash = hash(rows);
-    try {
-      return await prisma.$transaction(async (tx) => {
-        const prior = await tx.auditLog.findFirst({ where: { userId, action: 'PRODUCT_BULK_APPLIED', details: { path: '$.previewToken', equals: previewToken } } });
-        if (prior?.details?.inputHash === inputHash) return { ...prior.details.result, replayed: true };
-        const { plans, summary, previewToken: currentToken } = await buildBulkPlan(tx, rows);
-        if (summary.errors.length) throw new AppError(400, 'Correct every invalid row and validate again.', summary);
-        if (currentToken !== previewToken) throw new AppError(409, 'The file or saved products changed since validation. Validate again before applying.');
-        const batchId = randomUUID();
-        for (const plan of plans) {
-          if (plan.existing && !plan.changes.length) continue;
-          const product = await applyPlan(tx, plan);
+
+    // Mode A — Client-side chunked apply with batch reference
+    if (batchId) {
+      const { plans, summary } = await buildBulkPlan(prisma, rows);
+      if (summary.errors.length) throw new AppError(400, 'Correct every invalid row and validate again.', summary);
+      const actionPlans = plans.filter((plan) => plan.existing ? plan.changes.length : true);
+      const cache = { categories: new Map(), manufacturers: new Map(), concepts: new Map() };
+      await prisma.$transaction(async (tx) => {
+        for (const plan of actionPlans) {
+          const product = await applyPlan(tx, plan, cache);
           await tx.lowStockAcknowledgement.deleteMany({ where: { productId: product.id } });
-          await tx.auditLog.create({ data: { userId, action: plan.existing ? 'PRODUCT_BULK_UPDATED' : 'PRODUCT_BULK_CREATED', entityType: 'PRODUCT', entityId: product.id, ipAddress,
-            details: { batchId, row: plan.row, sku: product.sku, changes: plan.changes, before: plan.before, after: snapshot({ ...product, category: { name: plan.next.categoryName }, manufacturer: { name: plan.next.manufacturerName } }) } } });
+          await tx.auditLog.create({
+            data: {
+              userId,
+              action: plan.existing ? 'PRODUCT_BULK_UPDATED' : 'PRODUCT_BULK_CREATED',
+              entityType: 'PRODUCT',
+              entityId: product.id,
+              ipAddress,
+              details: {
+                batchId,
+                row: plan.row,
+                sku: product.sku,
+                changes: plan.changes,
+                before: plan.before,
+                after: snapshot({ ...product, category: { name: plan.next.categoryName }, manufacturer: { name: plan.next.manufacturerName } }),
+              },
+            },
+          });
         }
-        const { preview, ...counts } = summary;
-        const result = { ...counts, applied: true, batchId };
-        await tx.auditLog.create({ data: { userId, action: 'PRODUCT_BULK_APPLIED', entityType: 'PRODUCT_IMPORT', ipAddress,
-          details: { batchId, previewToken, inputHash, fileName: fileName || null, result } } });
-        return result;
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 120000 });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 25000 });
+      const { preview, ...counts } = summary;
+      return { ...counts, applied: true, batchId };
+    }
+
+    // Mode B — Full-file apply with server-side chunked transactions
+    const inputHash = hash(rows);
+
+    // Phase 1 — lightweight idempotency check (no heavy locks)
+    const prior = await prisma.auditLog.findFirst({ where: { userId, action: 'PRODUCT_BULK_APPLIED', details: { path: '$.previewToken', equals: previewToken } } });
+    if (prior?.details?.inputHash === inputHash) return { ...prior.details.result, replayed: true };
+
+    // Phase 2 — validate the full plan against the current DB state
+    const { plans, summary, previewToken: currentToken } = await buildBulkPlan(prisma, rows);
+    if (summary.errors.length) throw new AppError(400, 'Correct every invalid row and validate again.', summary);
+    if (currentToken !== previewToken) throw new AppError(409, 'The file or saved products changed since validation. Validate again before applying.');
+
+    // Phase 3 — apply in small transactional chunks to stay under gateway timeouts
+    const sessionBatchId = randomUUID();
+    const actionPlans = plans.filter((plan) => plan.existing ? plan.changes.length : true);
+    const cache = { categories: new Map(), manufacturers: new Map(), concepts: new Map() };
+
+    try {
+      await chunkedTransaction({
+        items: actionPlans,
+        chunkSize: 15,
+        timeout: 25000,
+        async process(tx, chunk) {
+          for (const plan of chunk) {
+            if (plan.existing && !plan.changes.length) continue;
+            const product = await applyPlan(tx, plan, cache);
+            await tx.lowStockAcknowledgement.deleteMany({ where: { productId: product.id } });
+            await tx.auditLog.create({
+              data: {
+                userId,
+                action: plan.existing ? 'PRODUCT_BULK_UPDATED' : 'PRODUCT_BULK_CREATED',
+                entityType: 'PRODUCT',
+                entityId: product.id,
+                ipAddress,
+                details: {
+                  batchId: sessionBatchId,
+                  row: plan.row,
+                  sku: product.sku,
+                  changes: plan.changes,
+                  before: plan.before,
+                  after: snapshot({ ...product, category: { name: plan.next.categoryName }, manufacturer: { name: plan.next.manufacturerName } }),
+                },
+              },
+            });
+          }
+        },
+      });
     } catch (error) {
-      if (['P2002', 'P2034', 'P2028'].includes(error.code)) throw new AppError(409, 'The import could not be completed. No partial changes were saved. Validate again, or use a smaller file if it timed out.');
+      if (['P2002', 'P2034', 'P2028'].includes(error.code)) throw new AppError(409, 'The import could not be completed. Some chunks may have already been applied. Validate again, or use a smaller file if it timed out.');
       throw error;
     }
+
+    // Phase 4 — record the overall import receipt
+    const { preview, ...counts } = summary;
+    const result = { ...counts, applied: true, batchId: sessionBatchId };
+    await prisma.auditLog.create({
+      data: {
+        userId,
+        action: 'PRODUCT_BULK_APPLIED',
+        entityType: 'PRODUCT_IMPORT',
+        ipAddress,
+        details: { batchId: sessionBatchId, previewToken, inputHash, fileName: fileName || null, result },
+      },
+    });
+    return result;
   },
 };
+
