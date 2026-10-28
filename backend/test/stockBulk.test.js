@@ -17,6 +17,7 @@ let batch;
 const row = (patch = {}) => ({ sku: 'DEMO-1', batch_number: 'B001', action: 'ADJUST', quantity: '5', ...patch });
 beforeEach(() => {
   vi.resetAllMocks();
+  delete db.inventoryBatch.findMany; delete db.stockMovement.createMany;
   batch = { id: 2, productId: 1, batchNumber: 'B001', quantityAvailable: new Prisma.Decimal(25), quantityReceived: new Prisma.Decimal(25), quantityReserved: new Prisma.Decimal(5), purchasePrice: new Prisma.Decimal(10), expiryDate: new Date('2099-12-31T00:00:00Z'), supplierId: 3, supplier: { id: 3, name: 'Demo Supplier' }, restricted: false };
   db.product.findMany.mockResolvedValue([{ id: 1, sku: 'DEMO-1', genericName: 'Demo medicine', unit: 'tablet', active: true }]);
   db.supplier.findMany.mockResolvedValue([{ id: 3, name: 'Demo Supplier', active: true }, { id: 4, name: 'Inactive Supplier', active: false }]);
@@ -33,6 +34,24 @@ beforeEach(() => {
   });
 });
 describe('bulk stock safeguards', () => {
+  it('uses one batch lookup for existing and new batches without per-row fallbacks', async () => {
+    db.inventoryBatch.findMany = vi.fn().mockResolvedValue([batch]);
+    const result = await stockBulkPlan(db, [row({batch_number:'b001'}),row({batch_number:'NEW',action:'RECEIVE',expiry_date:'2099-12-31',purchase_price:'10'})]);
+    expect(result.errors).toEqual([]);expect(result.plans).toHaveLength(2);
+    expect(result.plans.map(p=>p.existingBatchId)).toEqual([2,null]);
+    expect(db.inventoryBatch.findMany).toHaveBeenCalledTimes(1);
+    expect(db.inventoryBatch.findUnique).not.toHaveBeenCalled();
+  });
+  it('inserts stock movements once per fifteen-row chunk', async () => {
+    db.inventoryBatch.findMany=vi.fn().mockResolvedValue([]);db.stockMovement.createMany=vi.fn();
+    const rows=Array.from({length:16},(_,i)=>row({batch_number:`NEW-${i}`,action:'RECEIVE',expiry_date:'2099-12-31',purchase_price:'10'}));
+    const user={id:10},preview=await stockBulkService.preview(rows,user);
+    await stockBulkService.apply(rows,preview.previewToken,user);
+    expect(db.stockMovement.createMany.mock.calls.map(([arg])=>arg.data.length)).toEqual([15,1]);
+    expect(db.stockMovement.createMany.mock.calls[0][0].data[0]).toMatchObject({performedById:10,type:'RECEIPT'});
+    expect(db.stockMovement.create).not.toHaveBeenCalled();expect(db.inventoryBatch.findUnique).not.toHaveBeenCalled();
+    expect(db.$transaction).toHaveBeenCalledTimes(2);expect(db.$transaction.mock.calls[0][1].timeout).toBe(35000);
+  });
   it('never inserts sample stock rows into an empty live export', async () => {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(await exportStockWorkbook([]));

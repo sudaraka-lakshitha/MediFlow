@@ -5,7 +5,6 @@ import { prisma } from '../config/prisma.js';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
 import { stockQuantity } from '../utils/stockQuantity.js';
-import { serializable } from '../utils/serializable.js';
 import { chunkedTransaction } from '../utils/chunkedTransaction.js';
 import { operationContext } from '../utils/operationContext.js';
 import { calendarDate } from '../validators/calendar.js';
@@ -21,6 +20,20 @@ const unescapeCell = value => typeof value === 'string' && /^'(?:'|\[CLEAR\]$|[=
 export async function stockBulkPlan(tx, rows) {
   const products = await tx.product.findMany({ select: { id: true, sku: true, genericName: true, brandName: true, unit: true, active: true, barcode: true } });
   const suppliers = await tx.supplier.findMany({ select: { id: true, name: true, active: true } });
+
+  const canBatchLookup = typeof tx.inventoryBatch?.findMany === 'function';
+  let batchMap = new Map();
+  if (canBatchLookup) {
+    const batchNumbers = [...new Set(rows.map(r => String(unescapeCell(r.batch_number || r.batch || '')).trim()).filter(Boolean))];
+    if (batchNumbers.length) {
+      const existingBatches = await tx.inventoryBatch.findMany({
+        where: { batchNumber: { in: batchNumbers } },
+        include: { supplier: true },
+      });
+      batchMap = new Map(existingBatches.map(b => [`${b.productId}:${b.batchNumber.toUpperCase()}`, b]));
+    }
+  }
+
   const plans = [], errors = [], seen = new Set();
   for (const [index, row] of rows.entries()) {
     const rowNum = number(row.__sourceRow || index + 2);
@@ -45,7 +58,10 @@ export async function stockBulkPlan(tx, rows) {
       if (!rawQty) fail('Quantity is required.');
       const quantity = action === 'SET_COUNT' && /^0(?:\.0{1,3})?$/.test(rawQty)
         ? new Prisma.Decimal(0) : stockQuantity(rawQty, product.unit, { signed: action === 'ADJUST' });
-      const existing = await tx.inventoryBatch.findUnique({ where: { productId_batchNumber: { productId: product.id, batchNumber } }, include: { supplier: true } });
+      const batchLookupKey = `${product.id}:${batchNumber.toUpperCase()}`;
+      const existing = canBatchLookup
+        ? batchMap.get(batchLookupKey)
+        : (typeof tx.inventoryBatch?.findUnique === 'function' ? await tx.inventoryBatch.findUnique({ where: { productId_batchNumber: { productId: product.id, batchNumber } }, include: { supplier: true } }) : null);
       if (!existing && action !== 'RECEIVE') fail('Batch not found. Use RECEIVE to add a new batch.');
       const before = new Prisma.Decimal(existing?.quantityAvailable ?? 0);
       const delta = action === 'SET_COUNT' ? quantity.sub(before) : quantity;
@@ -144,13 +160,24 @@ export const stockBulkService = {
       await chunkedTransaction({
         items: changed,
         chunkSize: 15,
-        timeout: 25000,
+        timeout: 35000,
         async process(tx, chunk) {
+          const movements = [];
           for (const plan of chunk) {
             const data = { quantityAvailable: new Prisma.Decimal(plan.quantityAfter), purchasePrice: new Prisma.Decimal(plan.purchasePrice), expiryDate: new Date(plan.expiryDate + 'T00:00:00.000Z'), supplierId: plan.supplierId };
             const batch = plan.existingBatchId ? await tx.inventoryBatch.update({ where: { id: plan.existingBatchId }, data: { ...data, ...(plan.action === 'RECEIVE' ? { quantityReceived: { increment: new Prisma.Decimal(plan.quantityChange) } } : {}) } })
               : await tx.inventoryBatch.create({ data: { ...data, productId: plan.productId, batchNumber: plan.batchNumber, quantityReceived: new Prisma.Decimal(plan.quantityChange) } });
-            if (plan.quantityChange !== 0) await tx.stockMovement.create({ data: { productId: plan.productId, batchId: batch.id, type: plan.action === 'RECEIVE' ? 'RECEIPT' : 'ADJUSTMENT', quantityChange: new Prisma.Decimal(plan.quantityChange), quantityBefore: new Prisma.Decimal(plan.quantityBefore), quantityAfter: new Prisma.Decimal(plan.quantityAfter), reason: plan.reason, performedById: user.id } });
+            if (plan.quantityChange !== 0) {
+              const mov = { productId: plan.productId, batchId: batch.id, type: plan.action === 'RECEIVE' ? 'RECEIPT' : 'ADJUSTMENT', quantityChange: new Prisma.Decimal(plan.quantityChange), quantityBefore: new Prisma.Decimal(plan.quantityBefore), quantityAfter: new Prisma.Decimal(plan.quantityAfter), reason: plan.reason, performedById: user.id };
+              if (typeof tx.stockMovement?.createMany === 'function') {
+                movements.push(mov);
+              } else {
+                await tx.stockMovement.create({ data: mov });
+              }
+            }
+          }
+          if (movements.length > 0) {
+            await tx.stockMovement.createMany({ data: movements });
           }
           await tx.lowStockAcknowledgement.deleteMany({ where: { productId: { in: [...new Set(chunk.map(p => p.productId))] } } });
         },

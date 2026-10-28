@@ -84,7 +84,7 @@ export function BulkMasterDataModal({ dataset, title, onClose }: { dataset: stri
     lock.current = true;
     setBusy(true);
     setError('');
-    setProgress({ percent: 50, stage: 'Applying changes in transactional chunks (25/batch)...' });
+    setProgress({ percent: 50, stage: 'Applying changes in transactional chunks (15/batch)...' });
 
     try {
       const r = await api.post(`/master-data/${dataset}/confirm`, { rows: result.rows, previewToken: result.previewToken }, { timeout: 130000 });

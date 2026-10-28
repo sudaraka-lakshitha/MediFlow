@@ -8,12 +8,41 @@ const version='2026-10-28T00:00:00.000Z';
 const row=(patch={})=>({id:'1',recordVersion:version,description:'New description',...patch});
 beforeEach(()=>{
  vi.resetAllMocks();
+ delete db.patientProfile.findMany; delete db.auditLog.createMany;
  const saved={id:1,name:'First aid',description:'Original',active:true,updatedAt:new Date(version)};
  db.category.findUnique.mockResolvedValue(saved);db.category.findMany.mockResolvedValue([saved]);
  db.$transaction.mockImplementation(fn=>fn(db));
  db.operationReceipt.findUnique.mockResolvedValue(null);
 });
 describe('master data bulk edit',()=>{
+ it('batch-loads alphanumeric patient numbers and detects missing patients without individual queries',async()=>{
+  const patient={id:2,userId:3,patientNumber:'PAT-1',user:{updatedAt:new Date(version),fullName:'Demo Patient',phone:'0701234567'},dateOfBirth:new Date('2000-01-01'),address:'',allergies:'',chronicConditions:''};
+  db.patientProfile.findMany=vi.fn().mockResolvedValue([patient]);
+  const result=await masterDataPlan(db,'patients',[
+   {patientNumber:'PAT-1',recordVersion:version,address:'New address'},
+   {patientNumber:'PAT-2',recordVersion:version,address:'Other address'},
+  ]);
+  expect(db.patientProfile.findMany).toHaveBeenCalledWith({where:{patientNumber:{in:['PAT-1','PAT-2']}},include:{user:true}});
+  expect(result.plans).toHaveLength(1);expect(result.errors[0].message).toContain('no longer exists');
+  expect(db.patientProfile.findUnique).not.toHaveBeenCalled();
+ });
+ it('does not query missing numeric records individually after a batch lookup',async()=>{
+  db.category.findMany.mockResolvedValue([]);
+  expect((await masterDataPlan(db,'categories',[row()])).errors[0].message).toContain('no longer exists');
+  expect(db.category.findUnique).not.toHaveBeenCalled();
+ });
+ it('batches audit logs with at most fifteen updates per transaction',async()=>{
+  const saved=Array.from({length:16},(_,i)=>({id:i+1,name:`Category ${i+1}`,description:'Original',active:true,updatedAt:new Date(version)}));
+  db.category.findMany.mockResolvedValue(saved);db.auditLog.createMany=vi.fn();
+  const rows=saved.map(r=>row({id:String(r.id)})),user={id:10};
+  const preview=await masterDataBulkService.preview('categories',rows,user);
+  expect(await masterDataBulkService.apply('categories',rows,preview.previewToken,user)).toEqual({applied:true,updated:16});
+  expect(db.auditLog.createMany.mock.calls.map(([arg])=>arg.data.length)).toEqual([15,1]);
+  expect(db.auditLog.create).not.toHaveBeenCalled();
+  expect(db.category.findUnique).not.toHaveBeenCalled();
+  expect(db.$transaction).toHaveBeenCalledTimes(2);
+  expect(db.$transaction.mock.calls[0][1].timeout).toBe(35000);
+ });
  it('preserves literal reserved words and spreadsheet escapes through export and upload',async()=>{
   const saved={id:1,name:'First aid',description:'[CLEAR]',active:true,updatedAt:new Date(version)};
   db.category.findMany.mockResolvedValue([saved]);db.category.findUnique.mockResolvedValue(saved);
@@ -54,7 +83,7 @@ describe('master data bulk edit',()=>{
  });
  it('requires a fresh preview after a saved record changes and never writes partial changes',async()=>{
   const rows=[row()],user={id:10};const p=await masterDataBulkService.preview('categories',rows,user);
-  db.category.findUnique.mockResolvedValue({id:1,name:'First aid',description:'Changed elsewhere',active:true,updatedAt:new Date('2026-10-28T00:01:00Z')});
+  db.category.findMany.mockResolvedValue([{id:1,name:'First aid',description:'Changed elsewhere',active:true,updatedAt:new Date('2026-10-28T00:01:00Z')}]);
   await expect(masterDataBulkService.apply('categories',rows,p.previewToken,user)).rejects.toThrow('changed');expect(db.category.update).not.toHaveBeenCalled();
  });
  it('rejects another user confirming a preview',async()=>{

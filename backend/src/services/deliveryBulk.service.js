@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
-import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
@@ -19,15 +18,23 @@ const unescape = text => text?.replace(/^'(?=[=+\-@])/, '');
 
 export async function deliveryBulkPlan(tx, rows) {
   const plans = [], errors = [], seen = new Set();
+  const canBatchLookup = typeof tx.deliveryRequest?.findMany === 'function';
+  const invoices = [...new Set(rows.filter(row => row.action?.trim()).map(row => row.invoice_number?.trim()).filter(Boolean))];
+  const deliveries = canBatchLookup && invoices.length ? await tx.deliveryRequest.findMany({
+    where: { paymentRequest: { requestNumber: { in: invoices } } },
+    include: { paymentRequest: true, feePaymentRequest: true },
+  }) : [];
+  const byInvoice = new Map(deliveries.map(delivery => [delivery.paymentRequest.requestNumber.toUpperCase(), delivery]));
   for (const [index, row] of rows.entries()) {
     const sourceRow = /^\d+$/.test(row.__sourceRow || '') && Number(row.__sourceRow) > 0 ? Number(row.__sourceRow) : index + 2;
     try {
       if (Object.keys(row).some(key => key !== '__sourceRow' && !columns.includes(key))) throw new AppError(400, 'Unknown column. Use the exported delivery template.');
       if (!row.action?.trim()) continue; // Exported records with no requested action remain untouched.
       const invoice = row.invoice_number?.trim();
-      if (!invoice || seen.has(invoice)) throw new AppError(400, 'Missing or duplicate invoice number.');
-      seen.add(invoice);
-      const delivery = await tx.deliveryRequest.findFirst({ where: { paymentRequest: { requestNumber: invoice } }, include: { paymentRequest: true, feePaymentRequest: true } });
+      if (!invoice || seen.has(invoice.toUpperCase())) throw new AppError(400, 'Missing or duplicate invoice number.');
+      seen.add(invoice.toUpperCase());
+      const delivery = canBatchLookup ? byInvoice.get(invoice.toUpperCase())
+        : await tx.deliveryRequest.findFirst({ where: { paymentRequest: { requestNumber: invoice } }, include: { paymentRequest: true, feePaymentRequest: true } });
       if (!delivery) throw new AppError(404, 'Delivery not found.');
       if (row.version !== delivery.updatedAt.toISOString()) throw new AppError(409, 'Delivery changed or version was edited. Export a fresh copy.');
       const action = row.action.trim().toUpperCase();
@@ -69,22 +76,52 @@ export const deliveryBulkService = {
     if (initial.errors.length || !initial.plans.length) throw new AppError(409, 'Delivery data changed. Review the file again.', { errors: initial.errors });
     const leases = [];
     try {
-      const resources = new Set();
-      for (const plan of initial.plans) resources.add(await workflowLeaseService.resource('payment', plan.id, user));
-      for (const resource of [...resources].sort()) {
-        for (const lease of leases) await workflowLeaseService.acquire(lease.resourceKey, owner, lease.token);
-        leases.push(await workflowLeaseService.begin(resource, owner));
+      const planResourceMap = new Map();
+      for (const plan of initial.plans) {
+        const res = await workflowLeaseService.resource('payment', plan.id, user);
+        planResourceMap.set(plan.id, res);
       }
+      const leaseByKey = new Map();
+
       // Apply in small transactional chunks to stay under gateway timeouts
       await chunkedTransaction({
         items: initial.plans,
         chunkSize: 15,
-        timeout: 25000,
+        timeout: 35000,
+        async beforeChunk(chunk) {
+          // Claim only the chunk about to run. Holding and renewing every lease
+          // for the whole file is quadratic and can expire later chunks' leases.
+          const resources = [...new Set(chunk.map(plan => planResourceMap.get(plan.id)))].sort();
+          for (const resource of resources) {
+            const lease = await workflowLeaseService.begin(resource, owner);
+            leases.push(lease);
+            leaseByKey.set(resource, lease);
+          }
+        },
+        async afterChunk() {
+          // Cleanup must not turn a committed chunk into a reported failure.
+          await Promise.allSettled(leases.splice(0).map(lease => workflowLeaseService.finish(lease, owner)));
+          leaseByKey.clear();
+        },
         async process(tx, chunk) {
-          for (const lease of leases) await workflowLeaseService.pinForTransaction(tx, lease, owner);
+          const chunkResourceKeys = new Set(chunk.map(p => planResourceMap.get(p.id)).filter(Boolean));
+          for (const key of chunkResourceKeys) {
+            const lease = leaseByKey.get(key);
+            if (!lease) throw new AppError(409, 'Delivery lock was lost. Review the file again.');
+            await workflowLeaseService.pinForTransaction(tx, lease, owner);
+          }
+
           // Re-validate each chunk's deliveries inside the transaction
+          const invoices = chunk.map(p => p.invoice);
+          const canBatchLookup = typeof tx.deliveryRequest?.findMany === 'function';
+          const freshList = canBatchLookup
+            ? await tx.deliveryRequest.findMany({ where: { paymentRequest: { requestNumber: { in: invoices } } }, include: { paymentRequest: true, feePaymentRequest: true } })
+            : [];
+          const freshByInvoice = new Map(freshList.map(f => [f.paymentRequest.requestNumber.toUpperCase(), f]));
+
           for (const plan of chunk) {
-            const fresh = await tx.deliveryRequest.findFirst({ where: { paymentRequest: { requestNumber: plan.invoice } }, include: { paymentRequest: true, feePaymentRequest: true } });
+            const fresh = canBatchLookup ? freshByInvoice.get(plan.invoice.toUpperCase())
+              : await tx.deliveryRequest.findFirst({ where: { paymentRequest: { requestNumber: plan.invoice } }, include: { paymentRequest: true, feePaymentRequest: true } });
             if (!fresh || fresh.updatedAt.toISOString() !== plan.version) throw new AppError(409, `Delivery ${plan.invoice} changed. Nothing in this batch was applied.`);
             await deliveryService.act(plan.id, plan.input, user, tx);
           }

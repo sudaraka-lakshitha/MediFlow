@@ -54,7 +54,7 @@ export function BulkStockModal({ onClose, onApplied }: BulkStockModalProps) {
           reader.onerror = () => reject(new Error('Cannot read this file.'));
           reader.readAsDataURL(file);
         });
-        const response = await api.post('/inventory/batches/bulk/excel-preview', { fileBase64 }, { timeout: 60000 });
+        const response = await api.post('/inventory/batches/bulk/excel-preview', { fileBase64 }, { timeout: 120000 });
         setRows(response.data.data.rows);
         setPreview(response.data.data);
       } else {
@@ -62,7 +62,7 @@ export function BulkStockModal({ onClose, onApplied }: BulkStockModalProps) {
           throw new Error('Please select an Excel (.xlsx) file up to 2 MB or CSV UTF-8 up to 1 MB.');
         }
         const parsed = parseCsv(await file.text(), { requiredColumn: 'sku', maxRows: 500, guideRows: false });
-        const response = await api.post('/inventory/batches/bulk/preview', { rows: parsed }, { timeout: 60000 });
+        const response = await api.post('/inventory/batches/bulk/preview', { rows: parsed }, { timeout: 120000 });
         setRows(parsed);
         setPreview(response.data.data);
       }

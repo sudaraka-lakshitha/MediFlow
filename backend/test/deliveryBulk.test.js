@@ -8,7 +8,46 @@ import { deliveryBulkService, deliveryBulkPlan } from '../src/services/deliveryB
 const user = { id: 1, role: 'PHARMACIST' };
 const record = { id: 2, paymentRequestId: 3, feePaymentRequestId: 4, status: 'AWAITING_FEE', updatedAt: new Date('2026-10-24T10:00:00Z'), paymentRequest: { status: 'PAID', total: 100, amountPaid: 100, refundedAmount: 0 }, feePaymentRequest: { status: 'PAID', total: 50, amountPaid: 50, refundedAmount: 0 }, courierService: 'Old courier', trackingReference: 'OLD123', recipientName: 'Demo Patient', address: '123 Example Street', phone: '0701234567' };
 const row = { invoice_number: 'PAY-123', version: record.updatedAt.toISOString(), action: 'DISPATCH', courier: 'Example Courier', tracking: 'NEW123' };
-beforeEach(() => { vi.resetAllMocks(); db.deliveryRequest.findFirst.mockResolvedValue(record); db.refund.count.mockResolvedValue(0); db.$transaction.mockImplementation(fn => fn(db)); lease.resource.mockResolvedValue('upload:1'); lease.begin.mockResolvedValue({ token: 'lease' }); });
+beforeEach(() => { vi.resetAllMocks(); delete db.deliveryRequest.findMany; db.deliveryRequest.findFirst.mockResolvedValue(record); db.refund.count.mockResolvedValue(0); db.$transaction.mockImplementation(fn => fn(db)); lease.resource.mockResolvedValue('upload:1'); lease.begin.mockImplementation(async resourceKey => ({ resourceKey, token: 'lease' })); });
+it('batch-loads preview records and does not fall back for missing invoices', async () => {
+  db.deliveryRequest.findMany=vi.fn().mockResolvedValue([{...record,paymentRequest:{...record.paymentRequest,requestNumber:row.invoice_number}}]);
+  const result=await deliveryBulkPlan(db,[row,{...row,invoice_number:'PAY-MISSING'}]);
+  expect(result.plans).toHaveLength(1);expect(result.errors[0].message).toContain('not found');
+  expect(db.deliveryRequest.findMany).toHaveBeenCalledTimes(1);expect(db.deliveryRequest.findFirst).not.toHaveBeenCalled();
+});
+it('pins only the current chunk and releases it before acquiring the next chunk', async () => {
+  const records=Array.from({length:16},(_,i)=>({...record,id:i+1,paymentRequestId:i+100,paymentRequest:{...record.paymentRequest,requestNumber:`PAY-${i}`}}));
+  const rows=records.map(r=>({...row,invoice_number:r.paymentRequest.requestNumber}));
+  db.deliveryRequest.findMany=vi.fn().mockImplementation(async({where})=>records.filter(r=>where.paymentRequest.requestNumber.in.includes(r.paymentRequest.requestNumber)));
+  lease.resource.mockImplementation(async(kind,id)=>`payment:${id}`);
+  const active=new Set();let peak=0;
+  lease.begin.mockImplementation(async resourceKey=>{active.add(resourceKey);peak=Math.max(peak,active.size);return {resourceKey,token:resourceKey};});
+  lease.finish.mockImplementation(async l=>{active.delete(l.resourceKey);});
+  lease.pinForTransaction.mockImplementation(async(tx,l)=>{expect(active.has(l.resourceKey)).toBe(true);});
+  const preview=await deliveryBulkService.preview(rows,user);
+  expect(await deliveryBulkService.apply(rows,preview.previewToken,user,{})).toEqual({applied:16});
+  expect(peak).toBe(15);expect(active.size).toBe(0);
+  expect(lease.pinForTransaction).toHaveBeenCalledTimes(16);expect(lease.acquire).not.toHaveBeenCalled();
+  expect(db.deliveryRequest.findFirst).not.toHaveBeenCalled();
+  expect(db.deliveryRequest.findMany.mock.calls.map(([arg])=>arg.where.paymentRequest.requestNumber.in.length)).toEqual([16,16,15,1]);
+  expect(db.$transaction).toHaveBeenCalledTimes(2);expect(db.$transaction.mock.calls[0][1].timeout).toBe(35000);
+});
+it('rejects a delivery removed between validation and the transaction without falling back', async () => {
+  db.deliveryRequest.findMany=vi.fn().mockResolvedValue([{...record,paymentRequest:{...record.paymentRequest,requestNumber:row.invoice_number}}]);
+  const preview=await deliveryBulkService.preview([row],user);
+  db.deliveryRequest.findMany.mockResolvedValueOnce([{...record,paymentRequest:{...record.paymentRequest,requestNumber:row.invoice_number}}]).mockResolvedValueOnce([]);
+  await expect(deliveryBulkService.apply([row],preview.previewToken,user,{})).rejects.toThrow('changed');
+  expect(act).not.toHaveBeenCalled();expect(db.deliveryRequest.findFirst).not.toHaveBeenCalled();expect(lease.finish).toHaveBeenCalled();
+});
+it('releases already acquired chunk locks when a later acquisition fails', async () => {
+  db.deliveryRequest.findFirst.mockImplementation(async({where})=>({...record,paymentRequestId:where.paymentRequest.requestNumber==='PAY-123'?3:4}));
+  lease.resource.mockImplementation(async(kind,id)=>`payment:${id}`);
+  const rows=[row,{...row,invoice_number:'PAY-456'}];
+  const preview=await deliveryBulkService.preview(rows,user);
+  lease.begin.mockResolvedValueOnce({resourceKey:'payment:3',token:'lease'}).mockRejectedValueOnce(new Error('Busy'));
+  await expect(deliveryBulkService.apply(rows,preview.previewToken,user,{})).rejects.toThrow('Busy');
+  expect(lease.finish).toHaveBeenCalledTimes(1);expect(act).not.toHaveBeenCalled();expect(db.$transaction).not.toHaveBeenCalled();
+});
 it('previews without writes and applies only after confirmation', async () => {
   const preview = await deliveryBulkService.preview([row], user);
   expect(preview.errors).toEqual([]); expect(preview.previewToken).toBeTruthy(); expect(act).not.toHaveBeenCalled();

@@ -65,14 +65,32 @@ export async function readMasterWorkbook(buffer, dataset) {
 export async function masterDataPlan(tx, dataset, rows) {
   const def=masterDataDefinitions[dataset], plans=[],errors=[],seen=new Set(), names=new Set();
   const key=dataset==='patients'?'patientNumber':'id';
+
+  const canBatchLookup = typeof tx[def.model]?.findMany === 'function';
+  let recordMap = new Map();
+  if (canBatchLookup) {
+    const rawIds = [...new Set(rows.map(r => String(r[key] ?? '').trim()).filter(id => key === 'patientNumber' ? Boolean(id) : /^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id))))];
+    if (rawIds.length) {
+      const whereIds = key === 'id' ? rawIds.map(Number) : rawIds;
+      const fetched = await tx[def.model].findMany({
+        where: { [key]: { in: whereIds } },
+        ...(dataset === 'patients' ? { include: { user: true } } : {}),
+      });
+      recordMap = new Map(fetched.map(r => [String(r[key]).toUpperCase(), r]));
+    }
+  }
+
   for(const [index,input]of rows.entries()) {
     try {
       const unknown=Object.keys(input).filter(k=>!masterDataColumns(dataset).includes(k));
       if(unknown.length)throw new AppError(400,`Unknown columns: ${unknown.join(', ')}.`);
       const identifier=String(input[key]??'').trim();
-      if(!identifier || (key==='id'&&!/^[1-9]\d*$/.test(identifier)))throw new AppError(400,`A valid ${key} from Export for update is required.`);
-      if(seen.has(identifier))throw new AppError(400,'This record appears more than once.');seen.add(identifier);
-      const record=await tx[def.model].findUnique({where:{[key]:key==='id'?Number(identifier):identifier},...(dataset==='patients'?{include:{user:true}}:{})});
+      if(!identifier || (key==='id'&&(!/^[1-9]\d*$/.test(identifier)||!Number.isSafeInteger(Number(identifier)))))throw new AppError(400,`A valid ${key} from Export for update is required.`);
+      const recordKey = identifier.toUpperCase();
+      if(seen.has(recordKey))throw new AppError(400,'This record appears more than once.');seen.add(recordKey);
+      const record = canBatchLookup
+        ? recordMap.get(recordKey)
+        : (typeof tx[def.model]?.findUnique === 'function' ? await tx[def.model].findUnique({where:{[key]:key==='id'?Number(identifier):identifier},...(dataset==='patients'?{include:{user:true}}:{})}) : null);
       if(!record)throw new AppError(400,'Record no longer exists. Export again.');
       const before=snapshot(dataset,record);
       if(input.recordVersion!==before.recordVersion)throw new AppError(409,'Record changed since export. Export fresh data before editing.');
@@ -144,9 +162,10 @@ export const masterDataBulkService={
       // Phase 2 — apply in small transactional chunks to stay under gateway timeouts
       await chunkedTransaction({
         items: changed,
-        chunkSize: 25,
-        timeout: 25000,
+        chunkSize: 15,
+        timeout: 35000,
         async process(tx, chunk) {
+          const auditLogs = [];
           for (const p of chunk) {
             const data = Object.fromEntries(p.changes.map((c) => [c.field, p.patch[c.field]]));
             if (dataset === 'patients') {
@@ -165,15 +184,21 @@ export const masterDataBulkService={
             } else {
               await tx[masterDataDefinitions[dataset].model].update({ where: { id: p.id }, data });
             }
-            await tx.auditLog.create({
-              data: {
-                userId: user.id,
-                action: 'MASTER_DATA_BULK_UPDATED',
-                entityType: dataset.toUpperCase(),
-                entityId: p.id,
-                details: { changes: p.changes },
-              },
-            });
+            const logData = {
+              userId: user.id,
+              action: 'MASTER_DATA_BULK_UPDATED',
+              entityType: dataset.toUpperCase(),
+              entityId: p.id,
+              details: { changes: p.changes },
+            };
+            if (typeof tx.auditLog?.createMany === 'function') {
+              auditLogs.push(logData);
+            } else {
+              await tx.auditLog.create({ data: logData });
+            }
+          }
+          if (auditLogs.length > 0) {
+            await tx.auditLog.createMany({ data: auditLogs });
           }
         },
       });
