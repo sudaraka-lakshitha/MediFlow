@@ -94,9 +94,19 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
     const CHUNK_SIZE = 25;
     setBusy('Applying changes. Please keep this dialog open…');
 
+    const generateBatchId = () => {
+      if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        try { return crypto.randomUUID(); } catch { /* fallback */ }
+      }
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+      });
+    };
+
     try {
       if (rows.length > CHUNK_SIZE) {
-        const batchId = crypto.randomUUID();
+        const batchId = generateBatchId();
         const totalBatches = Math.ceil(rows.length / CHUNK_SIZE);
         let totalCreates = 0;
         let totalUpdates = 0;
@@ -120,7 +130,7 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
             batchId,
             previewToken: result?.previewToken,
             fileName: fileName.slice(0, 180),
-          }, { timeout: 45000 });
+          }, { timeout: 60000 });
 
           totalCreates += r.data.data.creates || 0;
           totalUpdates += r.data.data.updates || 0;
@@ -157,7 +167,6 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
       setError(errorMessage(e));
       setConfirmed(false);
       if (e?.response?.data?.details?.errors) setResult(e.response.data.details);
-      else setError('The outcome could not be fully confirmed. Retry Apply with the same file; already completed products will not run twice.');
     } finally {
       lock.current = false;
       if (id === generation.current) {

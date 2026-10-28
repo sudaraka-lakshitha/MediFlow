@@ -119,7 +119,46 @@ export const buildBulkPlan = async (db, rows) => {
   return { plans, summary, previewToken };
 };
 
-const applyPlan = async (tx, plan, cache = {}) => {
+const preResolveEntities = async (db, actionPlans) => {
+  const categoryMap = new Map();
+  const mfgMap = new Map();
+  const conceptMap = new Map();
+
+  // 1. Categories only for plans that create or change category
+  const plansNeedingCategory = actionPlans.filter((p) => !p.existing || Object.hasOwn(p.patch, 'categoryName'));
+  const categoryNames = [...new Set(plansNeedingCategory.map((p) => p.next?.categoryName).filter(Boolean))];
+  for (const name of categoryNames) {
+    if (db.category?.upsert) {
+      const cat = await db.category.upsert({ where: { name }, update: {}, create: { name } });
+      if (cat) categoryMap.set(name, cat.id);
+    }
+  }
+
+  // 2. Manufacturers only for plans that create or change manufacturer
+  const plansNeedingMfg = actionPlans.filter((p) => !p.existing || Object.hasOwn(p.patch, 'manufacturerName'));
+  const mfgNames = [...new Set(plansNeedingMfg.map((p) => p.next?.manufacturerName).filter(Boolean))];
+  for (const name of mfgNames) {
+    if (db.manufacturer?.upsert) {
+      const mfg = await db.manufacturer.upsert({ where: { name }, update: {}, create: { name } });
+      if (mfg) mfgMap.set(name, mfg.id);
+    }
+  }
+
+  // 3. Drug concepts only for medicines that create or change activeIngredient/productType
+  const plansNeedingConcept = actionPlans.filter((p) => p.next?.productType === 'MEDICINE' && (!p.existing || Object.hasOwn(p.patch, 'activeIngredient') || Object.hasOwn(p.patch, 'productType')));
+  const drugIngredients = [...new Set(plansNeedingConcept.map((p) => p.next?.activeIngredient || p.next?.genericName).filter(Boolean))];
+  for (const ingredient of drugIngredients) {
+    const norm = normalizeDrugName(ingredient);
+    if (db.drugConcept?.upsert) {
+      const concept = await db.drugConcept.upsert({ where: { normalizedName: norm }, update: {}, create: { normalizedName: norm, displayName: ingredient } });
+      if (concept) conceptMap.set(norm, concept.id);
+    }
+  }
+
+  return { categoryMap, mfgMap, conceptMap };
+};
+
+const applyPlan = async (tx, plan, maps = {}) => {
   const { next, existing, patch } = plan;
   const data = {};
   const keys = existing ? Object.keys(patch) : productBulkFields.map((f) => f.key);
@@ -129,22 +168,22 @@ const applyPlan = async (tx, plan, cache = {}) => {
   }
   if (!existing) data.sku = next.sku;
   if (!existing || Object.hasOwn(patch, 'categoryName')) {
-    let categoryId = cache.categories?.get(next.categoryName);
-    if (!categoryId) {
+    let categoryId = maps.categoryMap?.get(next.categoryName);
+    if (!categoryId && tx.category?.upsert) {
       const category = await tx.category.upsert({ where: { name: next.categoryName }, update: {}, create: { name: next.categoryName } });
-      categoryId = category.id;
-      if (cache.categories) cache.categories.set(next.categoryName, categoryId);
+      categoryId = category?.id;
+      if (maps.categoryMap && categoryId) maps.categoryMap.set(next.categoryName, categoryId);
     }
     data.categoryId = categoryId;
   }
   if (!existing || Object.hasOwn(patch, 'manufacturerName')) {
     let manufacturerId = null;
     if (next.manufacturerName) {
-      manufacturerId = cache.manufacturers?.get(next.manufacturerName);
-      if (manufacturerId === undefined) {
+      manufacturerId = maps.mfgMap?.get(next.manufacturerName);
+      if (manufacturerId === undefined && tx.manufacturer?.upsert) {
         const manufacturer = await tx.manufacturer.upsert({ where: { name: next.manufacturerName }, update: {}, create: { name: next.manufacturerName } });
         manufacturerId = manufacturer?.id || null;
-        if (cache.manufacturers) cache.manufacturers.set(next.manufacturerName, manufacturerId);
+        if (maps.mfgMap) maps.mfgMap.set(next.manufacturerName, manufacturerId);
       }
     }
     data.manufacturerId = manufacturerId;
@@ -153,11 +192,11 @@ const applyPlan = async (tx, plan, cache = {}) => {
   if (next.productType === 'MEDICINE' && (!existing || Object.hasOwn(patch, 'activeIngredient') || Object.hasOwn(patch, 'productType'))) {
     const ingredient = next.activeIngredient || next.genericName;
     const normalized = normalizeDrugName(ingredient);
-    let conceptId = cache.concepts?.get(normalized);
-    if (!conceptId) {
+    let conceptId = maps.conceptMap?.get(normalized);
+    if (!conceptId && tx.drugConcept?.upsert) {
       const concept = await tx.drugConcept.upsert({ where: { normalizedName: normalized }, update: {}, create: { normalizedName: normalized, displayName: ingredient } });
-      conceptId = concept.id;
-      if (cache.concepts) cache.concepts.set(normalized, conceptId);
+      conceptId = concept?.id;
+      if (maps.conceptMap && conceptId) maps.conceptMap.set(normalized, conceptId);
     }
     data.activeIngredient = ingredient; data.drugConceptId = conceptId;
   }
@@ -178,10 +217,11 @@ export const productBulkService = {
       const { plans, summary } = await buildBulkPlan(prisma, rows);
       if (summary.errors.length) throw new AppError(400, 'Correct every invalid row and validate again.', summary);
       const actionPlans = plans.filter((plan) => plan.existing ? plan.changes.length : true);
-      const cache = { categories: new Map(), manufacturers: new Map(), concepts: new Map() };
+      const maps = await preResolveEntities(prisma, actionPlans);
+
       await prisma.$transaction(async (tx) => {
         for (const plan of actionPlans) {
-          const product = await applyPlan(tx, plan, cache);
+          const product = await applyPlan(tx, plan, maps);
           await tx.lowStockAcknowledgement.deleteMany({ where: { productId: product.id } });
           await tx.auditLog.create({
             data: {
@@ -201,7 +241,8 @@ export const productBulkService = {
             },
           });
         }
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 25000 });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 30000 });
+
       const { preview, ...counts } = summary;
       return { ...counts, applied: true, batchId };
     }
@@ -218,20 +259,20 @@ export const productBulkService = {
     if (summary.errors.length) throw new AppError(400, 'Correct every invalid row and validate again.', summary);
     if (currentToken !== previewToken) throw new AppError(409, 'The file or saved products changed since validation. Validate again before applying.');
 
-    // Phase 3 — apply in small transactional chunks to stay under gateway timeouts
+    // Phase 3 — pre-resolve entities upfront (outside transactions) to avoid round-trip latency
     const sessionBatchId = randomUUID();
     const actionPlans = plans.filter((plan) => plan.existing ? plan.changes.length : true);
-    const cache = { categories: new Map(), manufacturers: new Map(), concepts: new Map() };
+    const maps = await preResolveEntities(prisma, actionPlans);
 
     try {
       await chunkedTransaction({
         items: actionPlans,
-        chunkSize: 15,
-        timeout: 25000,
+        chunkSize: 20,
+        timeout: 30000,
         async process(tx, chunk) {
           for (const plan of chunk) {
             if (plan.existing && !plan.changes.length) continue;
-            const product = await applyPlan(tx, plan, cache);
+            const product = await applyPlan(tx, plan, maps);
             await tx.lowStockAcknowledgement.deleteMany({ where: { productId: product.id } });
             await tx.auditLog.create({
               data: {
@@ -254,7 +295,10 @@ export const productBulkService = {
         },
       });
     } catch (error) {
-      if (['P2002', 'P2034', 'P2028'].includes(error.code)) throw new AppError(409, 'The import could not be completed. Some chunks may have already been applied. Validate again, or use a smaller file if it timed out.');
+      console.error('[ProductBulk] Apply error in chunkedTransaction:', error);
+      if (['P2002', 'P2034', 'P2028'].includes(error.code)) {
+        throw new AppError(409, 'The import could not be completed. Some chunks may have already been applied. Validate again, or use a smaller file if it timed out.');
+      }
       throw error;
     }
 

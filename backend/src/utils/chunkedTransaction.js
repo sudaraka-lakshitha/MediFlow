@@ -12,13 +12,14 @@ import { prisma } from '../config/prisma.js';
  * @param {object} options
  * @param {Array} options.items       – The full list of items to process.
  * @param {number} [options.chunkSize=15] – Items per transaction chunk.
- * @param {number} [options.timeout=25000] – Per-chunk transaction timeout (ms).
+ * @param {number} [options.timeout=30000] – Per-chunk transaction timeout (ms).
+ * @param {number} [options.maxWait=25000] – Max time to wait for connection from pool (ms).
  * @param {(tx: import('@prisma/client').Prisma.TransactionClient, chunk: any[], chunkIndex: number) => Promise<any>} options.process
  *   Callback invoked once per chunk with the transaction client and the items
  *   in that chunk.  Must return a partial result (or void).
  * @returns {Promise<any[]>} Array of partial results from each chunk.
  */
-export async function chunkedTransaction({ items, chunkSize = 15, timeout = 25000, process }) {
+export async function chunkedTransaction({ items, chunkSize = 15, timeout = 30000, maxWait = 25000, process }) {
   if (!items.length) return [];
 
   const results = [];
@@ -29,7 +30,7 @@ export async function chunkedTransaction({ items, chunkSize = 15, timeout = 2500
       (tx) => process(tx, chunk, chunkIndex),
       {
         isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
-        maxWait: 10000,
+        maxWait,
         timeout,
       },
     );
