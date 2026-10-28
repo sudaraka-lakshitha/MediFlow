@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { Modal } from './Modal';
+import { BulkOperationStatus, type BulkProgress } from './BulkOperationStatus';
 import { parseCsv } from '../utils/csv';
 
 type Change = { field: string; label: string; before: unknown; after: unknown };
 type Result = { total: number; creates: number; updates: number; unchanged: number; applied: boolean; previewToken?: string; batchId?: string; errors: { row: number; sku: string; errors: string[] }[]; preview?: { row: number; sku: string; action: string; changes: Change[] }[] };
 type Format = { fields: { key: string; label: string; help: string; clearable: boolean }[]; instructions: string[] };
-type ProgressState = { percent: number; stage: string; currentBatch?: number; totalBatches?: number };
+type ProgressState = BulkProgress;
 
 const saveBlob = (blob: Blob, name: string) => { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); };
 const display = (v: unknown) => v == null || v === '' ? 'Empty' : typeof v === 'boolean' ? v ? 'Yes' : 'No' : String(v);
@@ -70,11 +71,11 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
       setResult(null);
       setConfirmed(false);
       setBusy('Validating…');
-      setProgress({ percent: 35, stage: 'Checking product rows against database…' });
+      setProgress({ stage: 'Checking product rows against database…' });
       try {
         const r = await api.post('/catalog/products/bulk', { rows, dryRun: true, fileName: fileName.slice(0, 180) }, { timeout: 130000 });
         if (id !== generation.current) return;
-        setProgress({ percent: 100, stage: 'Validation complete.' });
+        setProgress({ stage: 'Validation complete.' });
         setResult(r.data.data);
       } catch (e: any) {
         if (id !== generation.current) return;
@@ -116,12 +117,10 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
           if (id !== generation.current) return;
           const chunk = rows.slice(i, i + CHUNK_SIZE);
           const batchNum = Math.floor(i / CHUNK_SIZE) + 1;
-          const pct = Math.round((i / rows.length) * 100);
           setProgress({
-            percent: pct,
-            stage: `Applying batch ${batchNum} of ${totalBatches} (${i} of ${rows.length} rows processed)…`,
-            currentBatch: batchNum,
-            totalBatches,
+            completed: i,
+            total: rows.length,
+            stage: `Applying batch ${batchNum} of ${totalBatches}…`,
           });
 
           const r = await api.post('/catalog/products/bulk', {
@@ -132,13 +131,14 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
             fileName: fileName.slice(0, 180),
           }, { timeout: 120000 });
 
+          setProgress({ stage: `Batch ${batchNum} confirmed.`, completed: i + chunk.length, total: rows.length });
           totalCreates += r.data.data.creates || 0;
           totalUpdates += r.data.data.updates || 0;
           totalUnchanged += r.data.data.unchanged || 0;
         }
 
         if (id !== generation.current) return;
-        setProgress({ percent: 100, stage: 'All product batches applied successfully!' });
+        setProgress({ stage: 'All product batches applied successfully!' });
         setResult({
           total: rows.length,
           creates: totalCreates,
@@ -150,7 +150,7 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
         });
         onApplied();
       } else {
-        setProgress({ percent: 50, stage: 'Applying product records to database…' });
+        setProgress({ stage: 'Applying product records to database…' });
         const r = await api.post('/catalog/products/bulk', {
           rows,
           dryRun: false,
@@ -158,7 +158,7 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
           previewToken: result?.previewToken,
         }, { timeout: 120000 });
         if (id !== generation.current) return;
-        setProgress({ percent: 100, stage: 'Completed!' });
+        setProgress({ stage: 'Completed!' });
         setResult(r.data.data);
         onApplied();
       }
@@ -193,29 +193,7 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
     {fileName && <p className="small mt-2">{fileName}{rows.length > 0 ? ` — ${rows.length} product rows loaded` : ''}</p>}
     {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
 
-    {progress && (
-      <div className="card bg-light border-primary mt-3 p-3 shadow-sm">
-        <div className="d-flex justify-content-between align-items-center mb-1">
-          <strong className="text-primary small">
-            <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
-            {progress.stage}
-          </strong>
-          <span className="badge bg-primary">{progress.percent}%</span>
-        </div>
-        <div className="progress" style={{ height: '10px' }} role="progressbar" aria-valuenow={progress.percent} aria-valuemin={0} aria-valuemax={100}>
-          <div
-            className="progress-bar progress-bar-striped progress-bar-animated bg-primary"
-            style={{ width: `${progress.percent}%`, transition: 'width 0.3s ease-in-out' }}
-          />
-        </div>
-        {progress.totalBatches && (
-          <div className="d-flex justify-content-between mt-2 text-muted" style={{ fontSize: '0.8rem' }}>
-            <span>Chunk {progress.currentBatch} of {progress.totalBatches}</span>
-            <span>Batch size: 25 rows/chunk</span>
-          </div>
-        )}
-      </div>
-    )}
+    {progress && <BulkOperationStatus progress={progress} />}
     {!progress && busy && <p role="status" className="mt-3 text-secondary small"><span className="spinner-border spinner-border-sm me-2" role="status" />{busy}</p>}
 
     {result && <section className="mt-3" aria-live="polite">

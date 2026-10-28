@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { parseCsv } from '../utils/csv';
 import { Modal } from './Modal';
+import { BulkOperationStatus, type BulkProgress } from './BulkOperationStatus';
 
 export function DeliveryBulkModal({ onClose, onApplied }: { onClose(): void; onApplied(): void }) {
   const [rows, setRows] = useState<Record<string, string>[]>([]);
@@ -9,7 +10,7 @@ export function DeliveryBulkModal({ onClose, onApplied }: { onClose(): void; onA
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
-  const [progress, setProgress] = useState<{ percent: number; stage: string } | null>(null);
+  const [progress, setProgress] = useState<BulkProgress | null>(null);
 
   const read = async (file?: File) => {
     if (!file || busy) return;
@@ -18,7 +19,7 @@ export function DeliveryBulkModal({ onClose, onApplied }: { onClose(): void; onA
     setPreview(null);
     setConfirmed(false);
     setRows([]);
-    setProgress({ percent: 30, stage: 'Reading spreadsheet and checking delivery statuses against database...' });
+    setProgress({ stage: 'Reading spreadsheet and checking delivery statuses against database...' });
 
     try {
       if (/\.xlsx$/i.test(file.name)) {
@@ -51,11 +52,11 @@ export function DeliveryBulkModal({ onClose, onApplied }: { onClose(): void; onA
     if (!confirmed || !preview?.previewToken || busy) return;
     setBusy(true);
     setError('');
-    setProgress({ percent: 45, stage: 'Acquiring workflow leases & applying delivery updates in chunks...' });
+    setProgress({ stage: 'Acquiring workflow leases & applying delivery updates in chunks...' });
 
     try {
       await api.post('/deliveries/bulk/confirm', { rows, previewToken: preview.previewToken }, { timeout: 120000 });
-      setProgress({ percent: 100, stage: 'All deliveries updated successfully!' });
+      setProgress({ stage: 'All deliveries updated successfully!' });
       onApplied();
       onClose();
     } catch (e) {
@@ -97,23 +98,7 @@ export function DeliveryBulkModal({ onClose, onApplied }: { onClose(): void; onA
 
       {error && <div role="alert" className="alert alert-danger mt-3">{error}</div>}
 
-      {progress && (
-        <div className="card bg-light border-primary mt-3 p-3 shadow-sm">
-          <div className="d-flex justify-content-between align-items-center mb-1">
-            <strong className="text-primary small">
-              <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
-              {progress.stage}
-            </strong>
-            <span className="badge bg-primary">{progress.percent}%</span>
-          </div>
-          <div className="progress" style={{ height: '10px' }} role="progressbar" aria-valuenow={progress.percent} aria-valuemin={0} aria-valuemax={100}>
-            <div
-              className="progress-bar progress-bar-striped progress-bar-animated bg-primary"
-              style={{ width: `${progress.percent}%`, transition: 'width 0.4s ease-in-out' }}
-            />
-          </div>
-        </div>
-      )}
+      {progress && <BulkOperationStatus progress={progress} />}
 
       {preview && (
         <>

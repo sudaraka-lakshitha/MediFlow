@@ -527,7 +527,7 @@ Bulk stock, delivery and master-data operations use batched reads and 15-row tra
 
 Version checks, payment/readiness validation and reservation checks still apply. Unit-test adapters without batch methods use individual-query fallbacks; a missing record in a real batch lookup does not trigger another query for every row.
 
-Other optimizations include compressed API responses, split frontend bundles, debounced searches, reduced navigation polling, and loading-stage feedback. The progress indicators describe stages; they are not a live server-side count of completed rows. Hosted speed depends on database distance, load and API cold starts. Increasing Axios timeouts does not extend a hosting provider's proxy timeout. Very large or consistently slow imports need smaller files or a future background-job workflow.
+Other optimizations include compressed API responses, split frontend bundles, debounced searches, reduced navigation polling, and loading-stage feedback. Stock, delivery and master-data imports show a spinner and the current stage without invented percentages. Product imports show confirmed row counts only after the server acknowledges each batch. Hosted speed depends on database distance, load and API cold starts. Increasing Axios timeouts does not extend a hosting provider's proxy timeout. Very large or consistently slow imports need smaller files or a future background-job workflow.
 
 Keep `BCRYPT_ROUNDS=12` as the default. The supported range is 10–14; changing it is a security/performance trade-off, not a guaranteed fix for slow sign-in. Existing password hashes retain their original work factor until replaced.
 

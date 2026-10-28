@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { parseCsv } from '../utils/csv';
 import { Modal } from './Modal';
+import { BulkOperationStatus, type BulkProgress } from './BulkOperationStatus';
 
 type Preview = {
   rows: Record<string, unknown>[];
@@ -17,7 +18,7 @@ export function BulkMasterDataModal({ dataset, title, onClose }: { dataset: stri
   const [confirmed, setConfirmed] = useState(false);
   const [search, setSearch] = useState('');
   const [success, setSuccess] = useState('');
-  const [progress, setProgress] = useState<{ percent: number; stage: string } | null>(null);
+  const [progress, setProgress] = useState<BulkProgress | null>(null);
   const lock = useRef(false);
 
   const download = async (format: 'xlsx' | 'csv') => {
@@ -49,7 +50,7 @@ export function BulkMasterDataModal({ dataset, title, onClose }: { dataset: stri
     setSuccess('');
     setResult(null);
     setConfirmed(false);
-    setProgress({ percent: 30, stage: 'Reading file and validating master records against database...' });
+    setProgress({ stage: 'Reading file and validating master records against database...' });
 
     try {
       if (file.size > 2_000_000) throw new Error('Use a file no larger than 2 MB and at most 1,000 rows.');
@@ -84,11 +85,11 @@ export function BulkMasterDataModal({ dataset, title, onClose }: { dataset: stri
     lock.current = true;
     setBusy(true);
     setError('');
-    setProgress({ percent: 50, stage: 'Applying changes in transactional chunks (15/batch)...' });
+    setProgress({ stage: 'Applying changes in transactional chunks (15/batch)...' });
 
     try {
       const r = await api.post(`/master-data/${dataset}/confirm`, { rows: result.rows, previewToken: result.previewToken }, { timeout: 130000 });
-      setProgress({ percent: 100, stage: 'All updates applied successfully!' });
+      setProgress({ stage: 'All updates applied successfully!' });
       setSuccess(`${r.data.data.updated} records updated.`);
       setResult(null);
       setConfirmed(false);
@@ -129,23 +130,7 @@ export function BulkMasterDataModal({ dataset, title, onClose }: { dataset: stri
       {error && <div role="alert" className="alert alert-danger">{error}</div>}
       {success && <div role="status" className="alert alert-success">{success}</div>}
 
-      {progress && (
-        <div className="card bg-light border-primary mb-3 p-3 shadow-sm">
-          <div className="d-flex justify-content-between align-items-center mb-1">
-            <strong className="text-primary small">
-              <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
-              {progress.stage}
-            </strong>
-            <span className="badge bg-primary">{progress.percent}%</span>
-          </div>
-          <div className="progress" style={{ height: '10px' }} role="progressbar" aria-valuenow={progress.percent} aria-valuemin={0} aria-valuemax={100}>
-            <div
-              className="progress-bar progress-bar-striped progress-bar-animated bg-primary"
-              style={{ width: `${progress.percent}%`, transition: 'width 0.4s ease-in-out' }}
-            />
-          </div>
-        </div>
-      )}
+      {progress && <BulkOperationStatus progress={progress} />}
 
       {result && (
         <>
