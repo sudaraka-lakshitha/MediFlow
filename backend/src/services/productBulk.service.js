@@ -127,31 +127,50 @@ const preResolveEntities = async (db, actionPlans) => {
   // 1. Categories only for plans that create or change category
   const plansNeedingCategory = actionPlans.filter((p) => !p.existing || Object.hasOwn(p.patch, 'categoryName'));
   const categoryNames = [...new Set(plansNeedingCategory.map((p) => p.next?.categoryName).filter(Boolean))];
-  for (const name of categoryNames) {
-    if (db.category?.upsert) {
-      const cat = await db.category.upsert({ where: { name }, update: {}, create: { name } });
-      if (cat) categoryMap.set(name, cat.id);
+  if (categoryNames.length > 0) {
+    if (typeof db.category?.findMany === 'function') {
+      const existing = await db.category.findMany({ where: { name: { in: categoryNames } } });
+      for (const cat of existing) categoryMap.set(cat.name, cat.id);
+    }
+    for (const name of categoryNames) {
+      if (!categoryMap.has(name) && db.category?.upsert) {
+        const cat = await db.category.upsert({ where: { name }, update: {}, create: { name } });
+        if (cat) categoryMap.set(name, cat.id);
+      }
     }
   }
 
   // 2. Manufacturers only for plans that create or change manufacturer
   const plansNeedingMfg = actionPlans.filter((p) => !p.existing || Object.hasOwn(p.patch, 'manufacturerName'));
   const mfgNames = [...new Set(plansNeedingMfg.map((p) => p.next?.manufacturerName).filter(Boolean))];
-  for (const name of mfgNames) {
-    if (db.manufacturer?.upsert) {
-      const mfg = await db.manufacturer.upsert({ where: { name }, update: {}, create: { name } });
-      if (mfg) mfgMap.set(name, mfg.id);
+  if (mfgNames.length > 0) {
+    if (typeof db.manufacturer?.findMany === 'function') {
+      const existing = await db.manufacturer.findMany({ where: { name: { in: mfgNames } } });
+      for (const mfg of existing) mfgMap.set(mfg.name, mfg.id);
+    }
+    for (const name of mfgNames) {
+      if (!mfgMap.has(name) && db.manufacturer?.upsert) {
+        const mfg = await db.manufacturer.upsert({ where: { name }, update: {}, create: { name } });
+        if (mfg) mfgMap.set(name, mfg.id);
+      }
     }
   }
 
   // 3. Drug concepts only for medicines that create or change activeIngredient/productType
   const plansNeedingConcept = actionPlans.filter((p) => p.next?.productType === 'MEDICINE' && (!p.existing || Object.hasOwn(p.patch, 'activeIngredient') || Object.hasOwn(p.patch, 'productType')));
   const drugIngredients = [...new Set(plansNeedingConcept.map((p) => p.next?.activeIngredient || p.next?.genericName).filter(Boolean))];
-  for (const ingredient of drugIngredients) {
-    const norm = normalizeDrugName(ingredient);
-    if (db.drugConcept?.upsert) {
-      const concept = await db.drugConcept.upsert({ where: { normalizedName: norm }, update: {}, create: { normalizedName: norm, displayName: ingredient } });
-      if (concept) conceptMap.set(norm, concept.id);
+  if (drugIngredients.length > 0) {
+    const normalizedList = drugIngredients.map(normalizeDrugName);
+    if (typeof db.drugConcept?.findMany === 'function') {
+      const existing = await db.drugConcept.findMany({ where: { normalizedName: { in: normalizedList } } });
+      for (const c of existing) conceptMap.set(c.normalizedName, c.id);
+    }
+    for (const ingredient of drugIngredients) {
+      const norm = normalizeDrugName(ingredient);
+      if (!conceptMap.has(norm) && db.drugConcept?.upsert) {
+        const concept = await db.drugConcept.upsert({ where: { normalizedName: norm }, update: {}, create: { normalizedName: norm, displayName: ingredient } });
+        if (concept) conceptMap.set(norm, concept.id);
+      }
     }
   }
 
@@ -220,28 +239,37 @@ export const productBulkService = {
       const maps = await preResolveEntities(prisma, actionPlans);
 
       await prisma.$transaction(async (tx) => {
+        const auditLogs = [];
         for (const plan of actionPlans) {
           const product = await applyPlan(tx, plan, maps);
-          await tx.lowStockAcknowledgement.deleteMany({ where: { productId: product.id } });
-          await tx.auditLog.create({
-            data: {
-              userId,
-              action: plan.existing ? 'PRODUCT_BULK_UPDATED' : 'PRODUCT_BULK_CREATED',
-              entityType: 'PRODUCT',
-              entityId: product.id,
-              ipAddress,
-              details: {
-                batchId,
-                row: plan.row,
-                sku: product.sku,
-                changes: plan.changes,
-                before: plan.before,
-                after: snapshot({ ...product, category: { name: plan.next.categoryName }, manufacturer: { name: plan.next.manufacturerName } }),
-              },
+          if (plan.existing) {
+            await tx.lowStockAcknowledgement.deleteMany({ where: { productId: product.id } });
+          }
+          const logData = {
+            userId,
+            action: plan.existing ? 'PRODUCT_BULK_UPDATED' : 'PRODUCT_BULK_CREATED',
+            entityType: 'PRODUCT',
+            entityId: product.id,
+            ipAddress,
+            details: {
+              batchId,
+              row: plan.row,
+              sku: product.sku,
+              changes: plan.changes,
+              before: plan.before,
+              after: snapshot({ ...product, category: { name: plan.next.categoryName }, manufacturer: { name: plan.next.manufacturerName } }),
             },
-          });
+          };
+          if (typeof tx.auditLog?.createMany === 'function') {
+            auditLogs.push(logData);
+          } else {
+            await tx.auditLog.create({ data: logData });
+          }
         }
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 30000 });
+        if (auditLogs.length > 0) {
+          await tx.auditLog.createMany({ data: auditLogs });
+        }
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 45000 });
 
       const { preview, ...counts } = summary;
       return { ...counts, applied: true, batchId };
@@ -267,30 +295,39 @@ export const productBulkService = {
     try {
       await chunkedTransaction({
         items: actionPlans,
-        chunkSize: 20,
-        timeout: 30000,
+        chunkSize: 15,
+        timeout: 45000,
         async process(tx, chunk) {
+          const auditLogs = [];
           for (const plan of chunk) {
             if (plan.existing && !plan.changes.length) continue;
             const product = await applyPlan(tx, plan, maps);
-            await tx.lowStockAcknowledgement.deleteMany({ where: { productId: product.id } });
-            await tx.auditLog.create({
-              data: {
-                userId,
-                action: plan.existing ? 'PRODUCT_BULK_UPDATED' : 'PRODUCT_BULK_CREATED',
-                entityType: 'PRODUCT',
-                entityId: product.id,
-                ipAddress,
-                details: {
-                  batchId: sessionBatchId,
-                  row: plan.row,
-                  sku: product.sku,
-                  changes: plan.changes,
-                  before: plan.before,
-                  after: snapshot({ ...product, category: { name: plan.next.categoryName }, manufacturer: { name: plan.next.manufacturerName } }),
-                },
+            if (plan.existing) {
+              await tx.lowStockAcknowledgement.deleteMany({ where: { productId: product.id } });
+            }
+            const logData = {
+              userId,
+              action: plan.existing ? 'PRODUCT_BULK_UPDATED' : 'PRODUCT_BULK_CREATED',
+              entityType: 'PRODUCT',
+              entityId: product.id,
+              ipAddress,
+              details: {
+                batchId: sessionBatchId,
+                row: plan.row,
+                sku: product.sku,
+                changes: plan.changes,
+                before: plan.before,
+                after: snapshot({ ...product, category: { name: plan.next.categoryName }, manufacturer: { name: plan.next.manufacturerName } }),
               },
-            });
+            };
+            if (typeof tx.auditLog?.createMany === 'function') {
+              auditLogs.push(logData);
+            } else {
+              await tx.auditLog.create({ data: logData });
+            }
+          }
+          if (auditLogs.length > 0) {
+            await tx.auditLog.createMany({ data: auditLogs });
           }
         },
       });

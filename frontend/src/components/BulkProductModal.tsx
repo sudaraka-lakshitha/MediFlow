@@ -91,7 +91,7 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
     }
 
     // Applying changes: chunked upload for safe proxy traversal with progress UI
-    const CHUNK_SIZE = 25;
+    const CHUNK_SIZE = 15;
     setBusy('Applying changes. Please keep this dialog open…');
 
     const generateBatchId = () => {
@@ -130,7 +130,7 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
             batchId,
             previewToken: result?.previewToken,
             fileName: fileName.slice(0, 180),
-          }, { timeout: 60000 });
+          }, { timeout: 120000 });
 
           totalCreates += r.data.data.creates || 0;
           totalUpdates += r.data.data.updates || 0;
@@ -156,7 +156,7 @@ export function BulkProductModal({ onClose, onApplied }: { onClose(): void; onAp
           dryRun: false,
           fileName: fileName.slice(0, 180),
           previewToken: result?.previewToken,
-        }, { timeout: 60000 });
+        }, { timeout: 120000 });
         if (id !== generation.current) return;
         setProgress({ percent: 100, stage: 'Completed!' });
         setResult(r.data.data);
