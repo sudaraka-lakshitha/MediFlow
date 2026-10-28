@@ -128,6 +128,11 @@ export function InventoryPage() {
   const [restockProduct, setRestockProduct] = useState<any | null>(null);
   const [filter, setFilter] = useState<BatchFilter>("CURRENT");
   const [search, setSearch] = useState("");
+  const [lowStockSearch, setLowStockSearch] = useState("");
+  const [lowStockFilter, setLowStockFilter] = useState<"ALL" | "ATTENTION" | "OUT_OF_STOCK" | "NOTED">("ALL");
+  const [lowStockViewMode, setLowStockViewMode] = useState<"cards" | "table">("cards");
+  const [lowStockPage, setLowStockPage] = useState(1);
+  const [showAllLowStock, setShowAllLowStock] = useState(false);
   const [form, setForm] = useState({ ...emptyForm });
   const { user } = useAuth();
   const admin = user!.role === "ADMIN";
@@ -329,6 +334,38 @@ export function InventoryPage() {
   );
   const nearExpiryDays = Number(alerts.nearExpiryDays || 90);
 
+  const filteredLowStockProducts = useMemo(() => {
+    const term = lowStockSearch.trim().toLowerCase();
+    return lowStockProducts.filter((product) => {
+      const matchesFilter =
+        lowStockFilter === "ALL" ||
+        (lowStockFilter === "ATTENTION" && !product.lowStockAcknowledged) ||
+        (lowStockFilter === "OUT_OF_STOCK" && Number(product.usableStock) === 0) ||
+        (lowStockFilter === "NOTED" && product.lowStockAcknowledged);
+      const matchesSearch =
+        !term ||
+        [
+          product.genericName,
+          product.brandName,
+          product.strength,
+          product.sku,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(term);
+      return matchesFilter && matchesSearch;
+    });
+  }, [lowStockProducts, lowStockFilter, lowStockSearch]);
+
+  const lowStockPageSize = lowStockViewMode === "cards" ? 8 : 12;
+  const lowStockTotalPages = Math.max(1, Math.ceil(filteredLowStockProducts.length / lowStockPageSize));
+  const paginatedLowStockProducts = useMemo(() => {
+    if (showAllLowStock) return filteredLowStockProducts;
+    const start = (lowStockPage - 1) * lowStockPageSize;
+    return filteredLowStockProducts.slice(start, start + lowStockPageSize);
+  }, [filteredLowStockProducts, showAllLowStock, lowStockPage, lowStockPageSize]);
+
   const filteredBatches = useMemo(() => {
     const term = search.trim().toLowerCase();
     return batches
@@ -466,121 +503,441 @@ export function InventoryPage() {
       <div className="inventory-attention-strip">
         <div className="inventory-attention-summary">
           <span>
-            <i className="bi bi-bell" />
+            <i className="bi bi-bell-fill" />
           </span>
           <div>
             <strong>Inventory attention</strong>
             <small>
-              This breakdown matches the indication shown in the sidebar.
+              Click any alert chip to filter matching inventory batches below.
             </small>
           </div>
         </div>
         <div className="inventory-alert-chips">
           <button
             type="button"
-            className="inventory-alert-chip danger"
-            onClick={() => setFilter("EXPIRED_PENDING")}
+            className={`inventory-alert-chip danger ${filter === "EXPIRED_PENDING" ? "active" : ""}`}
+            onClick={() => setFilter(filter === "EXPIRED_PENDING" ? "CURRENT" : "EXPIRED_PENDING")}
+            title="Toggle filter: Expired batches awaiting action"
           >
+            <i className="bi bi-exclamation-octagon" />
             <strong>{alerts.expiredBatches || 0}</strong>
             <span>Expired</span>
+            {filter === "EXPIRED_PENDING" && <i className="bi bi-x-circle-fill text-danger ms-1" style={{ fontSize: "0.85rem" }} />}
           </button>
           <button
             type="button"
-            className="inventory-alert-chip warning"
-            onClick={() => setFilter("NEAR_EXPIRY")}
+            className={`inventory-alert-chip warning ${filter === "NEAR_EXPIRY" ? "active" : ""}`}
+            onClick={() => setFilter(filter === "NEAR_EXPIRY" ? "CURRENT" : "NEAR_EXPIRY")}
+            title={`Toggle filter: Batches expiring within ${nearExpiryDays} days`}
           >
+            <i className="bi bi-hourglass-split" />
             <strong>{alerts.nearExpiryBatches || 0}</strong>
             <span>Near expiry</span>
+            {filter === "NEAR_EXPIRY" && <i className="bi bi-x-circle-fill text-warning ms-1" style={{ fontSize: "0.85rem" }} />}
           </button>
           <button
             type="button"
-            className="inventory-alert-chip info"
-            onClick={() => setFilter("LOW_STOCK")}
+            className={`inventory-alert-chip info ${filter === "LOW_STOCK" ? "active" : ""}`}
+            onClick={() => {
+              setFilter(filter === "LOW_STOCK" ? "CURRENT" : "LOW_STOCK");
+              const el = document.getElementById("low-stock-section");
+              if (el) el.scrollIntoView({ behavior: "smooth" });
+            }}
+            title="Toggle filter: Low-stock products"
           >
+            <i className="bi bi-graph-down-arrow" />
             <strong>{alerts.lowStockRequiresAttention ?? lowStockRequiresAttention}</strong>
             <span>Low-stock attention</span>
+            {filter === "LOW_STOCK" && <i className="bi bi-x-circle-fill text-info ms-1" style={{ fontSize: "0.85rem" }} />}
           </button>
         </div>
       </div>
 
       {lowStockProducts.length > 0 && (
-        <div className="panel inventory-low-stock-panel">
+        <div id="low-stock-section" className="panel inventory-low-stock-panel">
           <div className="panel-header">
             <div>
-              <h3>Low-stock products</h3>
+              <div className="d-flex align-items-center gap-2">
+                <h3>Low-stock products</h3>
+                <span className="badge bg-danger-subtle text-danger border border-danger-subtle px-2 py-1" style={{ fontSize: "0.74rem", fontWeight: 700 }}>
+                  {lowStockRequiresAttention} require attention
+                </span>
+              </div>
               <small>
-                Review the suggested replenishment quantity and receive a new
-                batch directly. Products remain here until usable stock exceeds
-                their reorder level. Noted items remain visible but no longer
-                contribute to the sidebar indication unless their stock changes.
+                Review suggested replenishment quantities and receive new stock batches directly. Noted items remain visible but do not count toward pending attention alerts unless stock levels change.
               </small>
             </div>
-            <span className="status status-low-stock">
-              {lowStockRequiresAttention} require attention
-            </span>
+            
+            <div className="d-flex align-items-center gap-2">
+              <div className="btn-group btn-group-sm" role="group" aria-label="View mode">
+                <button
+                  type="button"
+                  className={`btn ${lowStockViewMode === "cards" ? "btn-primary" : "btn-outline-secondary"}`}
+                  onClick={() => setLowStockViewMode("cards")}
+                  title="Card view"
+                >
+                  <i className="bi bi-grid-fill me-1" />
+                  Cards
+                </button>
+                <button
+                  type="button"
+                  className={`btn ${lowStockViewMode === "table" ? "btn-primary" : "btn-outline-secondary"}`}
+                  onClick={() => setLowStockViewMode("table")}
+                  title="Table view"
+                >
+                  <i className="bi bi-table me-1" />
+                  Table
+                </button>
+              </div>
+            </div>
           </div>
-          <div className="inventory-low-stock-grid">
-            {lowStockProducts.map((product) => (
-              <div className={`inventory-low-stock-item${product.lowStockAcknowledged ? " noted" : ""}`} key={product.id}>
-                <div>
-                  <span className="inventory-low-stock-name">
-                    <strong>
-                      {product.genericName}
-                      {product.strength && product.strength !== "N/A"
-                        ? ` ${product.strength}`
-                        : ""}
-                    </strong>
-                    {product.lowStockAcknowledged && <span className="inventory-noted-badge"><i className="bi bi-check2" /> Noted</span>}
-                  </span>
-                  <small>{product.sku}</small>
-                  {product.lowStockAcknowledged && product.lowStockAcknowledgement?.acknowledgedBy && (
-                    <small className="inventory-noted-by">
-                      Noted by {product.lowStockAcknowledgement.acknowledgedBy.fullName} on {new Date(product.lowStockAcknowledgement.acknowledgedAt).toLocaleString()}
-                    </small>
-                  )}
-                </div>
-                <div className="inventory-low-stock-level">
-                  <strong>
-                    {product.usableStock} {product.unit}
-                  </strong>
-                  <small>Reorder at {product.reorderLevel}</small>
-                </div>
-                <div className="inventory-restock-action">
-                  <small>
-                    Suggested: {suggestedRestockQuantity(product)} {product.unit}
-                  </small>
-                  <div className="inventory-restock-buttons">
+
+          <div className="low-stock-toolbar-row">
+            <div className="low-stock-filters-group">
+              <button
+                type="button"
+                className={`low-stock-tab-btn ${lowStockFilter === "ALL" ? "active" : ""}`}
+                onClick={() => { setLowStockFilter("ALL"); setLowStockPage(1); }}
+              >
+                All ({lowStockProducts.length})
+              </button>
+              <button
+                type="button"
+                className={`low-stock-tab-btn ${lowStockFilter === "ATTENTION" ? "active" : ""}`}
+                onClick={() => { setLowStockFilter("ATTENTION"); setLowStockPage(1); }}
+              >
+                Action needed ({lowStockRequiresAttention})
+              </button>
+              <button
+                type="button"
+                className={`low-stock-tab-btn ${lowStockFilter === "OUT_OF_STOCK" ? "active" : ""}`}
+                onClick={() => { setLowStockFilter("OUT_OF_STOCK"); setLowStockPage(1); }}
+              >
+                Out of stock ({lowStockProducts.filter(p => Number(p.usableStock) === 0).length})
+              </button>
+              {lowStockProducts.some(p => p.lowStockAcknowledged) && (
+                <button
+                  type="button"
+                  className={`low-stock-tab-btn ${lowStockFilter === "NOTED" ? "active" : ""}`}
+                  onClick={() => { setLowStockFilter("NOTED"); setLowStockPage(1); }}
+                >
+                  Noted ({lowStockProducts.filter(p => p.lowStockAcknowledged).length})
+                </button>
+              )}
+            </div>
+
+            <div className="low-stock-search-wrap">
+              <i className="bi bi-search" />
+              <input
+                type="text"
+                className="form-control form-control-sm low-stock-search-input"
+                placeholder="Search by name, strength or SKU..."
+                value={lowStockSearch}
+                onChange={(e) => {
+                  setLowStockSearch(e.target.value);
+                  setLowStockPage(1);
+                }}
+              />
+            </div>
+          </div>
+
+          {filteredLowStockProducts.length === 0 ? (
+            <div className="p-4 text-center text-muted">
+              <i className="bi bi-search mb-2 d-block" style={{ fontSize: "1.5rem" }} />
+              <p className="mb-0 small">No low-stock products match your filter or search criteria.</p>
+            </div>
+          ) : lowStockViewMode === "cards" ? (
+            <div className="inventory-low-stock-grid">
+              {paginatedLowStockProducts.map((product) => {
+                const isOutOfStock = Number(product.usableStock) === 0;
+                const reorder = Number(product.reorderLevel || 1);
+                const percent = Math.min(100, Math.max(isOutOfStock ? 0 : 5, (Number(product.usableStock) / Math.max(1, reorder)) * 100));
+
+                return (
+                  <div
+                    key={product.id}
+                    className={`inventory-low-stock-card ${isOutOfStock ? "is-critical" : "is-low-stock"} ${product.lowStockAcknowledged ? "is-noted" : ""}`}
+                  >
+                    <div className="low-stock-card-header">
+                      <div className="low-stock-product-meta">
+                        <div className="low-stock-title-row">
+                          <span className="low-stock-name">{product.genericName}</span>
+                          {product.strength && product.strength !== "N/A" && (
+                            <span className="low-stock-strength-badge">{product.strength}</span>
+                          )}
+                        </div>
+                        <div className="low-stock-sub-meta">
+                          <span className="low-stock-sku">{product.sku}</span>
+                          {product.brandName && (
+                            <span className="low-stock-brand">{product.brandName}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="low-stock-badges">
+                        {isOutOfStock ? (
+                          <span className="stock-pill stock-pill-danger">
+                            <i className="bi bi-exclamation-octagon-fill" />
+                            Out of stock
+                          </span>
+                        ) : (
+                          <span className="stock-pill stock-pill-warning">
+                            <i className="bi bi-exclamation-triangle-fill" />
+                            Low stock
+                          </span>
+                        )}
+                        {product.lowStockAcknowledged && (
+                          <span className="stock-pill stock-pill-success">
+                            <i className="bi bi-check2-circle" />
+                            Noted
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="low-stock-card-body">
+                      <div className="low-stock-stats-row">
+                        <div className="low-stock-stat-box">
+                          <span className="stat-label">Usable stock</span>
+                          <span className={`stat-value ${isOutOfStock ? "text-danger" : "text-amber"}`}>
+                            {product.usableStock} <span className="stat-unit">{product.unit}</span>
+                          </span>
+                        </div>
+                        <div className="low-stock-stat-box">
+                          <span className="stat-label">Reorder point</span>
+                          <span className="stat-value text-secondary">
+                            {product.reorderLevel} <span className="stat-unit">{product.unit}</span>
+                          </span>
+                        </div>
+                        <div className="low-stock-stat-box">
+                          <span className="stat-label">Suggested restock</span>
+                          <span className="suggested-pill">
+                            <i className="bi bi-box-seam me-1" />
+                            +{suggestedRestockQuantity(product)} {product.unit}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="stock-progress-container" title={`Stock ratio: ${product.usableStock} / ${product.reorderLevel} ${product.unit}`}>
+                        <div
+                          className={`stock-progress-bar ${isOutOfStock ? "empty" : "low"}`}
+                          style={{ width: `${percent}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="low-stock-card-footer">
+                      <div className="low-stock-audit">
+                        {product.lowStockAcknowledged && product.lowStockAcknowledgement?.acknowledgedBy ? (
+                          <small title={new Date(product.lowStockAcknowledgement.acknowledgedAt).toLocaleString()}>
+                            <i className="bi bi-check2 text-success me-1" />
+                            Noted by {product.lowStockAcknowledgement.acknowledgedBy.fullName}
+                          </small>
+                        ) : (
+                          <small className="text-secondary">
+                            <i className="bi bi-arrow-repeat me-1" />
+                            Replenishment pending
+                          </small>
+                        )}
+                      </div>
+                      <div className="low-stock-buttons">
+                        <button
+                          type="button"
+                          className={`btn btn-sm ${product.lowStockAcknowledged ? "btn-outline-secondary" : "btn-outline-primary"}`}
+                          disabled={notingProductId === product.id}
+                          onClick={() => setLowStockNoted(product, !product.lowStockAcknowledged)}
+                        >
+                          {notingProductId === product.id ? (
+                            <span className="spinner-border spinner-border-sm" />
+                          ) : (
+                            <i className={`bi ${product.lowStockAcknowledged ? "bi-arrow-counterclockwise" : "bi-check2-circle"} me-1`} />
+                          )}
+                          {product.lowStockAcknowledged ? "Undo note" : "Mark noted"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-primary low-stock-restock-btn"
+                          onClick={() => open("receive", undefined, product)}
+                        >
+                          <i className="bi bi-box-arrow-in-down me-1" />
+                          Restock
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="low-stock-table-wrap">
+              <div className="table-responsive">
+                <table className="table low-stock-table align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th>Product & SKU</th>
+                      <th>Usable Stock</th>
+                      <th>Reorder Level</th>
+                      <th>Stock Level</th>
+                      <th>Suggested Restock</th>
+                      <th>Status</th>
+                      <th className="text-end">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedLowStockProducts.map((product) => {
+                      const isOutOfStock = Number(product.usableStock) === 0;
+                      const reorder = Number(product.reorderLevel || 1);
+                      const percent = Math.min(100, Math.max(isOutOfStock ? 0 : 5, (Number(product.usableStock) / Math.max(1, reorder)) * 100));
+
+                      return (
+                        <tr key={product.id} className={isOutOfStock ? "table-row-critical" : ""}>
+                          <td>
+                            <div className="d-flex flex-column">
+                              <span className="fw-semibold text-dark">{product.genericName}</span>
+                              <div className="d-flex align-items-center gap-2 mt-1">
+                                <span className="low-stock-sku">{product.sku}</span>
+                                {product.strength && product.strength !== "N/A" && (
+                                  <span className="low-stock-strength-badge">{product.strength}</span>
+                                )}
+                                {product.brandName && (
+                                  <span className="low-stock-brand">{product.brandName}</span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td>
+                            <span className={`fw-bold ${isOutOfStock ? "text-danger" : "text-amber"}`}>
+                              {product.usableStock} {product.unit}
+                            </span>
+                          </td>
+                          <td>
+                            <span className="text-secondary">{product.reorderLevel} {product.unit}</span>
+                          </td>
+                          <td style={{ minWidth: "120px" }}>
+                            <div className="stock-progress-container" title={`${product.usableStock} / ${product.reorderLevel} ${product.unit}`}>
+                              <div
+                                className={`stock-progress-bar ${isOutOfStock ? "empty" : "low"}`}
+                                style={{ width: `${percent}%` }}
+                              />
+                            </div>
+                          </td>
+                          <td>
+                            <span className="suggested-pill">
+                              <i className="bi bi-box-seam me-1" />
+                              +{suggestedRestockQuantity(product)} {product.unit}
+                            </span>
+                          </td>
+                          <td>
+                            <div className="d-flex gap-1 flex-wrap">
+                              {isOutOfStock ? (
+                                <span className="stock-pill stock-pill-danger">Out of stock</span>
+                              ) : (
+                                <span className="stock-pill stock-pill-warning">Low stock</span>
+                              )}
+                              {product.lowStockAcknowledged && (
+                                <span className="stock-pill stock-pill-success">Noted</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="text-end">
+                            <div className="d-flex justify-content-end gap-1">
+                              <button
+                                type="button"
+                                className={`btn btn-sm ${product.lowStockAcknowledged ? "btn-outline-secondary" : "btn-outline-primary"}`}
+                                disabled={notingProductId === product.id}
+                                onClick={() => setLowStockNoted(product, !product.lowStockAcknowledged)}
+                                title={product.lowStockAcknowledged ? "Undo note" : "Mark noted"}
+                              >
+                                {notingProductId === product.id ? (
+                                  <span className="spinner-border spinner-border-sm" />
+                                ) : (
+                                  <i className={`bi ${product.lowStockAcknowledged ? "bi-arrow-counterclockwise" : "bi-check2-circle"}`} />
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-primary low-stock-restock-btn"
+                                onClick={() => open("receive", undefined, product)}
+                              >
+                                <i className="bi bi-box-arrow-in-down me-1" />
+                                Restock
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {filteredLowStockProducts.length > lowStockPageSize && (
+            <div className="low-stock-pagination-bar">
+              <div>
+                Showing{" "}
+                <strong>
+                  {showAllLowStock
+                    ? `all ${filteredLowStockProducts.length}`
+                    : `${(lowStockPage - 1) * lowStockPageSize + 1}–${Math.min(lowStockPage * lowStockPageSize, filteredLowStockProducts.length)} of ${filteredLowStockProducts.length}`}
+                </strong>{" "}
+                low-stock products
+              </div>
+              <div className="d-flex align-items-center gap-2">
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-secondary"
+                  onClick={() => setShowAllLowStock(!showAllLowStock)}
+                >
+                  {showAllLowStock ? "Show paginated" : `Show all (${filteredLowStockProducts.length})`}
+                </button>
+                {!showAllLowStock && (
+                  <div className="btn-group btn-group-sm">
                     <button
                       type="button"
-                      className={`btn btn-sm ${product.lowStockAcknowledged ? "btn-outline-secondary" : "btn-outline-primary"}`}
-                      disabled={notingProductId === product.id}
-                      onClick={() => setLowStockNoted(product, !product.lowStockAcknowledged)}
+                      className="btn btn-outline-secondary"
+                      disabled={lowStockPage <= 1}
+                      onClick={() => setLowStockPage((prev) => Math.max(1, prev - 1))}
                     >
-                      {notingProductId === product.id
-                        ? <span className="spinner-border spinner-border-sm" />
-                        : <i className={`bi ${product.lowStockAcknowledged ? "bi-arrow-counterclockwise" : "bi-check2-circle"} me-1`} />}
-                      {product.lowStockAcknowledged ? "Undo note" : "Mark noted"}
+                      <i className="bi bi-chevron-left" />
                     </button>
+                    <span className="btn btn-outline-secondary disabled text-dark px-3">
+                      {lowStockPage} / {lowStockTotalPages}
+                    </span>
                     <button
                       type="button"
-                      className="btn btn-sm btn-primary"
-                      onClick={() => open("receive", undefined, product)}
+                      className="btn btn-outline-secondary"
+                      disabled={lowStockPage >= lowStockTotalPages}
+                      onClick={() => setLowStockPage((prev) => Math.min(lowStockTotalPages, prev + 1))}
                     >
-                      <i className="bi bi-box-arrow-in-down me-1" />
-                      Restock
+                      <i className="bi bi-chevron-right" />
                     </button>
                   </div>
-                </div>
+                )}
               </div>
-            ))}
-          </div>
+            </div>
+          )}
         </div>
       )}
 
       <div className="panel">
         <div className="inventory-toolbar">
           <div>
-            <h3>Inventory batches</h3>
+            <div className="d-flex align-items-center gap-2">
+              <h3>Inventory batches</h3>
+              {filter !== "ALL" && filter !== "CURRENT" && (
+                <div className="active-filter-banner">
+                  <span>Filtered: {filter.replace("_", " ")}</span>
+                  <button
+                    type="button"
+                    onClick={() => setFilter("CURRENT")}
+                    title="Reset to current stock"
+                  >
+                    <i className="bi bi-x-circle-fill" />
+                  </button>
+                </div>
+              )}
+            </div>
             <small>
               Expired quantities remain visible until a disposition is
               recorded.
