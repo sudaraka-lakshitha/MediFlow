@@ -1,9 +1,10 @@
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, '../..');
+mkdirSync(resolve(rootDir, 'data/catalogs'), { recursive: true });
 
 export const realSuppliers = [
   {
@@ -611,123 +612,11 @@ export function generateDatasets() {
     ].join(','))
   ].join('\r\n');
 
-  // Write CSV to root and frontend public templates
-  const csvRootPath = resolve(rootDir, 'mediflow_real_pharmacy_products.csv');
-  const csvPublicPath = resolve(rootDir, 'frontend/public/templates/mediflow_real_pharmacy_products.csv');
+  // Keep catalogue data separate from application sources.
+  const csvRootPath = resolve(rootDir, 'data/catalogs/curated-catalog.csv');
   writeFileSync(csvRootPath, `\uFEFF${csvRows}`, 'utf8');
-  writeFileSync(csvPublicPath, `\uFEFF${csvRows}`, 'utf8');
-  console.log(`Generated CSV files:\n - ${csvRootPath}\n - ${csvPublicPath}`);
 
-  // 2. Generate SQL Script
-  function sqlEscape(val) {
-    if (val == null) return 'NULL';
-    if (typeof val === 'number') return String(val);
-    if (typeof val === 'boolean') return val ? '1' : '0';
-    return `'${String(val).replace(/'/g, "''").replace(/\\/g, '\\\\')}'`;
-  }
 
-  const sqlLines = [
-    '-- MediFlow Real Pharmacy Master Data & Initial Stock',
-    '-- Compatible with MySQL 8.0, XAMPP phpMyAdmin, and Aiven Cloud',
-    '-- Generated on 2026-10-27',
-    'START TRANSACTION;',
-    '',
-    '-- 1. Real Suppliers',
-    ...realSuppliers.map((s) => `INSERT INTO suppliers (name, contact_person, phone, email, address, active, created_at, updated_at) VALUES (${sqlEscape(s.name)}, ${sqlEscape(s.contactPerson)}, ${sqlEscape(s.phone)}, ${sqlEscape(s.email)}, ${sqlEscape(s.address)}, 1, NOW(), NOW()) ON DUPLICATE KEY UPDATE contact_person = VALUES(contact_person), phone = VALUES(phone), email = VALUES(email), address = VALUES(address), active = 1;`),
-    '',
-    '-- 2. Real Manufacturers',
-    ...realManufacturers.map((m) => `INSERT INTO manufacturers (name, country, phone, email, active, created_at, updated_at) VALUES (${sqlEscape(m.name)}, ${sqlEscape(m.country)}, ${sqlEscape(m.phone)}, ${sqlEscape(m.email)}, 1, NOW(), NOW()) ON DUPLICATE KEY UPDATE country = VALUES(country), phone = VALUES(phone), email = VALUES(email), active = 1;`),
-    '',
-    '-- 3. Categories',
-    ...realCategories.map((c) => `INSERT INTO categories (name, description, active, created_at, updated_at) VALUES (${sqlEscape(c.name)}, ${sqlEscape(c.description)}, 1, NOW(), NOW()) ON DUPLICATE KEY UPDATE description = VALUES(description), active = 1;`),
-    '',
-    '-- 4. Products',
-    ...realProducts.map((p) => {
-      return `INSERT INTO products (sku, product_type, generic_name, brand_name, strength, dosage_form, unit, manufacturer, active_ingredient, variant_group, barcode, rxnorm_cui, pubchem_cid, storage_instructions, minimum_age_years, maximum_age_years, selling_price, reorder_level, prescription_required, active, category_id, manufacturer_id, created_at, updated_at)
-VALUES (
-  ${sqlEscape(p.sku)},
-  ${sqlEscape(p.productType)},
-  ${sqlEscape(p.genericName)},
-  ${sqlEscape(p.brandName)},
-  ${sqlEscape(p.strength)},
-  ${sqlEscape(p.dosageForm)},
-  ${sqlEscape(p.unit.toLowerCase())},
-  ${sqlEscape(p.manufacturerName)},
-  ${sqlEscape(p.activeIngredient || null)},
-  ${sqlEscape(p.variantGroup || null)},
-  ${sqlEscape(p.barcode || null)},
-  ${sqlEscape(p.rxNormCui || null)},
-  ${p.pubchemCid ? p.pubchemCid : 'NULL'},
-  ${sqlEscape(p.storageInstructions || null)},
-  ${p.minimumAgeYears != null ? p.minimumAgeYears : 'NULL'},
-  ${p.maximumAgeYears != null ? p.maximumAgeYears : 'NULL'},
-  ${p.sellingPrice.toFixed(2)},
-  ${p.reorderLevel},
-  ${p.prescriptionRequired ? 1 : 0},
-  1,
-  (SELECT id FROM categories WHERE name = ${sqlEscape(p.categoryName)} LIMIT 1),
-  (SELECT id FROM manufacturers WHERE name = ${sqlEscape(p.manufacturerName)} LIMIT 1),
-  NOW(),
-  NOW()
-)
-ON DUPLICATE KEY UPDATE
-  generic_name = VALUES(generic_name),
-  brand_name = VALUES(brand_name),
-  selling_price = VALUES(selling_price),
-  reorder_level = VALUES(reorder_level),
-  barcode = VALUES(barcode),
-  active = 1;`;
-    }),
-    '',
-    '-- 5. Inventory Batches & Stock Movements',
-    ...realProducts.map((p) => {
-      return `
--- Batch & Stock for ${p.sku}
-INSERT INTO inventory_batches (product_id, supplier_id, batch_number, quantity_received, quantity_available, quantity_reserved, purchase_price, expiry_date, received_at, restricted)
-SELECT
-  p.id,
-  s.id,
-  ${sqlEscape(p.batchNumber)},
-  ${p.initialQty},
-  ${p.initialQty},
-  0,
-  ${p.purchasePrice.toFixed(2)},
-  DATE_ADD(CURDATE(), INTERVAL ${p.expiryDays} DAY),
-  NOW(),
-  0
-FROM products p
-LEFT JOIN suppliers s ON s.name = ${sqlEscape(p.supplierName)}
-WHERE p.sku = ${sqlEscape(p.sku)}
-ON DUPLICATE KEY UPDATE
-  quantity_available = VALUES(quantity_available),
-  purchase_price = VALUES(purchase_price);
-
-INSERT INTO stock_movements (product_id, batch_id, type, quantity_change, quantity_before, quantity_after, reference_type, reason, performed_by_id, created_at)
-SELECT
-  b.product_id,
-  b.id,
-  'RECEIPT',
-  b.quantity_received,
-  0,
-  b.quantity_received,
-  'OPENING_STOCK',
-  'Verified Opening Stock from Authorized Distributor Invoice',
-  COALESCE((SELECT id FROM users WHERE role = 'ADMIN' LIMIT 1), 1),
-  NOW()
-FROM inventory_batches b
-JOIN products p ON p.id = b.product_id
-WHERE p.sku = ${sqlEscape(p.sku)} AND b.batch_number = ${sqlEscape(p.batchNumber)}
-AND NOT EXISTS (
-  SELECT 1 FROM stock_movements sm WHERE sm.batch_id = b.id AND sm.type = 'RECEIPT'
-);
-`;
-    }),
-    'COMMIT;',
-  ];
-
-  const sqlPath = resolve(rootDir, 'real_pharmacy_data.sql');
-  writeFileSync(sqlPath, sqlLines.join('\n'), 'utf8');
-  console.log(`Generated SQL file:\n - ${sqlPath}`);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {

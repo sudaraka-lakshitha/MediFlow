@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import { checkWorkbookArchive } from './deliveryWorkbook.service.js';
 import { AppError } from '../utils/AppError.js';
+import { workbookLimits } from '../utils/workbookLimits.js';
 
 export const stockColumns = [
   'action',
@@ -28,10 +29,11 @@ export const resolveHeader = (header) => {
   if (clean.includes('action')) return 'action';
   if (clean.includes('unit')) return 'unit';
   if (clean.includes('stock')) return 'current_stock';
+  if (clean.includes('product name')) return 'product_name';
   return null;
 };
 
-export async function createStockTemplateWorkbook(batches = []) {
+export async function createStockTemplateWorkbook(batches = [], { examples = true } = {}) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'MediFlow Pharmacy System';
   workbook.lastModifiedBy = 'MediFlow Inventory Engine';
@@ -55,12 +57,12 @@ export async function createStockTemplateWorkbook(batches = []) {
   // Instructions in Rows 2-8
   const instructions = [
     'INSTRUCTIONS: Follow the guidance below to receive new batches or update stock counts.',
-    '• ACTION: Select RECEIVE (or RESTOCK) for incoming supplier shipments. Select ADJUST to correct stock after counts/audits.',
+    '• ACTION: RECEIVE/RESTOCK adds stock; ADJUST is a signed change; SET_COUNT is the total physically counted.',
     '• SKU: Product code or barcode matching an active item in your MediFlow Product Catalogue.',
-    '• QUANTITY: For countable items (tablets, bottles, capsules), use whole integers. For syrups/liquids (mL, g), decimals are supported (e.g. 2500 mL, 75.5 mL).',
+    '• QUANTITY: Whole numbers for countable items; measured units such as mL/g allow up to 3 decimal places. Leave reference columns unchanged.',
     '• EXPIRY DATE: Enter in YYYY-MM-DD format (e.g. 2027-12-31). New receipts must have future expiry dates.',
-    '• SUPPLIER: Enter the authorized distributor/manufacturer name. If blank during RECEIVE, system defaults to primary distributor.',
-    '• AMBER COLUMNS (A-H): Editable fields applied to inventory. GREY COLUMNS (I-K): Reference values only; keep unchanged.',
+    '• SUPPLIER: Match one active supplier exactly. Blank preserves the current supplier; [CLEAR] removes it. No supplier is assumed for a new batch.',
+    '• AMBER (A-H): Editable. Blank cost/expiry preserves existing values; both are required for a new batch. Replace example rows before upload.',
   ];
 
   instructions.forEach((text, idx) => {
@@ -78,7 +80,7 @@ export async function createStockTemplateWorkbook(batches = []) {
 
   // Header Row 10
   const headers = [
-    { label: 'Action (RECEIVE/ADJUST)', width: 22, col: 1 },
+    { label: 'Action', width: 22, col: 1 },
     { label: 'Product SKU / Code', width: 24, col: 2 },
     { label: 'Batch Number', width: 20, col: 3 },
     { label: 'Quantity', width: 16, col: 4 },
@@ -109,7 +111,7 @@ export async function createStockTemplateWorkbook(batches = []) {
   });
 
   // Data rows
-  const rowsData = batches.length ? batches : [
+  const rowsData = batches.length || !examples ? batches : [
     {
       action: 'RECEIVE',
       sku: 'MED-AMOXICILLIN-ML',
@@ -185,7 +187,7 @@ export async function createStockTemplateWorkbook(batches = []) {
         right: { style: 'thin', color: { argb: 'FFE2E8F0' } },
       };
       if (col === 4 || col === 5 || col === 9) {
-        cell.numFmt = '#,##0.00';
+        cell.numFmt = col === 5 ? '#,##0.00' : '#,##0.###';
       }
       if (col === 6) {
         cell.numFmt = 'yyyy-mm-dd';
@@ -196,10 +198,10 @@ export async function createStockTemplateWorkbook(batches = []) {
     row.getCell(1).dataValidation = {
       type: 'list',
       allowBlank: false,
-      formulae: ['"RECEIVE,ADJUST,RESTOCK"'],
+      formulae: ['"RECEIVE,ADJUST,SET_COUNT,RESTOCK"'],
       showErrorMessage: true,
       errorTitle: 'Select Action',
-      error: 'Select RECEIVE, ADJUST, or RESTOCK from the dropdown.',
+      error: 'Select RECEIVE, ADJUST, SET_COUNT, or RESTOCK from the dropdown.',
     };
   });
 
@@ -207,13 +209,13 @@ export async function createStockTemplateWorkbook(batches = []) {
   return workbook;
 }
 
-export async function exportStockWorkbook(batches = []) {
-  const workbook = await createStockTemplateWorkbook(batches);
+export async function exportStockWorkbook(batches = [], options = { examples: false }) {
+  const workbook = await createStockTemplateWorkbook(batches, options);
   return workbook.xlsx.writeBuffer();
 }
 
 export async function readStockWorkbook(buffer) {
-  await checkWorkbookArchive(buffer);
+  await checkWorkbookArchive(buffer, workbookLimits.stock);
   const workbook = new ExcelJS.Workbook();
   try {
     await workbook.xlsx.load(buffer, {
@@ -249,6 +251,12 @@ export async function readStockWorkbook(buffer) {
   }
 
   const mappedHeaders = headers.map(resolveHeader);
+  const seen = new Set();
+  mappedHeaders.forEach((key, index) => {
+    if (!key && headers[index]) throw new AppError(400, `Unknown stock column: ${headers[index]}. Use the exported template.`);
+    if (key && seen.has(key)) throw new AppError(400, `Duplicate stock column: ${headers[index]}.`);
+    if (key) seen.add(key);
+  });
   const rows = [];
 
   for (let r = headerRow + 1; r <= sheet.rowCount; r++) {
@@ -261,9 +269,7 @@ export async function readStockWorkbook(buffer) {
       const cell = row.getCell(c + 1);
       let val = cell.value;
       if (val && typeof val === 'object' && !(val instanceof Date)) {
-        if ('text' in val) val = val.text;
-        else if ('result' in val) val = val.result;
-        else throw new AppError(400, `Row ${r}: Formulas and hyperlinks are not allowed in data cells.`);
+        throw new AppError(400, `Row ${r}, column ${c + 1}: use plain values, not formulas or hyperlinks.`);
       }
       if (val instanceof Date) {
         val = val.toISOString().split('T')[0];

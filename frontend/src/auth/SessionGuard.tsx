@@ -156,12 +156,13 @@ export function SessionGuard({ children }: { children: ReactNode }) {
   return <>
     {/* Non-blocking session-checking banner shown during initial validation */}
     {showCheckingBanner && <div className="session-checking-bar" role="status" aria-live="polite">
-      <span className="session-checking-spinner" aria-hidden="true" />
+      {!error && <span className="session-checking-spinner" aria-hidden="true" />}
       <span>
-        {warmingUp
-          ? '☕ The server is warming up — this may take a moment. Please wait…'
+        {error ? `Session check could not finish: ${error}` : warmingUp
+          ? 'The server is taking longer than usual. Please wait…'
           : 'Verifying your session…'}
       </span>
+      {error && <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => { setError(''); void sync(); }}>Retry session check</button>}
     </div>}
     {!hidden && (absoluteWarning || idleWarning) && <div className="session-warning" role="alert">
       <strong>{absoluteWarning ? 'Password verification needed soon' : 'Still working?'}</strong>

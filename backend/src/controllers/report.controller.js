@@ -2,6 +2,7 @@ import { reportService } from '../services/report.service.js';
 import { recordAudit } from '../services/audit.service.js';
 import { toCsv } from '../utils/csv.js';
 import { createPdf } from '../utils/pdf.js';
+import { createDataWorkbook, XLSX_MIME } from '../services/spreadsheetExport.service.js';
 const numericColumns = new Set(['quantity', 'grossSales', 'discount', 'containerFee', 'netRevenue', 'cost', 'profit', 'margin', 'opening', 'received', 'dispensed', 'adjustments', 'closing', 'reorderLevel', 'stockValue', 'transactions']);
 
 const dailyColumns = [
@@ -20,12 +21,15 @@ const customColumns = [
 
 const send = async (req, res, type, period, format, rows, columns, presentation = {}) => {
   const filename = `mediflow-${type}-${period}.${format}`;
-  const body = format === 'pdf'
+  const body = format === 'xlsx'
+    ? (await createDataWorkbook({ title: `MediFlow ${type} report`, sheetName: 'Report', columns: columns.map(c => ({ ...c, numeric: numericColumns.has(c.key) })), rows, notes: [`Period: ${period}`, 'Reporting extract. Use the dedicated export-for-update template for bulk editing.', ...(presentation.notes || [])], summary: presentation.summary })).buffer
+    : format === 'pdf'
     ? await createPdf({ title: `MediFlow ${type[0].toUpperCase() + type.slice(1)} Report`, subtitle: `Period: ${period}`, columns, rows, ...presentation })
     : Buffer.from(`\uFEFF${toCsv([{ key: 'label', label: 'Report summary' }, { key: 'value', label: 'Value', numeric: true }], [{ label: 'Report', value: type }, { label: 'Period', value: period }, ...(presentation.summary || [])])}\r\n${toCsv(columns.map((c) => ({ ...c, numeric: numericColumns.has(c.key) })), rows)}`);
   await recordAudit({ userId: req.user.id, action: 'REPORT_EXPORTED', entityType: `${type.toUpperCase()}_REPORT`, details: { period, format }, ipAddress: req.ip });
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.type(format === 'pdf' ? 'application/pdf' : 'text/csv').send(body);
+  res.set('Cache-Control', 'no-store');
+  res.type(format === 'xlsx' ? XLSX_MIME : format === 'pdf' ? 'application/pdf' : 'text/csv').send(body);
 };
 
 export const reportController = {

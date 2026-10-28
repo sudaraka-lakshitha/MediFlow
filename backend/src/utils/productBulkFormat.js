@@ -37,7 +37,7 @@ export const bulkInstructions = [
   'For new products, complete the fields marked required in the field guide. Blank optional values use the documented defaults.',
   'To change prices only, use the existing SKU and Selling price (Rs.) columns. Leave other cells blank or omit those columns.',
   'Stock units and medicine identity cannot change after stock, orders or sales exist. Create a new SKU instead.',
-  'Save only the Products sheet as CSV UTF-8. Do not upload the Guide sheet. Excel workbooks are not uploaded directly.',
-  'Choose the CSV in Products > Bulk upload, validate, review changed and cleared fields, then apply. Validation saves no products.',
+  'Upload the .xlsx workbook directly, or save only the Products sheet as CSV UTF-8. Do not upload the Guide sheet as CSV.',
+  'Choose the file in Products > Bulk upload, validate, review changed and cleared fields, then apply. Validation saves no products.',
   'Use Export for update to start from saved records. Do not change an existing SKU to rename it: a different SKU creates a different product.',
 ];

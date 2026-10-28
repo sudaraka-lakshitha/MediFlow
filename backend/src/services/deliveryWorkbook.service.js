@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import yauzl from 'yauzl';
 import { AppError } from '../utils/AppError.js';
 import { fileURLToPath } from 'node:url';
+import { workbookLimits } from '../utils/workbookLimits.js';
 
 export const deliveryColumns = ['invoice_number', 'version', 'action', 'recipient_name', 'address', 'phone', 'courier', 'tracking', 'current_status', 'dispatched_at', 'delivered_at'];
 const template = new URL('../../assets/delivery-template.xlsx', import.meta.url);
@@ -29,8 +30,9 @@ export async function exportDeliveryWorkbook(deliveries) {
 }
 
 // XLSX is a ZIP archive. Bound actual decompression before handing it to ExcelJS.
-export async function checkWorkbookArchive(buffer, { maxRows = 3000 } = {}) {
-  if (!buffer.length || buffer.length > 5_000_000) throw new AppError(400, 'Excel file must be 5 MB or smaller.');
+export async function checkWorkbookArchive(buffer, { maxBytes = workbookLimits.delivery.maxBytes, maxRows = workbookLimits.delivery.maxRows, maxColumns = workbookLimits.delivery.maxColumns } = {}) {
+  if (!buffer.length || buffer.length > maxBytes) throw new AppError(400, `Excel file must be ${maxBytes / 1_000_000} MB or smaller.`);
+  const columnNumber = letters => [...letters].reduce((n, letter) => n * 26 + letter.charCodeAt(0) - 64, 0);
   return new Promise((resolve, reject) => {
     yauzl.fromBuffer(buffer, { lazyEntries: true }, (error, zip) => {
       if (error) return reject(new AppError(400, 'Invalid Excel file. Save as .xlsx and try again.'));
@@ -54,11 +56,11 @@ export async function checkWorkbookArchive(buffer, { maxRows = 3000 } = {}) {
             if (sheetXml && !failed) {
               const xml = Buffer.concat(sheetXml).toString('utf8');
               for (const match of xml.matchAll(/<(?:row|c)\b[^>]*\br=["']([A-Z]*)(\d+)["']/g)) {
-                if (Number(match[2]) > maxRows || (match[1] && match[1].length > 2)) return fail('Workbook contains cells outside the supported table size.');
+                if (Number(match[2]) > maxRows || columnNumber(match[1]) > maxColumns) return fail('Workbook contains cells outside the supported table size.');
               }
               for (const range of xml.matchAll(/\b(?:ref|sqref)=["']([^"']+)["']/g)) {
                 for (const match of range[1].matchAll(/([A-Z]+)\$?(\d+)/g)) {
-                  if (Number(match[2]) > maxRows || (match[1] && match[1].length > 2)) return fail('Workbook contains oversized ranges. Use the exported template without full-column rules.');
+                  if (Number(match[2]) > maxRows || columnNumber(match[1]) > maxColumns) return fail('Workbook contains oversized ranges. Use the exported template without full-column rules.');
                 }
               }
             }

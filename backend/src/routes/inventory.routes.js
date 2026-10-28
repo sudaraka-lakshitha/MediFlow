@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { inventoryController } from '../controllers/inventory.controller.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { authorize } from '../middleware/authorize.js';
@@ -11,7 +12,7 @@ export const inventoryRoutes = Router();
 inventoryRoutes.use(authenticate, authorize('ADMIN', 'PHARMACIST'));
 inventoryRoutes.get('/batches/bulk/template.xlsx', asyncHandler(inventoryController.bulkTemplateXlsx));
 inventoryRoutes.get('/batches/bulk/template.csv', asyncHandler(inventoryController.bulkTemplateCsv));
-inventoryRoutes.get('/batches/bulk/export-for-update', asyncHandler(inventoryController.exportStockForUpdate));
+inventoryRoutes.get('/batches/bulk/export-for-update', validate({query:z.object({search:z.string().trim().max(150).default(''),format:z.enum(['xlsx','csv']).default('xlsx')})}), asyncHandler(inventoryController.exportStockForUpdate));
 inventoryRoutes.post('/batches/bulk/excel-preview', validate({ body: bulkStockExcelSchema }), asyncHandler(inventoryController.bulkExcelPreview));
 inventoryRoutes.post('/batches/bulk/preview', validate({ body: bulkStockRowsSchema }), asyncHandler(inventoryController.bulkPreview));
 inventoryRoutes.post('/batches/bulk/confirm', validate({ body: bulkStockRowsSchema }), asyncHandler(inventoryController.bulkConfirm));

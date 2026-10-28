@@ -5,6 +5,8 @@ import { protectRetryController } from '../utils/operationContext.js';
 import { exportStockWorkbook, readStockWorkbook } from '../services/stockWorkbook.service.js';
 import { stockBulkService } from '../services/stockBulk.service.js';
 import { prisma } from '../config/prisma.js';
+import { toCsv } from '../utils/csv.js';
+import { AppError } from '../utils/AppError.js';
 
 export const inventoryController = protectRetryController({
   batches: async (req, res) => {
@@ -99,7 +101,7 @@ export const inventoryController = protectRetryController({
     res.json({ message: 'Inventory batch deleted successfully.' });
   },
   bulkTemplateXlsx: async (_req, res) => {
-    const buffer = await exportStockWorkbook([]);
+    const buffer = await exportStockWorkbook([], { examples: true });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="MediFlow_Stock_Bulk_Update_Template.xlsx"');
     res.send(buffer);
@@ -115,29 +117,35 @@ export const inventoryController = protectRetryController({
     res.setHeader('Content-Disposition', 'attachment; filename="mediflow-stock-bulk-template.csv"');
     res.send(`\uFEFF${csv}`);
   },
-  exportStockForUpdate: async (_req, res) => {
+  exportStockForUpdate: async (req, res) => {
+    const { search = '', format = 'xlsx' } = req.validatedQuery || {};
     const batches = await prisma.inventoryBatch.findMany({
-      where: { quantityAvailable: { gt: 0 } },
+      where: { product: { active: true }, ...(search ? { OR: [{ batchNumber: { contains: search } }, { product: { sku: { contains: search } } }, { product: { genericName: { contains: search } } }] } : {}) },
       include: { product: true, supplier: true },
-      orderBy: [{ product: { name: 'asc' } }, { expiryDate: 'asc' }],
-      take: 500,
+      orderBy: [{ product: { genericName: 'asc' } }, { expiryDate: 'asc' }, { id: 'asc' }],
+      take: 501,
     });
+    if (batches.length > 500) throw new AppError(413, 'Narrow the search to export at most 500 batches at a time.');
+    const literal = value => typeof value === 'string' && (value === '[CLEAR]' || /^['=+\-@]/.test(value)) ? `'${value}` : value;
     const formatted = batches.map((b) => ({
-      action: 'ADJUST',
-      sku: b.product.code,
-      batchNumber: b.batchNumber,
+      action: 'SET_COUNT',
+      sku: literal(b.product.sku),
+      batchNumber: literal(b.batchNumber),
       quantity: Number(b.quantityAvailable),
       purchasePrice: Number(b.purchasePrice),
       expiryDate: b.expiryDate.toISOString().split('T')[0],
-      supplierName: b.supplier?.name || '',
+      supplierName: literal(b.supplier?.name || ''),
       reason: 'Routine stock audit adjustment',
       currentStock: Number(b.quantityAvailable),
       unit: b.product.unit,
-      productName: b.product.name,
+      productName: b.product.brandName ? `${b.product.genericName} (${b.product.brandName})` : b.product.genericName,
     }));
-    const buffer = await exportStockWorkbook(formatted);
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename="mediflow-stock-for-update.xlsx"');
+    const keys = { action:'action',sku:'sku',batchNumber:'batch_number',quantity:'quantity',purchasePrice:'purchase_price',expiryDate:'expiry_date',supplierName:'supplier_name',reason:'reason',currentStock:'current_stock',unit:'unit',productName:'product_name' };
+    const buffer = format === 'csv' ? '\uFEFF' + toCsv(Object.entries(keys).map(([key,label]) => ({ key,label,numeric:['quantity','purchasePrice','currentStock'].includes(key) })), formatted) : await exportStockWorkbook(formatted);
+    await recordAudit({ userId:req.user.id,action:'STOCK_EXPORTED_FOR_UPDATE',entityType:'INVENTORY_BATCH',details:{format,rowCount:formatted.length},ipAddress:req.ip });
+    res.setHeader('Cache-Control','no-store');
+    res.setHeader('Content-Type', format === 'csv' ? 'text/csv; charset=utf-8' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="mediflow-stock-for-update.${format}"`);
     res.send(buffer);
   },
   bulkExcelPreview: async (req, res) => {

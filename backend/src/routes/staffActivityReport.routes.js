@@ -7,6 +7,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { streamCsv } from '../utils/csv.js';
 import { staffActivityReportService as service } from '../services/staffActivityReport.service.js';
 import { env } from '../config/env.js';
+import { createDataWorkbook, XLSX_MIME } from '../services/spreadsheetExport.service.js';
 
 const date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value=>{
   const parsed=new Date(`${value}T00:00:00Z`);
@@ -22,8 +23,9 @@ export const staffActivityReportRoutes=Router();
 staffActivityReportRoutes.use(authenticate,authorize('ADMIN'));
 staffActivityReportRoutes.get('/options',asyncHandler(async(req,res)=>res.json({data:await service.options(req.user)})));
 staffActivityReportRoutes.get('/',validate({query:staffActivityQuery}),asyncHandler(async(req,res)=>res.json(await service.report(req.validatedQuery,req.user))));
-staffActivityReportRoutes.get('/export.csv',validate({query:staffActivityQuery}),asyncHandler(async(req,res)=>{
+staffActivityReportRoutes.get('/export.:format',validate({params:z.object({format:z.enum(['csv','xlsx'])}),query:staffActivityQuery}),asyncHandler(async(req,res)=>{
   const q=req.validatedQuery;
+  res.set('Cache-Control','no-store');
   const columns=[{key:'id',label:'Activity ID'},{key:'time',label:'Time (UTC)'},{key:'localTime',label:'Time (pharmacy local)'},
     {key:'from',label:'Report from (inclusive)'},{key:'to',label:'Report to (inclusive)'},{key:'staffId',label:'Staff ID'},
     {key:'staff',label:'Staff member'},{key:'role',label:'Current role'},{key:'task',label:'Task'},{key:'action',label:'Task code'},
@@ -32,6 +34,10 @@ staffActivityReportRoutes.get('/export.csv',validate({query:staffActivityQuery})
   const rows=service.exportRows(q,req.user);
   async function* pages(){for await(const page of rows) yield page.map(row=>({...row,from:q.from,to:q.to,
     localTime:new Date(Date.parse(row.time)+env.REPORT_TIMEZONE_OFFSET_MINUTES*60000).toISOString().slice(0,19).replace('T',' ')}));}
+  if(req.params.format==='xlsx') {
+    const {buffer}=await createDataWorkbook({title:'MediFlow staff activity report',sheetName:'Activity',columns,pages:pages(),notes:[`Period: ${q.from} to ${q.to}. Filters match the selected staff, task, module and outcome.`, 'Audit history for review only. This file cannot be imported to rewrite staff activity.']});
+    res.set('Cache-Control','no-store');res.attachment(`staff-activity-${q.from}-to-${q.to}.xlsx`);res.type(XLSX_MIME).send(buffer);return;
+  }
   res.attachment(`staff-activity-${q.from}-to-${q.to}.csv`);res.type('text/csv');
   await streamCsv(res,columns,pages());
 }));

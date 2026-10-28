@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import axios from 'axios';
 import { api, errorMessage } from '../api/client';
 import { parseCsv } from '../utils/csv';
 import { Modal } from './Modal';
@@ -14,6 +15,7 @@ export function BulkStockModal({ onClose, onApplied }: BulkStockModalProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
+  const [search, setSearch] = useState('');
 
   const saveBlob = (blob: Blob, name: string) => {
     const url = URL.createObjectURL(blob);
@@ -82,8 +84,12 @@ export function BulkStockModal({ onClose, onApplied }: BulkStockModalProps) {
       onClose();
     } catch (e) {
       setError(errorMessage(e));
-      setPreview(null);
-      setConfirmed(false);
+      // Preserve the same preview after an uncertain network result so retrying
+      // replays the recorded operation instead of receiving the stock twice.
+      if (axios.isAxiosError(e) && [400, 409, 422].includes(e.response?.status || 0)) {
+        setPreview(null);
+        setConfirmed(false);
+      }
     } finally {
       setBusy(false);
     }
@@ -98,14 +104,15 @@ export function BulkStockModal({ onClose, onApplied }: BulkStockModalProps) {
         </p>
 
         <div className="d-flex flex-wrap gap-2 mb-3">
-          <a
+          <button
+            type="button"
             className="btn btn-outline-primary btn-sm"
-            href="/templates/MediFlow_Stock_Bulk_Update_Template.xlsx"
-            download="MediFlow_Stock_Bulk_Update_Template.xlsx"
+            disabled={busy}
+            onClick={() => downloadFile('/inventory/batches/bulk/template.xlsx', 'MediFlow_Stock_Import_Template.xlsx')}
           >
             <i className="bi bi-file-earmark-excel me-1" />
             Excel template &amp; guide
-          </a>
+          </button>
           <button
             type="button"
             className="btn btn-outline-secondary btn-sm"
@@ -119,19 +126,24 @@ export function BulkStockModal({ onClose, onApplied }: BulkStockModalProps) {
             type="button"
             className="btn btn-outline-secondary btn-sm"
             disabled={busy}
-            onClick={() => downloadFile('/inventory/batches/bulk/export-for-update', 'mediflow-stock-for-update.xlsx')}
+            onClick={() => downloadFile(`/inventory/batches/bulk/export-for-update?format=xlsx&search=${encodeURIComponent(search)}`, 'mediflow-stock-for-update.xlsx')}
           >
             <i className="bi bi-download me-1" />
-            Export active stock for update
+            Export for update (Excel)
           </button>
         </div>
+        <label htmlFor="stock-export-search" className="form-label">Filter stock export by product name, SKU or batch (up to 500 batches)</label>
+        <input id="stock-export-search" className="form-control mb-2" value={search} maxLength={150} disabled={busy} onChange={e=>setSearch(e.target.value)}/>
+        <button type="button" className="btn btn-outline-secondary btn-sm mb-3" disabled={busy} onClick={()=>downloadFile(`/inventory/batches/bulk/export-for-update?format=csv&search=${encodeURIComponent(search)}`, 'mediflow-stock-for-update.csv')}>Export for update (CSV)</button>
 
         <div className="alert alert-info py-2 small mb-3">
           <div className="fw-bold mb-1"><i className="bi bi-info-circle me-1" /> Action Guide:</div>
           <ul className="mb-0 ps-3">
             <li><strong>RECEIVE / RESTOCK</strong>: Log incoming shipments from manufacturers/distributors. Specify SKU, Batch Number, Quantity, Cost, Expiry Date, and Supplier.</li>
-            <li><strong>ADJUST</strong>: Modify an existing batch available stock (use <code>+</code> or <code>-</code> delta) or expiry date following a physical inventory count.</li>
-            <li><strong>Liquids &amp; Syrups (mL / g)</strong>: Exact decimals are fully supported (e.g. <code>2500 ml</code>, <code>75.5 ml</code>). Tablets and capsules require whole numbers.</li>
+            <li><strong>ADJUST</strong>: Enter a signed change (for example, <code>-5</code> removes five units).</li>
+            <li><strong>SET_COUNT</strong>: Enter the total physically counted. An unchanged export makes no stock movement.</li>
+            <li><strong>Measured units (mL / g)</strong>: Use up to three decimal places. Tablets, capsules and other countable items require whole numbers.</li>
+            <li>Blank optional fields keep existing values. Use <code>[CLEAR]</code> to remove a supplier; expiry and cost cannot be cleared.</li>
           </ul>
         </div>
 

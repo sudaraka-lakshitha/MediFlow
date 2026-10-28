@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { realProducts as curatedEssentials, realSuppliers, realManufacturers, realCategories } from './generate-pharmacy-dataset.mjs';
@@ -6,6 +6,7 @@ import { transformToMediFlow } from './crawl-kanapathee.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, '../..');
+mkdirSync(resolve(rootDir, 'data/catalogs'), { recursive: true });
 
 // Additional top-tier well-known household & hospital medicines and pharmaceutical retail goods
 const additionalFormulary = [
@@ -480,126 +481,9 @@ export async function buildMasterCatalog() {
     ].join(','))
   ].join('\r\n');
 
-  const masterCsvPath = resolve(rootDir, 'mediflow_master_pharmacy_catalog.csv');
-  const masterCsvPublic = resolve(rootDir, 'frontend/public/templates/mediflow_master_pharmacy_catalog.csv');
+  const masterCsvPath = resolve(rootDir, 'data/catalogs/master-catalog.csv');
 
   writeFileSync(masterCsvPath, `\uFEFF${csvRows}`, 'utf8');
-  writeFileSync(masterCsvPublic, `\uFEFF${csvRows}`, 'utf8');
-  console.log(`✓ Master CSV written to:\n - ${masterCsvPath}\n - ${masterCsvPublic}`);
-
-  // 2. Generate Master SQL
-  function sqlEscape(val) {
-    if (val == null) return 'NULL';
-    if (typeof val === 'number') return String(val);
-    if (typeof val === 'boolean') return val ? '1' : '0';
-    return `'${String(val).replace(/'/g, "''").replace(/\\/g, '\\\\')}'`;
-  }
-
-  const allCategories = [...new Set(allProducts.map((p) => p.categoryName))];
-  const allManufacturers = [...new Set(allProducts.map((p) => p.manufacturerName).filter(Boolean))];
-
-  const sqlLines = [
-    '-- MediFlow Master Pharmacy & Healthcare Catalog (Real & Crawled Data)',
-    '-- Total Products: ' + allProducts.length,
-    '-- Generated on 2026-10-27',
-    'START TRANSACTION;',
-    '',
-    '-- 1. Suppliers',
-    ...realSuppliers.map((s) => `INSERT INTO suppliers (name, contact_person, phone, email, address, active, created_at, updated_at) VALUES (${sqlEscape(s.name)}, ${sqlEscape(s.contactPerson)}, ${sqlEscape(s.phone)}, ${sqlEscape(s.email)}, ${sqlEscape(s.address)}, 1, NOW(), NOW()) ON DUPLICATE KEY UPDATE phone = VALUES(phone), active = 1;`),
-    `INSERT INTO suppliers (name, contact_person, phone, email, address, active, created_at, updated_at) VALUES ('Kanapathee Pharmacy / New Kavery Medical', 'Dispensary Pharmacist', '+94 77 891 4073', 'info@kanapathee.com', 'New Kavery Medical, NMRA License RL-08261, Sri Lanka', 1, NOW(), NOW()) ON DUPLICATE KEY UPDATE phone = VALUES(phone), active = 1;`,
-    '',
-    '-- 2. Manufacturers',
-    ...allManufacturers.map((m) => `INSERT INTO manufacturers (name, country, active, created_at, updated_at) VALUES (${sqlEscape(m)}, 'Sri Lanka', 1, NOW(), NOW()) ON DUPLICATE KEY UPDATE active = 1;`),
-    '',
-    '-- 3. Categories',
-    ...allCategories.map((c) => `INSERT INTO categories (name, description, active, created_at, updated_at) VALUES (${sqlEscape(c)}, 'MediFlow Master Pharmacy Category', 1, NOW(), NOW()) ON DUPLICATE KEY UPDATE active = 1;`),
-    '',
-    '-- 4. Products',
-    ...allProducts.map((p) => {
-      return `INSERT INTO products (sku, product_type, generic_name, brand_name, strength, dosage_form, unit, manufacturer, active_ingredient, variant_group, barcode, rxnorm_cui, pubchem_cid, storage_instructions, minimum_age_years, maximum_age_years, selling_price, reorder_level, prescription_required, active, category_id, manufacturer_id, created_at, updated_at)
-VALUES (
-  ${sqlEscape(p.sku)},
-  ${sqlEscape(p.productType)},
-  ${sqlEscape(p.genericName)},
-  ${sqlEscape(p.brandName || null)},
-  ${sqlEscape(p.strength)},
-  ${sqlEscape(p.dosageForm)},
-  ${sqlEscape(p.unit.toLowerCase())},
-  ${sqlEscape(p.manufacturerName || null)},
-  ${sqlEscape(p.activeIngredient || null)},
-  ${sqlEscape(p.variantGroup || null)},
-  ${sqlEscape(p.barcode || null)},
-  ${sqlEscape(p.rxNormCui || null)},
-  ${p.pubchemCid ? p.pubchemCid : 'NULL'},
-  ${sqlEscape(p.storageInstructions || null)},
-  ${p.minimumAgeYears != null ? p.minimumAgeYears : 'NULL'},
-  ${p.maximumAgeYears != null ? p.maximumAgeYears : 'NULL'},
-  ${Number(p.sellingPrice).toFixed(2)},
-  ${p.reorderLevel},
-  ${p.prescriptionRequired ? 1 : 0},
-  1,
-  (SELECT id FROM categories WHERE name = ${sqlEscape(p.categoryName)} LIMIT 1),
-  (SELECT id FROM manufacturers WHERE name = ${sqlEscape(p.manufacturerName)} LIMIT 1),
-  NOW(),
-  NOW()
-)
-ON DUPLICATE KEY UPDATE
-  generic_name = VALUES(generic_name),
-  brand_name = VALUES(brand_name),
-  selling_price = VALUES(selling_price),
-  reorder_level = VALUES(reorder_level),
-  active = 1;`;
-    }),
-    '',
-    '-- 5. Batches & Initial Stock Movements',
-    ...allProducts.map((p) => {
-      const supplierName = p.supplierName || 'Kanapathee Pharmacy / New Kavery Medical';
-      return `
--- Batch & Stock for ${p.sku}
-INSERT INTO inventory_batches (product_id, supplier_id, batch_number, quantity_received, quantity_available, quantity_reserved, purchase_price, expiry_date, received_at, restricted)
-SELECT
-  p.id,
-  COALESCE((SELECT id FROM suppliers WHERE name = ${sqlEscape(supplierName)} LIMIT 1), (SELECT id FROM suppliers LIMIT 1)),
-  ${sqlEscape(p.batchNumber)},
-  ${p.initialQty},
-  ${p.initialQty},
-  0,
-  ${Number(p.purchasePrice || p.sellingPrice * 0.7).toFixed(2)},
-  DATE_ADD(CURDATE(), INTERVAL ${p.expiryDays || 720} DAY),
-  NOW(),
-  0
-FROM products p
-WHERE p.sku = ${sqlEscape(p.sku)}
-ON DUPLICATE KEY UPDATE
-  quantity_available = VALUES(quantity_available),
-  purchase_price = VALUES(purchase_price);
-
-INSERT INTO stock_movements (product_id, batch_id, type, quantity_change, quantity_before, quantity_after, reference_type, reason, performed_by_id, created_at)
-SELECT
-  b.product_id,
-  b.id,
-  'RECEIPT',
-  b.quantity_received,
-  0,
-  b.quantity_received,
-  'OPENING_STOCK',
-  'Verified Master Pharmacy Opening Stock Receipt',
-  COALESCE((SELECT id FROM users WHERE role = 'ADMIN' LIMIT 1), 1),
-  NOW()
-FROM inventory_batches b
-JOIN products p ON p.id = b.product_id
-WHERE p.sku = ${sqlEscape(p.sku)} AND b.batch_number = ${sqlEscape(p.batchNumber)}
-AND NOT EXISTS (
-  SELECT 1 FROM stock_movements sm WHERE sm.batch_id = b.id AND sm.type = 'RECEIPT'
-);
-`;
-    }),
-    'COMMIT;',
-  ];
-
-  const masterSqlPath = resolve(rootDir, 'mediflow_master_pharmacy.sql');
-  writeFileSync(masterSqlPath, sqlLines.join('\n'), 'utf8');
-  console.log(`✓ Master SQL written to:\n - ${masterSqlPath}`);
 
   return allProducts;
 }

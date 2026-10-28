@@ -1,463 +1,141 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
-import { isCountableUnit } from '../utils/unitMeasure.js';
 import { stockQuantity } from '../utils/stockQuantity.js';
 import { serializable } from '../utils/serializable.js';
+import { operationContext } from '../utils/operationContext.js';
+import { calendarDate } from '../validators/calendar.js';
+import { moneySchema } from '../validators/money.js';
+import { CLEAR_VALUE } from '../utils/productBulkFormat.js';
 
-const digest = (rows) => createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const dateText = value => value ? new Date(value).toISOString().slice(0, 10) : null;
+const todayText = () => new Date(Date.now() + env.REPORT_TIMEZONE_OFFSET_MINUTES * 60_000).toISOString().slice(0, 10);
+const number = value => Number(value ?? 0);
+const unescapeCell = value => typeof value === 'string' && /^'(?:'|\[CLEAR\]$|[=+\-@])/.test(value) ? value.slice(1) : value;
 
 export async function stockBulkPlan(tx, rows) {
-  const plans = [];
-  const errors = [];
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  // Cache products and suppliers for quick lookups
-  const allProducts = await tx.product.findMany({
-    select: {
-      id: true,
-      sku: true,
-      genericName: true,
-      brandName: true,
-      strength: true,
-      dosageForm: true,
-      unit: true,
-      active: true,
-      barcode: true,
-      sellingPrice: true,
-    },
-  });
-
-  const productByCode = new Map();
-  for (const p of allProducts) {
-    p.name = p.brandName ? `${p.genericName} (${p.brandName})` : p.genericName;
-    p.code = p.sku;
-    productByCode.set(p.sku.toUpperCase(), p);
-    if (p.barcode) productByCode.set(p.barcode.trim(), p);
-  }
-
-  const allSuppliers = await tx.supplier.findMany({
-    select: { id: true, name: true, active: true },
-  });
-  const supplierByName = new Map();
-  for (const s of allSuppliers) {
-    supplierByName.set(s.name.toLowerCase().trim(), s);
-  }
-
-  const seenBatchKeys = new Set();
-
+  const products = await tx.product.findMany({ select: { id: true, sku: true, genericName: true, brandName: true, unit: true, active: true, barcode: true } });
+  const suppliers = await tx.supplier.findMany({ select: { id: true, name: true, active: true } });
+  const plans = [], errors = [], seen = new Set();
   for (const [index, row] of rows.entries()) {
-    const rowNum = Number(row.__sourceRow || index + 2);
-    const skuRaw = String(row.sku || row.product_code || '').trim();
-    const batchNumber = String(row.batch_number || row.batch || '').trim();
-    const actionRaw = String(row.action || 'RECEIVE').trim().toUpperCase();
-    const rawQty = String(row.quantity ?? '').trim();
-    const rawCost = String(row.purchase_price ?? '').trim();
-    const rawExpiry = String(row.expiry_date ?? '').trim();
-    const supplierName = String(row.supplier_name ?? '').trim();
-    const reason = String(row.reason ?? '').trim();
+    const rowNum = number(row.__sourceRow || index + 2);
+    const sku = String(unescapeCell(row.sku || row.product_code || '')).trim();
+    const batchNumber = String(unescapeCell(row.batch_number || row.batch || '')).trim();
+    const rawQty = String(unescapeCell(row.quantity ?? '')).trim();
+    if (!sku && !batchNumber && !rawQty) continue;
+    try {
+      const fail = message => { throw new AppError(400, message); };
+      if (!sku) fail('Product SKU / Code is required.');
+      const matches = products.filter(p => p.sku.toUpperCase() === sku.toUpperCase() || p.barcode?.toUpperCase() === sku.toUpperCase());
+      if (matches.length !== 1) fail('Product code is missing or ambiguous. Use its unique SKU.');
+      const product = matches[0];
+      if (!product.active) fail('This product is inactive.');
+      if (!batchNumber || batchNumber.length > 80) fail('Enter a batch number of at most 80 characters.');
+      const key = product.id + ':' + batchNumber.toUpperCase();
+      if (seen.has(key)) fail('Duplicate product and batch in this upload.');
+      seen.add(key);
+      const inputAction = String(row.action || 'RECEIVE').trim().toUpperCase();
+      const action = inputAction === 'RESTOCK' ? 'RECEIVE' : inputAction;
+      if (!['RECEIVE', 'ADJUST', 'SET_COUNT'].includes(action)) fail('Choose RECEIVE, ADJUST (signed change), or SET_COUNT (counted total).');
+      if (!rawQty) fail('Quantity is required.');
+      const quantity = action === 'SET_COUNT' && /^0(?:\.0{1,3})?$/.test(rawQty)
+        ? new Prisma.Decimal(0) : stockQuantity(rawQty, product.unit, { signed: action === 'ADJUST' });
+      const existing = await tx.inventoryBatch.findUnique({ where: { productId_batchNumber: { productId: product.id, batchNumber } }, include: { supplier: true } });
+      if (!existing && action !== 'RECEIVE') fail('Batch not found. Use RECEIVE to add a new batch.');
+      const before = new Prisma.Decimal(existing?.quantityAvailable ?? 0);
+      const delta = action === 'SET_COUNT' ? quantity.sub(before) : quantity;
+      const after = before.add(delta);
+      if (after.isNegative() || after.greaterThan('999999999.999')) fail('Resulting stock is outside the supported range.');
+      if (after.lessThan(existing?.quantityReserved ?? 0)) fail('Stock cannot be reduced below the quantity reserved for active orders.');
+      if (existing && delta.isPositive() && (existing.restricted || dateText(existing.expiryDate) <= todayText())) fail('Cannot increase stock in a restricted or expired batch. Review the batch first.');
+      if (action === 'RECEIVE' && new Prisma.Decimal(existing?.quantityReceived ?? 0).add(delta).greaterThan('999999999.999')) fail('Total received quantity exceeds the supported range.');
 
-    // Skip empty row
-    if (!skuRaw && !batchNumber && !rawQty) continue;
-
-    if (!skuRaw) {
-      errors.push({ row: rowNum, sku: 'N/A', message: 'Product SKU / Code is required.' });
-      continue;
-    }
-
-    const product = productByCode.get(skuRaw.toUpperCase());
-    if (!product) {
-      errors.push({ row: rowNum, sku: skuRaw, message: `Product "${skuRaw}" was not found in the catalog.` });
-      continue;
-    }
-
-    if (!product.active) {
-      errors.push({ row: rowNum, sku: skuRaw, message: `Product "${product.name}" (${product.code}) is inactive.` });
-      continue;
-    }
-
-    if (!batchNumber) {
-      errors.push({ row: rowNum, sku: skuRaw, message: 'Batch number is required.' });
-      continue;
-    }
-
-    if (batchNumber.length > 80) {
-      errors.push({ row: rowNum, sku: skuRaw, message: 'Batch number exceeds 80 characters.' });
-      continue;
-    }
-
-    const action = actionRaw === 'RESTOCK' ? 'RECEIVE' : actionRaw;
-    if (!['RECEIVE', 'ADJUST'].includes(action)) {
-      errors.push({ row: rowNum, sku: skuRaw, message: `Invalid action "${actionRaw}". Choose RECEIVE, RESTOCK, or ADJUST.` });
-      continue;
-    }
-
-    if (!rawQty || isNaN(Number(rawQty))) {
-      errors.push({ row: rowNum, sku: skuRaw, message: 'A valid numeric quantity is required.' });
-      continue;
-    }
-
-    const qtyNum = Number(rawQty);
-    const isCountable = isCountableUnit(product.unit);
-
-    if (isCountable && !Number.isInteger(qtyNum)) {
-      errors.push({
-        row: rowNum,
-        sku: skuRaw,
-        message: `${product.name} is measured in "${product.unit}". Countable items must have whole integer quantities.`,
+      const rawExpiry = String(row.expiry_date ?? '').trim();
+      let expiryDate = dateText(existing?.expiryDate);
+      if (rawExpiry) {
+        if (!calendarDate.safeParse(rawExpiry).success) fail('Use a valid expiry date in YYYY-MM-DD format.');
+        expiryDate = rawExpiry;
+      }
+      if (!expiryDate) fail('Expiry date is required for a new batch.');
+      if (action === 'RECEIVE' && expiryDate <= todayText()) fail('Incoming stock must have a future expiry date.');
+      if (existing && expiryDate !== dateText(existing.expiryDate)) {
+        if (action === 'RECEIVE') fail('This batch already has a different expiry date. Check the batch identity.');
+        if (dateText(existing.expiryDate) <= todayText()) fail('Expired batches cannot have their expiry extended. Use the expired-stock review.');
+      }
+      const rawCost = String(row.purchase_price ?? '').trim();
+      if (!existing && !rawCost) fail('Purchase price is required for a new batch. Enter 0 explicitly for free stock.');
+      const parsedCost = rawCost ? moneySchema.safeParse(rawCost) : null;
+      if (parsedCost && !parsedCost.success) fail('Purchase price must be finite, nonnegative, within range and use at most two decimals.');
+      const purchasePrice = parsedCost ? parsedCost.data : number(existing?.purchasePrice);
+      const supplierInput = String(row.supplier_name ?? '').trim();
+      const rawSupplier = unescapeCell(supplierInput);
+      let supplierId = existing?.supplierId ?? null;
+      let supplierName = existing?.supplier?.name ?? null;
+      if (supplierInput === CLEAR_VALUE) { supplierId = null; supplierName = null; }
+      else if (rawSupplier) {
+        const matches = suppliers.filter(s => s.name.trim().toLowerCase() === rawSupplier.toLowerCase());
+        if (matches.length !== 1 || !matches[0].active) fail('Supplier must match one active supplier exactly. Create it first or correct the name.');
+        supplierId = matches[0].id; supplierName = matches[0].name;
+      }
+      const reason = String(unescapeCell(row.reason ?? '')).trim() || (action === 'RECEIVE' ? 'Bulk shipment receipt' : 'Bulk stock count adjustment');
+      if (reason.length > 500) fail('Reason must be 500 characters or fewer.');
+      const changes = [];
+      const change = (field, label, oldValue, newValue) => { if (oldValue !== newValue) changes.push({ field, label, before: oldValue, after: newValue }); };
+      change('quantity', 'Available stock', number(before), number(after));
+      change('purchasePrice', 'Purchase price', existing ? number(existing.purchasePrice) : null, purchasePrice);
+      change('expiryDate', 'Expiry date', dateText(existing?.expiryDate), expiryDate);
+      change('supplier', 'Supplier', existing?.supplier?.name ?? null, supplierName);
+      plans.push({ row: rowNum, productId: product.id, productCode: product.sku, productName: product.brandName ? product.genericName + ' (' + product.brandName + ')' : product.genericName,
+        unit: product.unit, batchNumber, action, existingBatchId: existing?.id ?? null,
+        quantityBefore: number(before), quantityChange: number(delta), quantityAfter: number(after),
+        purchasePrice, expiryDate, supplierId, supplierName, reason, changes,
+        // Bind relevant database inputs, including holds and restrictions, to the approved preview.
+        snapshot: existing ? { quantityReceived: number(existing.quantityReceived), quantityReserved: number(existing.quantityReserved), restricted: Boolean(existing.restricted), expiryDate: dateText(existing.expiryDate), purchasePrice: number(existing.purchasePrice), supplierId: existing.supplierId ?? null } : null,
       });
-      continue;
+    } catch (error) {
+      if (!(error instanceof AppError)) throw error;
+      errors.push({ row: rowNum, sku: sku || 'N/A', message: error.message });
     }
-
-    if (action === 'RECEIVE' && qtyNum <= 0) {
-      errors.push({ row: rowNum, sku: skuRaw, message: 'Received quantity must be greater than zero.' });
-      continue;
-    }
-
-    if (action === 'ADJUST' && qtyNum === 0) {
-      errors.push({ row: rowNum, sku: skuRaw, message: 'Adjustment quantity cannot be zero.' });
-      continue;
-    }
-
-    // Expiry date validation
-    let expiryDate = null;
-    if (rawExpiry) {
-      const parsedDate = new Date(rawExpiry);
-      if (isNaN(parsedDate.getTime())) {
-        errors.push({ row: rowNum, sku: skuRaw, message: `Invalid expiry date "${rawExpiry}". Use YYYY-MM-DD.` });
-        continue;
-      }
-      parsedDate.setHours(0, 0, 0, 0);
-      expiryDate = parsedDate;
-    }
-
-    if (action === 'RECEIVE' && !expiryDate) {
-      errors.push({ row: rowNum, sku: skuRaw, message: 'Expiry date is required for stock receipts.' });
-      continue;
-    }
-
-    if (action === 'RECEIVE' && expiryDate <= today) {
-      errors.push({ row: rowNum, sku: skuRaw, message: `Expiry date (${rawExpiry}) is in the past or today. Incoming stock must be unexpired.` });
-      continue;
-    }
-
-    // Purchase price validation
-    let purchasePrice = 0;
-    if (rawCost) {
-      purchasePrice = Number(rawCost);
-      if (isNaN(purchasePrice) || purchasePrice < 0) {
-        errors.push({ row: rowNum, sku: skuRaw, message: 'Purchase price must be a positive number.' });
-        continue;
-      }
-    }
-
-    // Supplier resolution
-    let supplierId = null;
-    if (supplierName) {
-      const matched = supplierByName.get(supplierName.toLowerCase().trim());
-      if (matched) {
-        supplierId = matched.id;
-      } else {
-        // Find by partial match
-        const partial = allSuppliers.find((s) => s.name.toLowerCase().includes(supplierName.toLowerCase().trim()));
-        if (partial) supplierId = partial.id;
-      }
-    }
-
-    // Check duplicate in file
-    const batchKey = `${product.id}:${batchNumber.toUpperCase()}`;
-    if (seenBatchKeys.has(batchKey)) {
-      errors.push({ row: rowNum, sku: skuRaw, message: `Duplicate entry for batch "${batchNumber}" of product "${product.code}" in this upload.` });
-      continue;
-    }
-    seenBatchKeys.add(batchKey);
-
-    // Check existing batch in database
-    const existing = await tx.inventoryBatch.findUnique({
-      where: {
-        productId_batchNumber: { productId: product.id, batchNumber },
-      },
-      include: { supplier: true },
-    });
-
-    if (action === 'ADJUST' && !existing) {
-      errors.push({
-        row: rowNum,
-        sku: skuRaw,
-        message: `Batch "${batchNumber}" does not exist for ${product.name}. Use RECEIVE to add a new batch.`,
-      });
-      continue;
-    }
-
-    const changes = [];
-    let quantityBefore = 0;
-    let quantityAfter = 0;
-    let quantityChange = 0;
-
-    if (action === 'RECEIVE') {
-      if (existing) {
-        quantityBefore = Number(existing.quantityAvailable);
-        quantityChange = qtyNum;
-        quantityAfter = quantityBefore + quantityChange;
-        changes.push({
-          field: 'quantity',
-          label: 'Available Stock',
-          before: `${quantityBefore} ${product.unit}`,
-          after: `${quantityAfter} ${product.unit} (+${quantityChange})`,
-        });
-        if (purchasePrice && purchasePrice !== Number(existing.purchasePrice)) {
-          changes.push({
-            field: 'purchasePrice',
-            label: 'Purchase Cost',
-            before: `Rs. ${Number(existing.purchasePrice).toFixed(2)}`,
-            after: `Rs. ${purchasePrice.toFixed(2)}`,
-          });
-        }
-      } else {
-        quantityBefore = 0;
-        quantityChange = qtyNum;
-        quantityAfter = qtyNum;
-        changes.push({
-          field: 'quantity',
-          label: 'New Batch Stock',
-          before: '0 (New)',
-          after: `${quantityAfter} ${product.unit}`,
-        });
-        changes.push({
-          field: 'expiryDate',
-          label: 'Expiry Date',
-          before: 'N/A',
-          after: rawExpiry,
-        });
-        if (purchasePrice > 0) {
-          changes.push({
-            field: 'purchasePrice',
-            label: 'Unit Cost',
-            before: 'N/A',
-            after: `Rs. ${purchasePrice.toFixed(2)}`,
-          });
-        }
-      }
-    } else if (action === 'ADJUST') {
-      quantityBefore = Number(existing.quantityAvailable);
-      quantityChange = qtyNum;
-      quantityAfter = quantityBefore + quantityChange;
-
-      if (quantityAfter < 0) {
-        errors.push({
-          row: rowNum,
-          sku: skuRaw,
-          message: `Adjustment (${quantityChange > 0 ? '+' : ''}${quantityChange}) would cause negative stock (current available: ${quantityBefore} ${product.unit}).`,
-        });
-        continue;
-      }
-
-      const reserved = Number(existing.quantityReserved);
-      if (quantityAfter < reserved) {
-        errors.push({
-          row: rowNum,
-          sku: skuRaw,
-          message: `Cannot adjust available stock below ${reserved} ${product.unit} already reserved for active orders.`,
-        });
-        continue;
-      }
-
-      changes.push({
-        field: 'quantity',
-        label: 'Stock Adjustment',
-        before: `${quantityBefore} ${product.unit}`,
-        after: `${quantityAfter} ${product.unit} (${quantityChange > 0 ? '+' : ''}${quantityChange})`,
-      });
-
-      if (expiryDate && existing.expiryDate.getTime() !== expiryDate.getTime()) {
-        changes.push({
-          field: 'expiryDate',
-          label: 'Expiry Date',
-          before: existing.expiryDate.toISOString().split('T')[0],
-          after: rawExpiry,
-        });
-      }
-    }
-
-    plans.push({
-      row: rowNum,
-      productId: product.id,
-      productCode: product.code,
-      productName: product.name,
-      unit: product.unit,
-      batchNumber,
-      action,
-      existingBatchId: existing ? existing.id : null,
-      supplierId: supplierId || (existing ? existing.supplierId : null),
-      supplierName: supplierName || (existing?.supplier?.name || null),
-      quantityChange,
-      quantityBefore,
-      quantityAfter,
-      purchasePrice: purchasePrice || (existing ? Number(existing.purchasePrice) : 0),
-      expiryDate: expiryDate ? expiryDate.toISOString().split('T')[0] : (existing ? existing.expiryDate.toISOString().split('T')[0] : null),
-      reason: reason || (action === 'RECEIVE' ? 'Bulk shipment receipt' : 'Bulk stock audit adjustment'),
-      changes,
-    });
   }
-
-  const receives = plans.filter((p) => p.action === 'RECEIVE').length;
-  const adjusts = plans.filter((p) => p.action === 'ADJUST').length;
-
-  return {
-    plans,
-    errors,
-    summary: {
-      totalRows: rows.length,
-      validUpdates: plans.length,
-      receives,
-      adjusts,
-      errorsCount: errors.length,
-    },
-  };
+  return { plans, errors, summary: { totalRows: rows.length, validUpdates: plans.filter(p => p.changes.length).length,
+    receives: plans.filter(p => p.action === 'RECEIVE' && p.changes.length).length,
+    adjusts: plans.filter(p => p.action !== 'RECEIVE' && p.changes.length).length, errorsCount: errors.length } };
 }
 
 export const stockBulkService = {
   async preview(rows, user) {
     const result = await stockBulkPlan(prisma, rows);
-    const token = result.errors.length || !result.plans.length
-      ? null
-      : jwt.sign(
-        { purpose: 'stock-bulk', userId: user.id, digest: digest(rows) },
-        env.JWT_SECRET,
-        { expiresIn: '15m' },
-      );
-    return { ...result, previewToken: token };
+    const previewToken = result.errors.length || !result.summary.validUpdates ? null : jwt.sign(
+      { purpose: 'stock-bulk', userId: user.id, digest: digest(rows), planDigest: digest(result.plans) },
+      env.JWT_SECRET, { expiresIn: '15m', jwtid: randomUUID() });
+    return { ...result, previewToken };
   },
-
   async apply(rows, previewToken, user) {
     if (!previewToken) throw new AppError(400, 'Preview token is required.');
     let claim;
-    try {
-      claim = jwt.verify(previewToken, env.JWT_SECRET);
-    } catch {
-      throw new AppError(401, 'Preview expired or invalid. Please re-validate the file.');
-    }
-
-    if (claim.purpose !== 'stock-bulk' || claim.userId !== user.id || claim.digest !== digest(rows)) {
-      throw new AppError(409, 'File or user changed since preview was generated. Re-validate the file.');
-    }
-
-    return serializable(async (tx) => {
+    try { claim = jwt.verify(previewToken, env.JWT_SECRET); }
+    catch { throw new AppError(409, 'Preview expired or invalid. Please re-validate the file.'); }
+    if (claim.purpose !== 'stock-bulk' || claim.userId !== user.id || claim.digest !== digest(rows) || !claim.planDigest || !/^[0-9a-f-]{36}$/i.test(claim.jti || '')) throw new AppError(409, 'File or user changed. Re-validate the file.');
+    // The preview ID is persisted even if clients retry with a new HTTP request key.
+    return operationContext.run({ actorId: user.id, key: claim.jti, hash: digest({ purpose: 'stock-bulk', rows }) }, () => serializable(async tx => {
       const { plans, errors } = await stockBulkPlan(tx, rows);
-      if (errors.length) {
-        throw new AppError(422, `Cannot apply stock updates: ${errors.length} validation errors found.`);
+      if (errors.length) throw new AppError(422, errors.map(e => 'Row ' + e.row + ': ' + e.message).join('; '));
+      if (digest(plans) !== claim.planDigest) throw new AppError(409, 'Stock or batch details changed since preview. Re-validate and review the updated result.');
+      const changed = plans.filter(p => p.changes.length);
+      if (!changed.length) throw new AppError(400, 'There are no changes to apply.');
+      for (const plan of changed) {
+        const data = { quantityAvailable: new Prisma.Decimal(plan.quantityAfter), purchasePrice: new Prisma.Decimal(plan.purchasePrice), expiryDate: new Date(plan.expiryDate + 'T00:00:00.000Z'), supplierId: plan.supplierId };
+        const batch = plan.existingBatchId ? await tx.inventoryBatch.update({ where: { id: plan.existingBatchId }, data: { ...data, ...(plan.action === 'RECEIVE' ? { quantityReceived: { increment: new Prisma.Decimal(plan.quantityChange) } } : {}) } })
+          : await tx.inventoryBatch.create({ data: { ...data, productId: plan.productId, batchNumber: plan.batchNumber, quantityReceived: new Prisma.Decimal(plan.quantityChange) } });
+        if (plan.quantityChange !== 0) await tx.stockMovement.create({ data: { productId: plan.productId, batchId: batch.id, type: plan.action === 'RECEIVE' ? 'RECEIPT' : 'ADJUSTMENT', quantityChange: new Prisma.Decimal(plan.quantityChange), quantityBefore: new Prisma.Decimal(plan.quantityBefore), quantityAfter: new Prisma.Decimal(plan.quantityAfter), reason: plan.reason, performedById: user.id } });
       }
-      if (!plans.length) {
-        throw new AppError(400, 'No valid stock updates to apply.');
-      }
-
-      const affectedProductIds = new Set();
-      const updatedBatches = [];
-
-      for (const plan of plans) {
-        affectedProductIds.add(plan.productId);
-
-        if (plan.action === 'RECEIVE') {
-          let batch;
-          if (plan.existingBatchId) {
-            // Increment existing batch
-            batch = await tx.inventoryBatch.update({
-              where: { id: plan.existingBatchId },
-              data: {
-                quantityReceived: { increment: plan.quantityChange },
-                quantityAvailable: { increment: plan.quantityChange },
-                purchasePrice: plan.purchasePrice ? new Prisma.Decimal(plan.purchasePrice) : undefined,
-                supplierId: plan.supplierId || undefined,
-              },
-            });
-          } else {
-            // Create new batch
-            batch = await tx.inventoryBatch.create({
-              data: {
-                productId: plan.productId,
-                supplierId: plan.supplierId,
-                batchNumber: plan.batchNumber,
-                quantityReceived: new Prisma.Decimal(plan.quantityChange),
-                quantityAvailable: new Prisma.Decimal(plan.quantityChange),
-                purchasePrice: new Prisma.Decimal(plan.purchasePrice),
-                expiryDate: new Date(plan.expiryDate),
-              },
-            });
-          }
-
-          // Create stock movement
-          await tx.stockMovement.create({
-            data: {
-              productId: plan.productId,
-              batchId: batch.id,
-              type: 'RECEIPT',
-              quantityChange: new Prisma.Decimal(plan.quantityChange),
-              quantityBefore: new Prisma.Decimal(plan.quantityBefore),
-              quantityAfter: new Prisma.Decimal(plan.quantityAfter),
-              reason: plan.reason,
-              performedById: user.id,
-            },
-          });
-
-          updatedBatches.push(batch.id);
-        } else if (plan.action === 'ADJUST') {
-          const batch = await tx.inventoryBatch.update({
-            where: { id: plan.existingBatchId },
-            data: {
-              quantityAvailable: new Prisma.Decimal(plan.quantityAfter),
-              expiryDate: plan.expiryDate ? new Date(plan.expiryDate) : undefined,
-            },
-          });
-
-          // Create stock movement
-          await tx.stockMovement.create({
-            data: {
-              productId: plan.productId,
-              batchId: batch.id,
-              type: 'ADJUSTMENT',
-              quantityChange: new Prisma.Decimal(plan.quantityChange),
-              quantityBefore: new Prisma.Decimal(plan.quantityBefore),
-              quantityAfter: new Prisma.Decimal(plan.quantityAfter),
-              reason: plan.reason,
-              performedById: user.id,
-            },
-          });
-
-          updatedBatches.push(batch.id);
-        }
-      }
-
-      // Clear low stock notes for replenished/adjusted products
-      if (affectedProductIds.size) {
-        await tx.lowStockAcknowledgement.deleteMany({
-          where: { productId: { in: Array.from(affectedProductIds) } },
-        });
-      }
-
-      // Record overarching audit log
-      await tx.auditLog.create({
-        data: {
-          userId: user.id,
-          action: 'STOCK_BULK_APPLIED',
-          entityType: 'INVENTORY_BATCH',
-          details: {
-            batchesCount: plans.length,
-            receives: plans.filter((p) => p.action === 'RECEIVE').length,
-            adjusts: plans.filter((p) => p.action === 'ADJUST').length,
-            affectedProducts: Array.from(affectedProductIds),
-          },
-        },
-      });
-
-      return {
-        applied: true,
-        batchesUpdated: updatedBatches.length,
-        message: `Successfully applied ${updatedBatches.length} bulk stock updates.`,
-      };
-    });
+      await tx.lowStockAcknowledgement.deleteMany({ where: { productId: { in: [...new Set(changed.map(p => p.productId))] } } });
+      await tx.auditLog.create({ data: { userId: user.id, action: 'STOCK_BULK_APPLIED', entityType: 'INVENTORY_BATCH', details: { batchesCount: changed.length, changes: changed.map(p => ({ productId: p.productId, batchNumber: p.batchNumber, action: p.action, changes: p.changes, reason: p.reason })) } } });
+      return { applied: true, batchesUpdated: changed.length, message: 'Successfully applied ' + changed.length + ' bulk stock updates.' };
+    }));
   },
 };

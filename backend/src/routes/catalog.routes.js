@@ -5,6 +5,7 @@ import { authorize } from '../middleware/authorize.js';
 import { validate } from '../middleware/validate.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { z } from 'zod';
+import { base64WorkbookLimit } from '../utils/workbookLimits.js';
 import { activeSchema, idParams } from '../validators/common.validator.js';
 import { bulkProductsSchema, categorySchema, manufacturerSchema, productSchema, supplierSchema } from '../validators/catalog.validator.js';
 
@@ -17,9 +18,10 @@ catalogRoutes.patch('/categories/:id/active', authorize('ADMIN'), validate({ par
 catalogRoutes.delete('/categories/:id', authorize('ADMIN'), validate({ params: idParams }), asyncHandler(catalogController.deleteCategory));
 catalogRoutes.get('/products', asyncHandler(catalogController.products));
 catalogRoutes.get('/products/bulk-template.csv', authorize('ADMIN'), asyncHandler(catalogController.productTemplate));
+catalogRoutes.get('/products/bulk-template.xlsx', authorize('ADMIN'), asyncHandler(catalogController.productTemplateExcel));
 catalogRoutes.get('/products/bulk-format', authorize('ADMIN'), catalogController.bulkFormat);
-catalogRoutes.get('/products/export-for-update.csv', authorize('ADMIN'), asyncHandler(catalogController.exportForUpdate));
-catalogRoutes.post('/products/bulk/excel-preview', authorize('ADMIN'), validate({ body: z.object({ fileBase64: z.string().min(8).max(5_000_000) }) }), asyncHandler(catalogController.bulkProductsExcel));
+catalogRoutes.get('/products/export-for-update.:format', authorize('ADMIN'), validate({ params: z.object({format:z.enum(['csv','xlsx'])}) }), asyncHandler(catalogController.exportForUpdate));
+catalogRoutes.post('/products/bulk/excel-preview', authorize('ADMIN'), validate({ body: z.object({ fileBase64: z.string().min(8).max(base64WorkbookLimit('product')).regex(/^[A-Za-z0-9+/]+={0,2}$/) }) }), asyncHandler(catalogController.bulkProductsExcel));
 catalogRoutes.post('/products/bulk', authorize('ADMIN'), validate({ body: bulkProductsSchema }), asyncHandler(catalogController.bulkProducts));
 catalogRoutes.post('/products', authorize('ADMIN'), validate({ body: productSchema }), asyncHandler(catalogController.createProduct));
 catalogRoutes.put('/products/:id', authorize('ADMIN'), validate({ params: idParams, body: productSchema }), asyncHandler(catalogController.updateProduct));

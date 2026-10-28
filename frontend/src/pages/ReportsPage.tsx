@@ -74,7 +74,7 @@ export function ReportsPage() {
     if (value === 'MONTH') { setFrom(`${today.slice(0, 7)}-01`); setTo(today); }
   };
 
-  const download = async (type: 'period' | 'monthly', format: 'csv' | 'pdf') => {
+  const download = async (type: 'period' | 'monthly', format: 'csv' | 'pdf' | 'xlsx') => {
     try {
       const key = `${type}-${format}`; setExporting(key); setError('');
       const query = type === 'period' ? `from=${from}&to=${to}` : `month=${monthlyMonth}`;
@@ -86,7 +86,7 @@ export function ReportsPage() {
     } catch (e) { setError(errorMessage(e)); } finally { setExporting(''); }
   };
 
-  const downloadCustom = async (format: 'csv' | 'pdf') => {
+  const downloadCustom = async (format: 'csv' | 'pdf' | 'xlsx') => {
     try {
       const key = `custom-${format}`; setExporting(key); setError('');
       const response = await api.get(`/reports/custom.${format}?from=${from}&to=${to}&groupBy=${customGroup}`, { responseType: 'blob' });
@@ -124,7 +124,7 @@ export function ReportsPage() {
         </select></div>
         <div><label className="form-label">From date</label><input className="form-control" type="date" value={from} max={to || undefined} onChange={(event) => { setFrom(event.target.value); setPreset('CUSTOM'); }} /></div>
         <div><label className="form-label">To date</label><input className="form-control" type="date" value={to} min={from || undefined} onChange={(event) => { setTo(event.target.value); setPreset('CUSTOM'); }} /></div>
-        <div className="report-filter-actions"><button className="btn btn-outline-secondary" disabled={loading || customLoading || from > to} onClick={() => { load(); loadCustom(); }}><i className="bi bi-funnel me-1" />Apply dates</button><button className="btn btn-outline-primary" disabled={!!exporting || from > to} onClick={() => download('period', 'csv')}><i className="bi bi-filetype-csv me-1" />CSV</button><button className="btn btn-primary" disabled={!!exporting || from > to} onClick={() => download('period', 'pdf')}><i className="bi bi-filetype-pdf me-1" />PDF</button></div>
+        <div className="report-filter-actions"><button className="btn btn-outline-secondary" disabled={loading || customLoading || from > to} onClick={() => { load(); loadCustom(); }}><i className="bi bi-funnel me-1" />Apply dates</button><button className="btn btn-outline-primary" disabled={!!exporting || from > to} onClick={() => download('period', 'xlsx')}><i className="bi bi-file-earmark-excel me-1" />Excel</button><button className="btn btn-outline-primary" disabled={!!exporting || from > to} onClick={() => download('period', 'csv')}><i className="bi bi-filetype-csv me-1" />CSV</button><button className="btn btn-primary" disabled={!!exporting || from > to} onClick={() => download('period', 'pdf')}><i className="bi bi-filetype-pdf me-1" />PDF</button></div>
       </div>
       <div className="report-period-note"><i className="bi bi-calendar-range me-2" />Showing {from} through {to}, including both dates.</div>
     </div>
@@ -145,7 +145,7 @@ export function ReportsPage() {
           <div><label className="form-label">Report name</label><input className="form-control" value={customName} maxLength={80} onChange={(event) => setCustomName(event.target.value)} /></div>
           <div><label className="form-label">Group data by field</label><select className="form-select" value={customGroup} onChange={(event) => setCustomGroup(event.target.value)}><option value="date">Activity date</option><option value="product">Product</option><option value="category">Category</option><option value="batch">Batch</option><option value="pharmacist">Pharmacist</option><option value="patient">Patient</option><option value="paymentMethod">Invoice payment method</option><option value="saleStatus">Activity type</option></select></div>
           <div><label className="form-label">Graph value</label><select className="form-select" value={customMetric} onChange={(event) => setCustomMetric(event.target.value as typeof customMetric)}><option value="profit">Gross profit</option><option value="netRevenue">Net revenue</option><option value="cost">FIFO cost</option><option value="quantity">Quantity</option><option value="transactions">Transactions</option></select></div>
-          <div className="custom-report-actions"><button className="btn btn-outline-secondary" disabled={customLoading} onClick={loadCustom}><i className="bi bi-arrow-clockwise me-1" />Generate</button><button className="btn btn-outline-primary" disabled={!!exporting || customLoading} onClick={() => downloadCustom('csv')}>CSV</button><button className="btn btn-primary" disabled={!!exporting || customLoading} onClick={() => downloadCustom('pdf')}>PDF</button></div>
+          <div className="custom-report-actions"><button className="btn btn-outline-secondary" disabled={customLoading} onClick={loadCustom}><i className="bi bi-arrow-clockwise me-1" />Generate</button><button className="btn btn-outline-primary" disabled={!!exporting || customLoading} onClick={() => downloadCustom('xlsx')}>Excel</button><button className="btn btn-outline-primary" disabled={!!exporting || customLoading} onClick={() => downloadCustom('csv')}>CSV</button><button className="btn btn-primary" disabled={!!exporting || customLoading} onClick={() => downloadCustom('pdf')}>PDF</button></div>
         </div>
         {customLoading ? <Loading /> : customReport?.rows.length ? <>
           <div className="custom-profit-summary"><span>Net revenue <strong>{money(customReport.summary.netRevenue)}</strong></span><span>FIFO cost <strong>{money(customReport.summary.cost)}</strong></span><span>Gross profit <strong className={customReport.summary.profit >= 0 ? 'text-success' : 'text-danger'}>{money(customReport.summary.profit)}</strong></span><span>Margin <strong>{customReport.summary.margin.toFixed(2)}%</strong></span></div>
@@ -172,7 +172,7 @@ export function ReportsPage() {
         </div></div>
       </div>
 
-      <div className="panel mt-4 mb-0"><div className="panel-header"><div><h3>Monthly stock movement report</h3><small className="text-secondary">Opening, received, dispensed, adjusted and closing stock values for the selected month.</small></div><div className="d-flex align-items-center gap-2 flex-wrap"><input type="month" className="form-control form-control-sm" style={{ width: 'auto' }} value={monthlyMonth} max={today.slice(0, 7)} onChange={(event) => setMonthlyMonth(event.target.value)} /><button className="btn btn-sm btn-outline-primary" disabled={!!exporting} onClick={() => download('monthly', 'csv')}>CSV</button><button className="btn btn-sm btn-primary" disabled={!!exporting} onClick={() => download('monthly', 'pdf')}>PDF</button></div></div><span className="badge text-bg-light">Month: {monthlyMonth}</span></div>
+      <div className="panel mt-4 mb-0"><div className="panel-header"><div><h3>Monthly stock movement report</h3><small className="text-secondary">Opening, received, dispensed, adjusted and closing stock values for the selected month.</small></div><div className="d-flex align-items-center gap-2 flex-wrap"><input type="month" className="form-control form-control-sm" style={{ width: 'auto' }} value={monthlyMonth} max={today.slice(0, 7)} onChange={(event) => setMonthlyMonth(event.target.value)} /><button className="btn btn-sm btn-outline-primary" disabled={!!exporting} onClick={() => download('monthly', 'xlsx')}>Excel</button><button className="btn btn-sm btn-outline-primary" disabled={!!exporting} onClick={() => download('monthly', 'csv')}>CSV</button><button className="btn btn-sm btn-primary" disabled={!!exporting} onClick={() => download('monthly', 'pdf')}>PDF</button></div></div><span className="badge text-bg-light">Month: {monthlyMonth}</span></div>
     </>}
   </>;
 }

@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import { checkWorkbookArchive } from './deliveryWorkbook.service.js';
 import { AppError } from '../utils/AppError.js';
 import { productBulkFields } from '../utils/productBulkFormat.js';
+import { workbookLimits } from '../utils/workbookLimits.js';
 
 const fieldAliases = new Map(
   productBulkFields.flatMap((f) => [
@@ -11,7 +12,7 @@ const fieldAliases = new Map(
 );
 
 export async function readProductWorkbook(buffer) {
-  await checkWorkbookArchive(buffer);
+  await checkWorkbookArchive(buffer, workbookLimits.product);
   const workbook = new ExcelJS.Workbook();
   try {
     await workbook.xlsx.load(buffer, {
@@ -45,6 +46,12 @@ export async function readProductWorkbook(buffer) {
   }
 
   const mappedHeaders = headers.map((rawHeader) => fieldAliases.get(rawHeader) || null);
+  const seen = new Set();
+  mappedHeaders.forEach((key, index) => {
+    if (!key && headers[index]) throw new AppError(400, `Unknown product column: ${headers[index]}. Use the exported template.`);
+    if (key && seen.has(key)) throw new AppError(400, `Duplicate product column: ${headers[index]}.`);
+    if (key) seen.add(key);
+  });
   const rows = [];
 
   for (let r = headerRow + 1; r <= sheet.rowCount; r++) {
@@ -57,9 +64,7 @@ export async function readProductWorkbook(buffer) {
       const cell = row.getCell(c + 1);
       let val = cell.value;
       if (val && typeof val === 'object' && !(val instanceof Date)) {
-        if ('text' in val) val = val.text;
-        else if ('result' in val) val = val.result;
-        else throw new AppError(400, `Row ${r}: Formulas and hyperlinks are not allowed.`);
+        throw new AppError(400, `Row ${r}, column ${c + 1}: use plain values, not formulas or hyperlinks.`);
       }
       if (val instanceof Date) {
         val = val.toISOString().split('T')[0];
@@ -67,6 +72,7 @@ export async function readProductWorkbook(buffer) {
       data[key] = String(val ?? '').trim();
     }
 
+    if (!data.sku && Object.values(data).some(Boolean)) throw new AppError(400, `Row ${r}: SKU is required.`);
     if (data.sku) {
       rows.push(data);
     }

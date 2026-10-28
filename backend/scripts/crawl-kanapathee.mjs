@@ -1,9 +1,10 @@
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, '../..');
+mkdirSync(resolve(rootDir, 'data/catalogs'), { recursive: true });
 
 // Helper to decode HTML entities
 function decodeHtml(html) {
@@ -325,126 +326,13 @@ export function generateCsv(products, outputPath) {
 }
 
 // Generate SQL file
-export function generateSql(products, outputPath) {
-  function sqlEscape(val) {
-    if (val == null) return 'NULL';
-    if (typeof val === 'number') return String(val);
-    if (typeof val === 'boolean') return val ? '1' : '0';
-    return `'${String(val).replace(/'/g, "''").replace(/\\/g, '\\\\')}'`;
-  }
-
-  const uniqueCategories = [...new Set(products.map((p) => p.categoryName))];
-  const uniqueManufacturers = [...new Set(products.map((p) => p.manufacturerName))];
-
-  const sqlLines = [
-    '-- MediFlow Kanapathee Pharmacy Real Crawled Dataset',
-    '-- Sourced from https://kanapathee.com (Licensed Pharmacy Reg: RL-08261 / NMRA/R/48/15)',
-    '-- Generated on 2026-10-27',
-    'START TRANSACTION;',
-    '',
-    '-- 1. Kanapathee Pharmacy Supplier',
-    `INSERT INTO suppliers (name, contact_person, phone, email, address, active, created_at, updated_at)
-VALUES ('Kanapathee Pharmacy / New Kavery Medical', 'Dispensary Pharmacist', '+94 77 891 4073', 'info@kanapathee.com', 'New Kavery Medical, NMRA License RL-08261, Sri Lanka', 1, NOW(), NOW())
-ON DUPLICATE KEY UPDATE phone = VALUES(phone), active = 1;`,
-    '',
-    '-- 2. Manufacturers from Kanapathee Crawl',
-    ...uniqueManufacturers.map((m) => `INSERT INTO manufacturers (name, country, active, created_at, updated_at) VALUES (${sqlEscape(m)}, 'Sri Lanka', 1, NOW(), NOW()) ON DUPLICATE KEY UPDATE active = 1;`),
-    '',
-    '-- 3. Categories',
-    ...uniqueCategories.map((c) => `INSERT INTO categories (name, description, active, created_at, updated_at) VALUES (${sqlEscape(c)}, 'Crawled from kanapathee.com', 1, NOW(), NOW()) ON DUPLICATE KEY UPDATE active = 1;`),
-    '',
-    '-- 4. Products',
-    ...products.map((p) => {
-      return `INSERT INTO products (sku, product_type, generic_name, brand_name, strength, dosage_form, unit, manufacturer, active_ingredient, variant_group, barcode, storage_instructions, selling_price, reorder_level, prescription_required, active, category_id, manufacturer_id, created_at, updated_at)
-VALUES (
-  ${sqlEscape(p.sku)},
-  ${sqlEscape(p.productType)},
-  ${sqlEscape(p.genericName)},
-  ${sqlEscape(p.brandName)},
-  ${sqlEscape(p.strength)},
-  ${sqlEscape(p.dosageForm)},
-  ${sqlEscape(p.unit)},
-  ${sqlEscape(p.manufacturerName)},
-  ${sqlEscape(p.activeIngredient || null)},
-  ${sqlEscape(p.variantGroup || null)},
-  ${sqlEscape(p.barcode || null)},
-  ${sqlEscape(p.storageInstructions)},
-  ${p.sellingPrice.toFixed(2)},
-  ${p.reorderLevel},
-  ${p.prescriptionRequired ? 1 : 0},
-  1,
-  (SELECT id FROM categories WHERE name = ${sqlEscape(p.categoryName)} LIMIT 1),
-  (SELECT id FROM manufacturers WHERE name = ${sqlEscape(p.manufacturerName)} LIMIT 1),
-  NOW(),
-  NOW()
-)
-ON DUPLICATE KEY UPDATE
-  generic_name = VALUES(generic_name),
-  brand_name = VALUES(brand_name),
-  selling_price = VALUES(selling_price),
-  active = 1;`;
-    }),
-    '',
-    '-- 5. Batches & Stock Movements',
-    ...products.map((p) => {
-      return `
--- Batch & stock for ${p.sku}
-INSERT INTO inventory_batches (product_id, supplier_id, batch_number, quantity_received, quantity_available, quantity_reserved, purchase_price, expiry_date, received_at, restricted)
-SELECT
-  p.id,
-  (SELECT id FROM suppliers WHERE name = 'Kanapathee Pharmacy / New Kavery Medical' LIMIT 1),
-  ${sqlEscape(p.batchNumber)},
-  ${p.initialQty},
-  ${p.initialQty},
-  0,
-  ${p.purchasePrice.toFixed(2)},
-  DATE_ADD(CURDATE(), INTERVAL ${p.expiryDays} DAY),
-  NOW(),
-  0
-FROM products p
-WHERE p.sku = ${sqlEscape(p.sku)}
-ON DUPLICATE KEY UPDATE
-  quantity_available = VALUES(quantity_available),
-  purchase_price = VALUES(purchase_price);
-
-INSERT INTO stock_movements (product_id, batch_id, type, quantity_change, quantity_before, quantity_after, reference_type, reason, performed_by_id, created_at)
-SELECT
-  b.product_id,
-  b.id,
-  'RECEIPT',
-  b.quantity_received,
-  0,
-  b.quantity_received,
-  'OPENING_STOCK',
-  'Crawled Kanapathee Pharmacy Verified Stock',
-  COALESCE((SELECT id FROM users WHERE role = 'ADMIN' LIMIT 1), 1),
-  NOW()
-FROM inventory_batches b
-JOIN products p ON p.id = b.product_id
-WHERE p.sku = ${sqlEscape(p.sku)} AND b.batch_number = ${sqlEscape(p.batchNumber)}
-AND NOT EXISTS (
-  SELECT 1 FROM stock_movements sm WHERE sm.batch_id = b.id AND sm.type = 'RECEIPT'
-);
-`;
-    }),
-    'COMMIT;',
-  ];
-
-  writeFileSync(outputPath, sqlLines.join('\n'), 'utf8');
-  console.log(`Generated SQL: ${outputPath}`);
-}
-
-async function main() {
+export async function main() {
   const rawItems = await crawlKanapathee();
   const products = transformToMediFlow(rawItems);
 
-  const csvPath = resolve(rootDir, 'mediflow_kanapathee_products.csv');
-  const csvPublicPath = resolve(rootDir, 'frontend/public/templates/mediflow_kanapathee_products.csv');
-  const sqlPath = resolve(rootDir, 'kanapathee_pharmacy_data.sql');
+  const csvPath = resolve(rootDir, 'data/catalogs/kanapathee-catalog.csv');
 
   generateCsv(products, csvPath);
-  generateCsv(products, csvPublicPath);
-  generateSql(products, sqlPath);
 
   // Save raw json as well for reference
   writeFileSync(resolve(rootDir, 'backend/scripts/kanapathee_raw.json'), JSON.stringify(rawItems, null, 2), 'utf8');
@@ -454,8 +342,7 @@ async function main() {
   console.log(` Sourced from: kanapathee.com`);
   console.log(` Total products scraped: ${products.length}`);
   console.log(` Output CSV:             ${csvPath}`);
-  console.log(` Output SQL:             ${sqlPath}`);
   console.log('======================================================\n');
 }
 
-main().catch(console.error);
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) main().catch(console.error);

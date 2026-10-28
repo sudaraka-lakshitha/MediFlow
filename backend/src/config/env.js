@@ -9,6 +9,7 @@ const schema = z.object({
   AIVEN_PRISMA_URL: z.string().optional(),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must contain at least 32 characters'),
   JWT_EXPIRES_IN: z.string().default('12h'),
+  BCRYPT_ROUNDS: z.coerce.number().int().min(10).max(14).default(12),
   FRONTEND_URL: z.string().url().default('http://localhost:5173'),
   LOG_LEVEL: z.string().default('info'),
   REPORT_TIMEZONE_OFFSET_MINUTES: z.coerce.number().int().min(-720).max(840).default(330),

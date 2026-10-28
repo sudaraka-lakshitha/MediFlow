@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { moneySchema } from './money.js';
+import { base64WorkbookLimit } from '../utils/workbookLimits.js';
 
 export const batchRestrictionSchema = z.object({
   restricted: z.boolean(),
@@ -38,7 +39,7 @@ export const updateBatchSchema = z.object({
 });
 
 export const bulkStockExcelSchema = z.object({
-  fileBase64: z.string().min(8).max(5_000_000),
+  fileBase64: z.string().min(8).max(base64WorkbookLimit('stock')).regex(/^[A-Za-z0-9+/]+={0,2}$/),
 });
 
 export const bulkStockRowsSchema = z.object({

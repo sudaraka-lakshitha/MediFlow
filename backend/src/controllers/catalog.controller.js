@@ -4,6 +4,7 @@ import { toCsv, streamCsv } from '../utils/csv.js';
 import { productBulkFields, productTemplateRows, bulkInstructions, CLEAR_VALUE } from '../utils/productBulkFormat.js';
 import { productUpdateExport } from '../services/adminExport.service.js';
 import { readProductWorkbook } from '../services/productWorkbook.service.js';
+import { createDataWorkbook, XLSX_MIME } from '../services/spreadsheetExport.service.js';
 
 const save = (entityType, action, operation) => async (req, res) => {
   const result = await operation(req);
@@ -43,8 +44,18 @@ export const catalogController = {
     res.setHeader('Content-Disposition', 'attachment; filename="mediflow-product-bulk-template.csv"');
     res.type('text/csv').send(`\uFEFF${toCsv(productBulkFields, productTemplateRows)}`);
   },
+  productTemplateExcel: async (_req, res) => {
+    const {buffer}=await createDataWorkbook({title:'MediFlow product upload template',sheetName:'Products',columns:productBulkFields,rows:productTemplateRows,notes:bulkInstructions});
+    res.attachment('MediFlow_Product_Bulk_Import_Template.xlsx');res.type(XLSX_MIME).send(buffer);
+  },
   bulkFormat: (_req, res) => res.json({ data: { fields: productBulkFields, instructions: bulkInstructions, clearValue: CLEAR_VALUE, examples: productTemplateRows } }),
   exportForUpdate: async (req, res) => {
+    res.set('Cache-Control','no-store');
+    if (req.params.format === 'xlsx') {
+      const { buffer, rowCount } = await createDataWorkbook({ title: 'MediFlow products for update', sheetName: 'Products', columns: productBulkFields, pages: productUpdateExport.pages(), notes: ['Upload this workbook in Products > Bulk upload. Validate, review changes, then confirm.', 'Blank cells keep existing values. Use [CLEAR] for optional details. Keep SKU and stock units unchanged.', 'Maximum 2,000 product rows per upload. Split larger exports into smaller files.'] });
+      await recordAudit({ userId: req.user.id, action: 'PRODUCTS_EXPORTED_FOR_UPDATE', entityType: 'DATA_EXPORT', details: { rowCount, format: 'xlsx' }, ipAddress: req.ip });
+      res.set('Cache-Control','no-store'); res.attachment('mediflow-products-for-update.xlsx'); res.type(XLSX_MIME).send(buffer); return;
+    }
     res.setHeader('Content-Disposition', 'attachment; filename="mediflow-products-for-update.csv"');
     res.type('text/csv');
     const rowCount = await streamCsv(res, productBulkFields, productUpdateExport.pages());

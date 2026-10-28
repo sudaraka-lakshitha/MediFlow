@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { masterDataBulkRoutes } from './masterDataBulk.routes.js';
 import { calendarDate, calendarMonth, reportRange } from '../validators/calendar.js';
 import { deliveryRoutes } from './delivery.routes.js';
 import { refundRoutes } from './refund.routes.js';
@@ -37,6 +38,7 @@ import { navigationAttentionController } from '../controllers/navigationAttentio
 import { cleanupExpiredCashReservations } from '../utils/reservationExpiry.js';
 
 export const apiRoutes = Router();
+apiRoutes.use('/master-data', masterDataBulkRoutes);
 apiRoutes.use(deliveryRoutes);
 apiRoutes.use(refundApprovalRoutes);
 apiRoutes.use(bankTransferRoutes);
@@ -120,9 +122,9 @@ apiRoutes.delete('/error-logs', authenticate, authorize('ADMIN'), asyncHandler(a
 
 apiRoutes.get('/settings/operations', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER'), asyncHandler(operationSettingsController.get));
 apiRoutes.put('/settings/operations', authenticate, authorize('ADMIN'), validate({ body: operationSettingsSchema }), asyncHandler(operationSettingsController.update));
-const exportDataset = z.object({ dataset: z.enum(['products','categories','manufacturers','suppliers','inventory','stockMovements','patients']) });
-apiRoutes.get('/admin-exports/:dataset.csv', authenticate, authorize('ADMIN'), validate({ params: exportDataset }), asyncHandler(adminExportController.download));
-const format = z.object({ format: z.enum(['csv', 'pdf']) });
+const exportDataset = z.object({ dataset: z.enum(['products','categories','manufacturers','suppliers','inventory','stockMovements','patients']), format: z.enum(['csv','xlsx']) });
+apiRoutes.get('/admin-exports/:dataset.:format', authenticate, authorize('ADMIN'), validate({ params: exportDataset }), asyncHandler(adminExportController.download));
+const format = z.object({ format: z.enum(['csv', 'pdf', 'xlsx']) });
 apiRoutes.get('/reports/daily.:format', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ params: format, query: z.object({ date: calendarDate }) }), asyncHandler(reportController.daily));
 apiRoutes.get('/reports/monthly.:format', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ params: format, query: z.object({ month: calendarMonth }) }), asyncHandler(reportController.monthly));
 const rangeQuery=reportRange;
