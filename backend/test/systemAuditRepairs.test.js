@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-const db = vi.hoisted(() => ({ $transaction: vi.fn(), patientProfile: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() }, user: { update: vi.fn() } }));
+const db = vi.hoisted(() => ({ $transaction: vi.fn(), patientProfile: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() }, patientPhoneIdentity: { deleteMany: vi.fn(), create: vi.fn() }, user: { update: vi.fn() } }));
 vi.mock('../src/config/prisma.js', () => ({ prisma: db }));
 vi.mock('../src/config/logger.js', () => ({ logger: { warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock('../src/services/audit.service.js', () => ({ recordAudit: vi.fn() }));

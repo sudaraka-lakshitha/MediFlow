@@ -4,7 +4,8 @@ import { AppError } from '../utils/AppError.js';
 import { listPagination } from '../utils/listPagination.js';
 
 import { protectWorkflowController } from '../middleware/workflowLease.js';
-export const prescriptionController = protectWorkflowController({
+import { protectRetryController } from '../utils/operationContext.js';
+export const prescriptionController = protectRetryController(protectWorkflowController({
   list: async (req, res) => { const pagination = listPagination(req.query, ['PENDING', 'VERIFIED', 'PARTIALLY_DISPENSED', 'DISPENSED', 'REJECTED', 'CANCELLED']); const data = await prescriptionService.list(req.user,pagination); res.json({ data, pagination: { ...pagination, hasMore: data.length === pagination.pageSize } }); },
   get: async (req, res) => {
     const data = await prescriptionService.get(Number(req.params.id), req.user);
@@ -58,4 +59,4 @@ export const prescriptionController = protectWorkflowController({
     await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_REFILLED', entityType: 'PRESCRIPTION', entityId: data.id, details: { originalPrescriptionId: id, prescriptionNumber: data.prescriptionNumber, refillsUsed: data.refillsUsed }, ipAddress: req.ip });
     res.status(201).json({ data });
   },
-});
+}));

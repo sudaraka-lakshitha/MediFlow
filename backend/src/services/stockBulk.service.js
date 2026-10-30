@@ -144,7 +144,8 @@ export const stockBulkService = {
       const existing = await prisma.operationReceipt.findUnique({ where });
       if (existing) {
         if (existing.payloadHash !== context.hash) throw new AppError(409, 'This retry key belongs to a different operation. Refresh and review the form.');
-        return existing.result;
+        if (existing.result?.status === 'COMPLETED') return existing.result;
+        throw new AppError(409, `This bulk operation is ${existing.result?.status?.toLowerCase() || 'unfinished'}. Review the applied stock changes before starting a new import.`);
       }
 
       // Phase 1 — validate the full plan against the current DB state (no locks)
@@ -154,19 +155,33 @@ export const stockBulkService = {
       const changed = plans.filter(p => p.changes.length);
       if (!changed.length) throw new AppError(400, 'There are no changes to apply.');
 
-      await prisma.operationReceipt.create({ data: { actorId: context.actorId, key: context.key, payloadHash: context.hash, result: {} } });
+      await prisma.operationReceipt.create({ data: { actorId: context.actorId, key: context.key, payloadHash: context.hash, result: { status: 'RUNNING', completedChunks: 0 } } });
 
       // Phase 2 — apply in small transactional chunks to stay under gateway timeouts
       await chunkedTransaction({
         items: changed,
         chunkSize: 15,
         timeout: 35000,
-        async process(tx, chunk) {
+        async process(tx, chunk, chunkIndex) {
           const movements = [];
           for (const plan of chunk) {
             const data = { quantityAvailable: new Prisma.Decimal(plan.quantityAfter), purchasePrice: new Prisma.Decimal(plan.purchasePrice), expiryDate: new Date(plan.expiryDate + 'T00:00:00.000Z'), supplierId: plan.supplierId };
-            const batch = plan.existingBatchId ? await tx.inventoryBatch.update({ where: { id: plan.existingBatchId }, data: { ...data, ...(plan.action === 'RECEIVE' ? { quantityReceived: { increment: new Prisma.Decimal(plan.quantityChange) } } : {}) } })
-              : await tx.inventoryBatch.create({ data: { ...data, productId: plan.productId, batchNumber: plan.batchNumber, quantityReceived: new Prisma.Decimal(plan.quantityChange) } });
+            let batch;
+            if (plan.existingBatchId) {
+              // Compare against the values approved in preview while holding the row lock
+              // acquired by UPDATE. Never restore stock or bypass a reservation created
+              // after the preview was generated.
+              const update = await tx.inventoryBatch.updateMany({
+                where: {
+                  id: plan.existingBatchId,
+                  quantityAvailable: new Prisma.Decimal(plan.quantityBefore),
+                  quantityReserved: { lte: new Prisma.Decimal(plan.quantityAfter) },
+                },
+                data: { ...data, ...(plan.action === 'RECEIVE' ? { quantityReceived: { increment: new Prisma.Decimal(plan.quantityChange) } } : {}) },
+              });
+              if (update.count !== 1) throw new AppError(409, `Batch ${plan.batchNumber} changed or became reserved after preview. Re-validate the spreadsheet.`);
+              batch = await tx.inventoryBatch.findUnique({ where: { id: plan.existingBatchId } });
+            } else batch = await tx.inventoryBatch.create({ data: { ...data, productId: plan.productId, batchNumber: plan.batchNumber, quantityReceived: new Prisma.Decimal(plan.quantityChange) } });
             if (plan.quantityChange !== 0) {
               const mov = { productId: plan.productId, batchId: batch.id, type: plan.action === 'RECEIVE' ? 'RECEIPT' : 'ADJUSTMENT', quantityChange: new Prisma.Decimal(plan.quantityChange), quantityBefore: new Prisma.Decimal(plan.quantityBefore), quantityAfter: new Prisma.Decimal(plan.quantityAfter), reason: plan.reason, performedById: user.id };
               if (typeof tx.stockMovement?.createMany === 'function') {
@@ -180,11 +195,12 @@ export const stockBulkService = {
             await tx.stockMovement.createMany({ data: movements });
           }
           await tx.lowStockAcknowledgement.deleteMany({ where: { productId: { in: [...new Set(chunk.map(p => p.productId))] } } });
+          await tx.operationReceipt.update({ where, data: { result: { status: 'RUNNING', completedChunks: chunkIndex + 1, totalChunks: Math.ceil(changed.length / 15) } } });
         },
       });
 
       // Phase 3 — record the overall audit log and update operation receipt
-      const result = { applied: true, batchesUpdated: changed.length, message: 'Successfully applied ' + changed.length + ' bulk stock updates.' };
+      const result = { status: 'COMPLETED', applied: true, batchesUpdated: changed.length, message: 'Successfully applied ' + changed.length + ' bulk stock updates.' };
       await prisma.auditLog.create({ data: { userId: user.id, action: 'STOCK_BULK_APPLIED', entityType: 'INVENTORY_BATCH', details: { batchesCount: changed.length, changes: changed.map(p => ({ productId: p.productId, batchNumber: p.batchNumber, action: p.action, changes: p.changes, reason: p.reason })) } } });
       await prisma.operationReceipt.update({ where, data: { result } });
       return result;

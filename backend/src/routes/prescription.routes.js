@@ -6,7 +6,7 @@ import { authorize } from '../middleware/authorize.js';
 import { validate } from '../middleware/validate.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { idParams } from '../validators/common.validator.js';
-import { dispenseQuoteSchema, dispenseSchema, paymentRequestSchema, prescriptionSchema, refillSchema, rejectSchema } from '../validators/prescription.validator.js';
+import { dispenseQuoteSchema, dispenseSchema, paymentRequestSchema, prescriptionSchema, refillSchema, rejectSchema, pickupDetailsSchema } from '../validators/prescription.validator.js';
 import { paymentRequestController } from '../controllers/paymentRequest.controller.js';
 
 export const prescriptionRoutes = Router();
@@ -15,7 +15,7 @@ prescriptionRoutes.get('/', authorize('ADMIN', 'PHARMACIST', 'PATIENT'), asyncHa
 prescriptionRoutes.get('/:id', authorize('ADMIN', 'PHARMACIST', 'PATIENT'), validate({ params: idParams }), asyncHandler(prescriptionController.get));
 prescriptionRoutes.post('/', authorize('ADMIN', 'PHARMACIST'), validate({ body: prescriptionSchema }), asyncHandler(prescriptionController.create));
 prescriptionRoutes.put('/:id', authorize('ADMIN', 'PHARMACIST'), validate({ params:idParams, body:prescriptionSchema }), asyncHandler(prescriptionController.update));
-prescriptionRoutes.patch('/:id/pickup-details', authorize('PATIENT'), validate({ params: idParams }), asyncHandler(prescriptionController.updatePickupDetails));
+prescriptionRoutes.patch('/:id/pickup-details', authorize('PATIENT'), validate({ params: idParams, body: pickupDetailsSchema }), asyncHandler(prescriptionController.updatePickupDetails));
 prescriptionRoutes.delete('/:id', authorize('ADMIN', 'PHARMACIST'), validate({ params:idParams }), asyncHandler(prescriptionController.remove));
 prescriptionRoutes.post('/:id/verify', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams }), asyncHandler(prescriptionController.verify));
 prescriptionRoutes.post('/:id/reject', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: rejectSchema }), asyncHandler(prescriptionController.reject));

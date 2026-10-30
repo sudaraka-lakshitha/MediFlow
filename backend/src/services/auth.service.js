@@ -8,6 +8,7 @@ import { userRepository } from '../repositories/user.repository.js';
 import { mailService } from './mail.service.js';
 import { logger } from '../config/logger.js';
 import { sessionService } from './session.service.js';
+import { normalizePatientPhone, syncPatientPhoneIdentity } from '../utils/patientPhoneIdentity.js';
 
 const safeUser = (user) => ({
   id: user.id,
@@ -30,7 +31,7 @@ export const authService = {
   async register(data) {
     const email = data.email.trim().toLowerCase();
     if (await userRepository.findByEmail(email)) throw new AppError(409, 'An account already uses this email address.');
-    if (data.phone && await prisma.user.findFirst({ where: { phone: data.phone, role: 'PATIENT' } })) {
+    if (data.phone && await prisma.user.findFirst({ where: { role: 'PATIENT', OR: [{ phone: data.phone }, { patientPhoneIdentity: { is: { phone: normalizePatientPhone(data.phone) } } }] } })) {
       throw new AppError(409, 'An account already uses this phone number. Sign in or reset your password instead.');
     }
     const bcryptRounds = env.BCRYPT_ROUNDS;
@@ -40,6 +41,7 @@ export const authService = {
       await tx.patientProfile.create({
         data: { userId: created.id, patientNumber: `PAT-${crypto.randomUUID().slice(0, 8).toUpperCase()}`, dateOfBirth: data.dateOfBirth },
       });
+      await syncPatientPhoneIdentity(tx, created.id, data.phone);
       return created;
     });
     return { token: await sign(user), user: safeUser(user) };
@@ -172,6 +174,7 @@ export const authService = {
       if (updatedUser.count !== 1) throw new AppError(409, 'Your profile changed. Reload it and review the latest details before saving.');
       
       if (user.role === 'PATIENT') {
+        if (data.phone !== undefined) await syncPatientPhoneIdentity(tx, userId, data.phone);
         await tx.patientProfile.update({
           where: { userId },
           data: {

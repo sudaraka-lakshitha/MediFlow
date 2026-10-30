@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import { stockBulkPlan, stockBulkService } from '../src/services/stockBulk.service.js';
@@ -7,7 +8,7 @@ import { readProductWorkbook } from '../src/services/productWorkbook.service.js'
 
 const { db } = vi.hoisted(() => ({ db: {
   product: { findMany: vi.fn() }, supplier: { findMany: vi.fn() },
-  inventoryBatch: { findUnique: vi.fn(), update: vi.fn(), create: vi.fn() },
+  inventoryBatch: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
   stockMovement: { create: vi.fn() }, auditLog: { create: vi.fn() },
   lowStockAcknowledgement: { deleteMany: vi.fn() },
   operationReceipt: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() }, $transaction: vi.fn(),
@@ -23,6 +24,12 @@ beforeEach(() => {
   db.supplier.findMany.mockResolvedValue([{ id: 3, name: 'Demo Supplier', active: true }, { id: 4, name: 'Inactive Supplier', active: false }]);
   db.inventoryBatch.findUnique.mockImplementation(async () => batch);
   db.inventoryBatch.update.mockImplementation(async ({ data }) => { batch = { ...batch, ...data }; return batch; });
+  db.inventoryBatch.updateMany.mockImplementation(async ({ where, data }) => {
+    if (Number(batch.quantityAvailable) !== Number(where.quantityAvailable) || Number(batch.quantityReserved) > Number(where.quantityReserved.lte)) return { count: 0 };
+    batch = { ...batch, ...data, quantityAvailable: data.quantityAvailable };
+    if (data.quantityReceived?.increment) batch.quantityReceived = batch.quantityReceived.add(data.quantityReceived.increment);
+    return { count: 1 };
+  });
   db.inventoryBatch.create.mockImplementation(async ({ data }) => ({ id: 2, ...data }));
   const receipts = new Map();
   db.operationReceipt.findUnique.mockImplementation(async ({ where }) => receipts.get(where.actorId_key.key));
@@ -70,6 +77,12 @@ describe('bulk stock safeguards', () => {
     const replay = await stockBulkService.apply(rows, preview.previewToken, { id: 10 });
     expect(replay).toEqual(first); expect(Number(batch.quantityAvailable)).toBe(30);
     expect(db.stockMovement.create).toHaveBeenCalledTimes(1); expect(db.auditLog.create).toHaveBeenCalledTimes(1);
+  });
+  it('does not report an unfinished bulk operation as successful on retry', async () => {
+    const rows = [row({ action: 'SET_COUNT', quantity: 30 })];
+    const preview = await stockBulkService.preview(rows, { id: 10 });
+    db.operationReceipt.findUnique.mockResolvedValue({ payloadHash: createHash('sha256').update(JSON.stringify({ purpose: 'stock-bulk', rows })).digest('hex'), result: { status: 'RUNNING', completedChunks: 1 } });
+    await expect(stockBulkService.apply(rows, preview.previewToken, { id: 10 })).rejects.toThrow('is running');
   });
   it('rejects a preview if reservations or stock changed in the meantime', async () => {
     const rows = [row()]; const p = await stockBulkService.preview(rows, { id: 10 });

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import ExcelJS from 'exceljs';
 import { masterDataPlan, masterDataExport, masterDataBulkService, readMasterWorkbook, masterDataColumns } from '../src/services/masterDataBulk.service.js';
 import { createDataWorkbook } from '../src/services/spreadsheetExport.service.js';
-const { db }=vi.hoisted(()=>({db:{category:{findUnique:vi.fn(),findMany:vi.fn(),update:vi.fn()},patientProfile:{findUnique:vi.fn()},auditLog:{create:vi.fn()},operationReceipt:{findUnique:vi.fn(),create:vi.fn(),update:vi.fn()},$transaction:vi.fn()}}));
+const { db }=vi.hoisted(()=>({db:{category:{findUnique:vi.fn(),findMany:vi.fn(),update:vi.fn(),updateMany:vi.fn()},patientProfile:{findUnique:vi.fn()},patientPhoneIdentity:{deleteMany:vi.fn(),create:vi.fn()},auditLog:{create:vi.fn()},operationReceipt:{findUnique:vi.fn(),create:vi.fn(),update:vi.fn()},$transaction:vi.fn()}}));
 vi.mock('../src/config/prisma.js',()=>({prisma:db}));
 const version='2026-10-28T00:00:00.000Z';
 const row=(patch={})=>({id:'1',recordVersion:version,description:'New description',...patch});
@@ -11,6 +12,7 @@ beforeEach(()=>{
  delete db.patientProfile.findMany; delete db.auditLog.createMany;
  const saved={id:1,name:'First aid',description:'Original',active:true,updatedAt:new Date(version)};
  db.category.findUnique.mockResolvedValue(saved);db.category.findMany.mockResolvedValue([saved]);
+ db.category.updateMany.mockResolvedValue({count:1});
  db.$transaction.mockImplementation(fn=>fn(db));
  db.operationReceipt.findUnique.mockResolvedValue(null);
 });
@@ -36,7 +38,7 @@ describe('master data bulk edit',()=>{
   db.category.findMany.mockResolvedValue(saved);db.auditLog.createMany=vi.fn();
   const rows=saved.map(r=>row({id:String(r.id)})),user={id:10};
   const preview=await masterDataBulkService.preview('categories',rows,user);
-  expect(await masterDataBulkService.apply('categories',rows,preview.previewToken,user)).toEqual({applied:true,updated:16});
+  expect(await masterDataBulkService.apply('categories',rows,preview.previewToken,user)).toEqual({status:'COMPLETED',applied:true,updated:16});
   expect(db.auditLog.createMany.mock.calls.map(([arg])=>arg.data.length)).toEqual([15,1]);
   expect(db.auditLog.create).not.toHaveBeenCalled();
   expect(db.category.findUnique).not.toHaveBeenCalled();
@@ -95,6 +97,16 @@ describe('master data bulk edit',()=>{
   const result=await masterDataBulkService.apply('categories',rows,p.previewToken,user);
   const receipt=db.operationReceipt.create.mock.calls[0][0].data;
   db.operationReceipt.findUnique.mockResolvedValue({...receipt,result});
-  expect(await masterDataBulkService.apply('categories',rows,p.previewToken,user)).toEqual(result);expect(db.category.update).toHaveBeenCalledTimes(1);
+  expect(await masterDataBulkService.apply('categories',rows,p.previewToken,user)).toEqual(result);expect(db.category.updateMany).toHaveBeenCalledTimes(1);
+ });
+ it('rejects a category changed after preview instead of overwriting it',async()=>{
+  const rows=[row()],user={id:10};const p=await masterDataBulkService.preview('categories',rows,user);
+  db.category.updateMany.mockResolvedValue({count:0});
+  await expect(masterDataBulkService.apply('categories',rows,p.previewToken,user)).rejects.toThrow('changed after export');
+ });
+ it('does not report an unfinished bulk operation as successful on retry',async()=>{
+  const rows=[row()],user={id:10};const p=await masterDataBulkService.preview('categories',rows,user);
+  db.operationReceipt.findUnique.mockResolvedValue({payloadHash:createHash('sha256').update(JSON.stringify({dataset:'categories',rows})).digest('hex'),result:{status:'RUNNING',completedChunks:1}});
+  await expect(masterDataBulkService.apply('categories',rows,p.previewToken,user)).rejects.toThrow('is running');
  });
 });

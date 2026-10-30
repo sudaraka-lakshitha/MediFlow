@@ -12,6 +12,7 @@ import { updateOwnProfileSchema } from '../validators/patient.validator.js';
 import { checkWorkbookArchive } from './deliveryWorkbook.service.js';
 import { workbookLimits } from '../utils/workbookLimits.js';
 import { calendarDate } from '../validators/calendar.js';
+import { syncPatientPhoneIdentity } from '../utils/patientPhoneIdentity.js';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const active = z.boolean();
@@ -145,7 +146,8 @@ export const masterDataBulkService={
       const existing = await prisma.operationReceipt.findUnique({ where });
       if (existing) {
         if (existing.payloadHash !== context.hash) throw new AppError(409, 'This retry key belongs to a different operation. Refresh and review the form.');
-        return existing.result;
+        if (existing.result?.status === 'COMPLETED') return existing.result;
+        throw new AppError(409, `This bulk operation is ${existing.result?.status?.toLowerCase() || 'unfinished'}. Review applied rows before starting a new import.`);
       }
 
       // Phase 1 — validate plan against current DB state without heavy locks
@@ -157,14 +159,14 @@ export const masterDataBulkService={
       const changed = plans.filter((p) => p.changes.length);
       if (!changed.length) return { applied: true, updated: 0 };
 
-      await prisma.operationReceipt.create({ data: { actorId: context.actorId, key: context.key, payloadHash: context.hash, result: {} } });
+      await prisma.operationReceipt.create({ data: { actorId: context.actorId, key: context.key, payloadHash: context.hash, result: { status: 'RUNNING', completedChunks: 0 } } });
 
       // Phase 2 — apply in small transactional chunks to stay under gateway timeouts
       await chunkedTransaction({
         items: changed,
         chunkSize: 15,
         timeout: 35000,
-        async process(tx, chunk) {
+        async process(tx, chunk, chunkIndex) {
           const auditLogs = [];
           for (const p of chunk) {
             const data = Object.fromEntries(p.changes.map((c) => [c.field, p.patch[c.field]]));
@@ -180,9 +182,16 @@ export const masterDataBulkService={
                 },
               });
               if (claimed.count !== 1) throw new AppError(409, 'Patient details changed. Export again.');
+              if (phone !== undefined) await syncPatientPhoneIdentity(tx, p.userId, phone);
               await tx.patientProfile.update({ where: { id: p.id }, data: profile });
             } else {
-              await tx[masterDataDefinitions[dataset].model].update({ where: { id: p.id }, data });
+              const model = tx[masterDataDefinitions[dataset].model];
+              const expected = new Date(p.before.recordVersion);
+              const claimed = await model.updateMany({
+                where: { id: p.id, updatedAt: expected },
+                data: { ...data, updatedAt: new Date(Math.max(Date.now(), expected.getTime() + 1)) },
+              });
+              if (claimed.count !== 1) throw new AppError(409, `${p.identifier} changed after export. Export again.`);
             }
             const logData = {
               userId: user.id,
@@ -200,10 +209,11 @@ export const masterDataBulkService={
           if (auditLogs.length > 0) {
             await tx.auditLog.createMany({ data: auditLogs });
           }
+          await tx.operationReceipt.update({ where, data: { result: { status: 'RUNNING', completedChunks: chunkIndex + 1, totalChunks: Math.ceil(changed.length / 15) } } });
         },
       });
 
-      const result = { applied: true, updated: changed.length };
+      const result = { status: 'COMPLETED', applied: true, updated: changed.length };
       await prisma.operationReceipt.update({ where, data: { result } });
       return result;
     });

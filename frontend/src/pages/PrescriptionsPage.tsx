@@ -2438,7 +2438,7 @@ export function PrescriptionsPage() {
                           placeholder="e.g. Penicillin, Aspirin, or None"
                         />
                         <small className="text-secondary d-block mt-1">
-                          Checked against prescribed medicine active ingredients.
+                          Pharmacist review required. No automated allergy check was performed.
                         </small>
                       </div>
                       <div className="col-md-6">
@@ -2458,7 +2458,7 @@ export function PrescriptionsPage() {
                           placeholder="e.g. Asthma, Diabetes, Hypertension, or None"
                         />
                         <small className="text-secondary d-block mt-1">
-                          Checked for drug interactions and contraindications.
+                          Pharmacist review required. No automated interaction check was performed.
                         </small>
                       </div>
                     </div>

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import bcrypt from 'bcrypt';
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
+import { normalizePatientPhone, syncPatientPhoneIdentity } from '../utils/patientPhoneIdentity.js';
 import { patientDirections } from '../utils/patientDirections.js';
 import { historySearch } from '../utils/historySearch.js';
 
@@ -39,7 +40,7 @@ export const patientService = {
   },
   async create(data, staff) {
     if (data.phone) {
-      const existing = await prisma.user.findFirst({ where: { phone: data.phone, role: 'PATIENT' }, select: { fullName: true, patientProfile: { select: { id: true, patientNumber: true } } } });
+      const existing = await prisma.user.findFirst({ where: { role: 'PATIENT', OR: [{ phone: data.phone }, { patientPhoneIdentity: { is: { phone: normalizePatientPhone(data.phone) } } }] }, select: { fullName: true, patientProfile: { select: { id: true, patientNumber: true } } } });
       if (existing) throw new AppError(409, `A patient with this phone number already exists: ${existing.fullName} (${existing.patientProfile?.patientNumber || 'no patient number'}). Search for them instead of creating a duplicate.`);
     }
     return prisma.$transaction(async (tx) => {
@@ -48,6 +49,7 @@ export const patientService = {
       const email = onlineAccess ? data.email.toLowerCase() : walkInEmail();
       const user = await tx.user.create({ data: { email, fullName:data.fullName, phone:data.phone||null, passwordHash:await bcrypt.hash(generatedPassword,12), active:onlineAccess, mustChangePassword:onlineAccess, role:'PATIENT' } });
       const patient = await tx.patientProfile.create({ data: { userId:user.id, patientNumber:`PAT-${crypto.randomUUID().slice(0,8).toUpperCase()}`, dateOfBirth:data.dateOfBirth, address:data.address, allergies:data.allergies, chronicConditions:data.chronicConditions||null, registrationSource:staff.role, registeredById:staff.id }, include });
+      await syncPatientPhoneIdentity(tx, user.id, data.phone);
       return { ...patient, onlineAccess, temporaryPassword: onlineAccess ? generatedPassword : undefined };
     });
   },
@@ -60,6 +62,7 @@ export const patientService = {
         const claimed = await tx.user.updateMany({ where: { id: profile.userId, updatedAt: expected }, data: { ...userData, updatedAt: new Date(Math.max(Date.now(), expected.getTime() + 1)) } });
         if (claimed.count !== 1) throw new AppError(409, 'This patient record changed. Refresh and review the latest details before saving.');
       } else await tx.user.update({where:{id:profile.userId},data:userData});
+      if (data.phone !== undefined) await syncPatientPhoneIdentity(tx, profile.userId, data.phone);
       return tx.patientProfile.update({where:{id},data:{dateOfBirth:data.dateOfBirth,address:data.address,allergies:data.allergies,chronicConditions:data.chronicConditions === undefined ? undefined : data.chronicConditions || null},include});
     });
   },

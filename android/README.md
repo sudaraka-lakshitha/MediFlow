@@ -35,8 +35,10 @@ Output: `build/MediFlow.apk`. The script verifies signature and ZIP alignment.
 Back up the ignored `signing/` folder securely: updates require the same key and
 a higher versionCode. Never distribute the private key or password.
 
-Browser bridge tests: `node tests/bridge.test.cjs` (requires Playwright; set
-PLAYWRIGHT_MODULE to its installed module path if not locally installed).
+Web view mode browser test: `node android/tests/view-mode.test.cjs` (requires
+Playwright; set `PLAYWRIGHT_MODULE` to its installed module path if it is not
+available from the project). This covers the responsive desktop/mobile view
+switch; it is not a physical-device test.
 Native device tests remain necessary: no physical Android device or emulator
 was available during this build. In particular verify sign-in, uploads, PDF
 viewing, printing, rotation, keyboard layout and background/resume on a phone.

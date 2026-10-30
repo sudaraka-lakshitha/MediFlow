@@ -54,6 +54,10 @@ export const prescriptionSchema = z.object({
   if(new Set(data.retailItems.map((retail)=>retail.productId)).size!==data.retailItems.length)context.addIssue({code:'custom',path:['retailItems'],message:'Each retail item can appear only once.'});
 });
 export const refillSchema = z.object({ notes: z.string().trim().max(1000).optional().nullable() });
+export const pickupDetailsSchema = z.object({
+  pickupNote: z.string().trim().max(500).nullable().optional(),
+  plannedPickupAt: z.coerce.date().nullable().optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, 'Provide at least one pickup detail.');
 export const rejectSchema = z.object({ reason: z.string().trim().min(3).max(500) });
 const dispensingBase = {
   revision: z.coerce.number().int().positive().optional(),

@@ -114,9 +114,6 @@ REPORT_TIMEZONE_OFFSET_MINUTES=330
 # Work factor for bcrypt hashing (default 12; supported range 10–14).
 BCRYPT_ROUNDS=12
 
-# ─── Experimental Drug Interaction Model (Optional) ─────────────────────────
-EXPERIMENTAL_DDI_ENABLED=true
-EXPERIMENTAL_DDI_THRESHOLD=0.85
 ```
 
 ### 4.2 Frontend Environment
@@ -186,9 +183,9 @@ npm --prefix backend run prisma:seed
 
 ---
 
-## 7. Drug Interaction Data & ML Model (Optional)
+## 7. Experimental Drug Interaction Research Assets
 
-The repository includes curated drug-drug interaction pairs from the **DDInter** academic dataset and a TensorFlow.js neural network classifier:
+The repository contains DDInter-derived research data and a plain JavaScript training script for an experimental collaborative-filtering model:
 
 ```powershell
 # 1. Import curated DDInter interaction pairs into MySQL
@@ -198,9 +195,8 @@ node backend/scripts/import-ddinter.js
 node backend/ml/train.mjs
 ```
 
-- Curated DDInter pairs operate independently of the machine learning model.
-- The neural classifier only emits predictions when `EXPERIMENTAL_DDI_ENABLED=true` and the model achieves the minimum AUC threshold configured in `EXPERIMENTAL_DDI_THRESHOLD`.
-- Missing interaction alerts **never** confirm drug safety. All combinations require pharmacist clinical review.
+- These are research and demonstration assets. The live prescription verification workflow does not run an automated patient-specific drug interaction, allergy, or contraindication check.
+- Do not interpret model output or missing alerts as evidence that a medicine combination is safe. Pharmacist review is required.
 
 ---
 
@@ -410,7 +406,7 @@ MediFlow/
 │   │   ├── schema.prisma                   Comprehensive MySQL relational database schema
 │   │   ├── seed.js                         Demo data population script
 │   │   └── migrations/                     Version-controlled SQL schema migrations
-│   ├── ml/                                 Experimental DDI neural classifier (TensorFlow.js)
+│   ├── ml/                                 Experimental JavaScript DDI research model
 │   └── scripts/                            Administrative CLI utilities and data importers
 │
 ├── android/                                Native Android Client App v2.0 (WebView, multi-tab, PDF & print)
@@ -463,7 +459,7 @@ MediFlow/
 
 ### 6. Clinical Research & Experimental AI
 - **Multi-Source Drug Information**: Unified search querying RxNorm, PubChem, and openFDA public drug labels.
-- **Experimental Neural DDI Classifier**: Optional TensorFlow.js neural network trained on drug molecular feature vectors to estimate interaction likelihoods when curated pairs are unavailable.
+- **Experimental DDI research model**: A plain JavaScript training artifact. It is not called by live prescription verification and must not be used to infer clinical safety.
 
 ### 7. Administration, Audit Control & Error Diagnostics
 - **Comprehensive Activity Trails**: Immutable audit logging for every significant staff and patient event (logins, dispensing, bill edits, stock adjustments, file previews).

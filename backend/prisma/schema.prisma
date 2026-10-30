@@ -158,6 +158,7 @@ model User {
   lastLoginAt                 DateTime?                 @map("last_login_at")
   passwordChangedAt           DateTime?                 @map("password_changed_at")
   patientProfile              PatientProfile?
+  patientPhoneIdentity        PatientPhoneIdentity?
   registeredPatients          PatientProfile[]          @relation("PatientRegisteredBy")
   createdPrescriptions        Prescription[]            @relation("PrescriptionCreator")
   verifiedPrescriptions       Prescription[]            @relation("PrescriptionVerifier")
@@ -269,6 +270,15 @@ model PatientProfile {
   createdAt           DateTime           @default(now()) @map("created_at")
 
   @@map("patient_profiles")
+}
+
+model PatientPhoneIdentity {
+  id     Int    @id @default(autoincrement())
+  userId Int    @unique @map("user_id")
+  phone  String @unique @db.VarChar(40)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("patient_phone_identities")
 }
 
 model Category {

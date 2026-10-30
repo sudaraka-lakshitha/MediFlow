@@ -276,26 +276,30 @@ export const prescriptionService = {
     if (user.role === 'PATIENT' && current.patient.userId !== user.id) {
       throw new AppError(403, 'This prescription does not belong to you.');
     }
-    if (['DISPENSED', 'REJECTED'].includes(current.status)) {
-      throw new AppError(409, 'Cannot update collection details for dispensed or rejected prescriptions.');
+    if (['DISPENSED', 'REJECTED', 'CANCELLED'].includes(current.status)) {
+      throw new AppError(409, 'Cannot update collection details for closed prescriptions.');
     }
-    return prisma.prescription.update({
+    const update = {};
+    if (Object.hasOwn(data, 'pickupNote')) update.pickupNote = data.pickupNote;
+    if (Object.hasOwn(data, 'plannedPickupAt')) update.plannedPickupAt = data.plannedPickupAt;
+    if (!Object.keys(update).length) throw new AppError(400, 'Provide pickup details to update.');
+    await prisma.prescription.update({
       where: { id },
-      data: {
-        pickupNote: data.pickupNote || null,
-        plannedPickupAt: data.plannedPickupAt ? new Date(data.plannedPickupAt) : null,
-      },
+      data: update,
+    });
+    const refreshed = await prisma.prescription.findUnique({
+      where: { id },
       include: {
         patient: { include: { user: { select: { id: true, fullName: true } } } },
-        items: { include: { product: true } },
-        retailItems: { include: { product: true } },
+        items: { include: { product: true } }, retailItems: { include: { product: true } },
         createdBy: { select: { id: true, fullName: true, role: true } },
         verifiedBy: { select: { id: true, fullName: true, role: true } },
-        dispensings: { include: { sale: true, pharmacist: { select: { id:true, fullName:true, email:true, role:true } }, items:{ include:{ prescriptionItem:{ include:{ product:true } } } } }, orderBy: { dispensedAt: 'desc' } },
+        dispensings: { include: { sale: true, pharmacist: { select: { id: true, fullName: true, role: true } }, items: { include: { prescriptionItem: { include: { product: true } } } } }, orderBy: { dispensedAt: 'desc' } },
         sourceUpload: { select: { id: true, originalName: true, mimeType: true, status: true } },
         paymentRequest: { include: { cashier: { select: { id: true, fullName: true } }, items: { include: { product: true } }, sale: { select: { id: true, invoiceNumber: true } } } },
-      }
+      },
     });
+    return patientView(refreshed);
   },
   async remove(id) {
     const removed = await prisma.prescription.deleteMany({ where: { id, status: 'PENDING' } });
