@@ -123,7 +123,7 @@ export function Layout() {
       }
     };
     loadAttention();
-    const timer = window.setInterval(loadAttention, 30_000);
+    const timer = window.setInterval(loadAttention, 5_000);
     const onFocus = () => loadAttention();
     const onAttentionRefresh = () => loadAttention();
     window.addEventListener('focus', onFocus);

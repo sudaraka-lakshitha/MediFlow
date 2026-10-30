@@ -303,6 +303,20 @@ export function PrescriptionUploadsPage() {
         })
         .catch(() => undefined);
   }, [load, admin, patient, cashier]);
+  useEffect(() => {
+    if (patient) return;
+    const refresh = () => {
+      if (!document.hidden && !busy) void load();
+    };
+    const timer = window.setInterval(refresh, 5_000);
+    window.addEventListener("mediflow:attention-refresh", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("mediflow:attention-refresh", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [busy, load, patient]);
   const saveRetention = async () => {
     setBusy(true);
     setError("");
