@@ -359,10 +359,15 @@ export function PrescriptionUploadsPage() {
     setDeadlineSavingId(item.id);
     setError("");
     try {
-      await api.put(`/prescription-uploads/${item.id}/deletion-deadline`, {
+      const response = await api.put(`/prescription-uploads/${item.id}/deletion-deadline`, {
         deleteAt: `${value}T23:59:59`,
       });
-      await load();
+      // The API returns the persisted record. Reflect its saved deadline now;
+      // don't keep the button in "Saving…" while a separate list refresh runs.
+      const savedUpload = response.data.data as Upload;
+      setRows((current) => current.map((row) => row.id === item.id
+        ? { ...row, deleteAt: savedUpload.deleteAt }
+        : row));
       setDeadlineEditingId(null);
       setDeadlineDraft("");
     } catch (caught) {
