@@ -179,6 +179,8 @@ export function PrescriptionUploadsPage() {
   const [bankAccounts, setBankAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const uploadsLoadInFlight = useRef(false);
+  const uploadsRefreshQueued = useRef(false);
   const uploadInFlight = useRef(false);
   const [error, setError] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -259,14 +261,28 @@ export function PrescriptionUploadsPage() {
   const [deadlineEditingId, setDeadlineEditingId] = useState<number | null>(null);
   const [deadlineDraft, setDeadlineDraft] = useState("");
   const [deadlineSavingId, setDeadlineSavingId] = useState<number | null>(null);
-  const load = useCallback(async () => {
+  const load = useCallback(async (queueIfBusy = true) => {
+    // Polling and focus events must not queue behind a slow request, or they
+    // can keep the initial screen in its loading state indefinitely. Explicit
+    // workflow refreshes may queue one follow-up to include a recent change.
+    if (uploadsLoadInFlight.current) {
+      if (queueIfBusy) uploadsRefreshQueued.current = true;
+      return;
+    }
+    uploadsLoadInFlight.current = true;
     try {
-      setError("");
-      const response = await readHistory("/prescription-uploads");
-      setRows(response.data.data);
-    } catch (caught) {
-      setError(errorMessage(caught));
+      do {
+        uploadsRefreshQueued.current = false;
+        try {
+          setError("");
+          const response = await readHistory("/prescription-uploads");
+          setRows(response.data.data);
+        } catch (caught) {
+          setError(errorMessage(caught));
+        }
+      } while (uploadsRefreshQueued.current);
     } finally {
+      uploadsLoadInFlight.current = false;
       setLoading(false);
     }
   }, [readHistory]);
@@ -306,7 +322,7 @@ export function PrescriptionUploadsPage() {
   useEffect(() => {
     if (patient) return;
     const refresh = () => {
-      if (!document.hidden && !busy) void load();
+      if (!document.hidden && !busy) void load(false);
     };
     const timer = window.setInterval(refresh, 5_000);
     window.addEventListener("mediflow:attention-refresh", refresh);
