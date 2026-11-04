@@ -30,6 +30,15 @@ export function DailyBalance() {
     const lines = [['Date (Sri Lanka)','Cashier','Document','Direction','Amount','Transaction / payout reference','Original payment method'],...data.entries.filter((entry: any) => entry.method === 'BANK_TRANSFER' || entry.originalMethod?.includes('BANK_TRANSFER')).map((entry: any) => [localTime(entry.date),entry.cashierName || user?.fullName,entry.document,`${entry.direction} ${entry.method}`,entry.amount,entry.reference,entry.originalMethod || entry.method])];
     const url = URL.createObjectURL(new Blob([lines.map((line) => line.map(csvValue).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'})); const link = document.createElement('a'); link.href=url; link.download=`bank-reconciliation-${scope.toLowerCase()}-${day}.csv`; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
   };
+  const exportPdf = async () => {
+    setBusy(true); setError('');
+    try {
+      const response = await api.get('/cashier/reconciliation/export.pdf', { params: { day, scope }, responseType: 'blob' });
+      const disposition = response.headers['content-disposition'] || '';
+      const filename = disposition.match(/filename="?([^";]+)"?/)?.[1] || `mediflow-reconciliation-${scope.toLowerCase()}-${day}.pdf`;
+      const url = URL.createObjectURL(response.data); const link = document.createElement('a'); link.href = url; link.download = filename; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (caught) { setError(errorMessage(caught)); } finally { setBusy(false); }
+  };
   const verified = { BANK_TRANSFER: { received: Number(form.bankIn), refunded: Number(form.bankOut) }, CARD: { received: Number(form.cardIn), refunded: Number(form.cardOut) } };
   const allEntered = ['openingCash','countedCash','bankIn','bankOut','cardIn','cardOut'].every((key) => form[key] !== '' && Number(form[key]) >= 0);
   const variance = data ? Number(form.countedCash) - Number(form.openingCash) - data.totals.CASH.net : 0;
@@ -38,7 +47,7 @@ export function DailyBalance() {
     {open && <Modal title="Daily balance & bank reconciliation" onClose={() => !busy && setOpen(false)} size="xl">
       {canViewPharmacy && <div className="mb-3"><label htmlFor="balance-scope" className="form-label">Balance scope</label><select id="balance-scope" className="form-select" value={scope} disabled={busy} onChange={event => { setScope(event.target.value); reset(); }}><option value="PERSONAL">My cashier balance</option><option value="PHARMACY">Entire pharmacy — all cashiers</option></select></div>}
       <p className="text-secondary">{pharmacy ? 'All cashiers’ activity. Each cashier needs a current sign-off, or a documented administrator review if unavailable, before the combined pharmacy balance can be confirmed.' : 'Your cashier activity.'} Transactions use payment/payout date (Sri Lanka time). Cash refunds reduce the till even when the customer originally paid by bank. Pending refunds are not yet payouts.</p>
-      <div className="d-flex flex-wrap gap-2 mb-3"><label htmlFor="balance-day" className="align-self-center">Business day</label><input id="balance-day" type="date" disabled={busy} max={today()} className="form-control w-auto" value={day} onChange={(event) => { setDay(event.target.value); reset(); }} /><button className="btn btn-outline-secondary" disabled={busy} onClick={load}>Load / refresh transactions</button>{data && <button className="btn btn-outline-secondary" onClick={exportBank}>Download bank references (CSV)</button>}</div>
+      <div className="d-flex flex-wrap gap-2 mb-3"><label htmlFor="balance-day" className="align-self-center">Business day</label><input id="balance-day" type="date" disabled={busy} max={today()} className="form-control w-auto" value={day} onChange={(event) => { setDay(event.target.value); reset(); }} /><button className="btn btn-outline-secondary" disabled={busy} onClick={load}>Load / refresh transactions</button>{data && <><button className="btn btn-outline-primary" disabled={busy} onClick={exportPdf}>Download reconciliation PDF</button><button className="btn btn-outline-secondary" disabled={busy} onClick={exportBank}>Download bank references (CSV)</button></>}</div>
       <Alert message={error} />
       {data && <>
         <div className={`alert ${data.confirmed ? 'alert-success' : 'alert-warning'}`}>{data.confirmed ? `Balance confirmed on ${localTime(data.confirmations[0].createdAt)}${pharmacy ? ` by ${data.confirmations[0].snapshot.confirmedBy}` : ''}.` : data.confirmations.length ? 'Transactions or cashier confirmations changed. Reconcile and confirm again.' : 'Not yet confirmed.'} {data.pendingRefunds > 0 && `${data.pendingRefunds} authorized refund(s) still await payout (current queue, not this day’s payouts).`}</div>

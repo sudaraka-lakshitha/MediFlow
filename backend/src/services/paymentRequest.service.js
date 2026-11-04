@@ -56,7 +56,7 @@ const include = {
 const canView = (record, user) => user.role !== 'PATIENT' || record.patientId === user.id;
 const safeRecord = ({ pickupPinHash, pickupPinEncrypted, ...record }) => record;
 const visibleDirections = (record, user) => user.role === 'PATIENT' && !['PAID', 'FULFILLED'].includes(record.status)
-  ? { ...record, items: record.items?.map(item => ({ ...item, prescriptionItem: null })) }
+  ? { ...record, items: record.items?.map(item => ({ ...item, prescriptionItem: null, dosageInstructions: null, specialInstructions: null })) }
   : record;
 
 // Both ways of paying a bill - cash at the counter, or a verified bank transfer - have to
@@ -184,7 +184,7 @@ export const paymentRequestService = {
         subtotal: quote.subtotal, discount: quote.discount, containerFee: quote.containerFee, tax: quote.tax, total: quote.total,
         couponCode: input.couponCode || null,
         reservationDurationHours: input.reservationHours || null, pharmacyNote: input.notes || null,
-        items: { create: quote.lines.map((line) => ({ prescriptionItemId: line.prescriptionItemId, productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice, lineTotal: line.lineTotal })) },
+        items: { create: quote.lines.map((line) => ({ prescriptionItemId: line.prescriptionItemId, productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice, lineTotal: line.lineTotal, dosageInstructions: line.dosageInstructions ?? null, specialInstructions: line.specialInstructions ?? null })) },
       },
       include,
     }));
@@ -237,7 +237,7 @@ export const paymentRequestService = {
           couponCode: input.couponCode || null, revision: { increment: 1 }, acknowledgedRevision: null, customerAcknowledgedAt: null,
           customerPaymentChoice: null, reservationExpiresAt: null, paymentMethod: null });
         await tx.paymentRequestItem.deleteMany({ where: { paymentRequestId: existing.id } });
-        await tx.paymentRequestItem.createMany({ data: quote.lines.map((line) => ({ paymentRequestId: existing.id, prescriptionItemId: line.prescriptionItemId, productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice, lineTotal: line.lineTotal })) });
+        await tx.paymentRequestItem.createMany({ data: quote.lines.map((line) => ({ paymentRequestId: existing.id, prescriptionItemId: line.prescriptionItemId, productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice, lineTotal: line.lineTotal, dosageInstructions: line.dosageInstructions ?? null, specialInstructions: line.specialInstructions ?? null })) });
       } else if (reservationExpiresAt !== existing.reservationExpiresAt) {
         fields.reservationExpiresAt = reservationExpiresAt;
       }

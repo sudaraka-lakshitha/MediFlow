@@ -234,7 +234,30 @@ export const prescriptionService = {
     const items=data.items.map((rawItem)=>{const item=normalizeLiquidDose(rawItem);const product=products.find((candidate)=>candidate.id===item.productId);if(!product)throw new AppError(400,'One or more selected products are unavailable.');const{calculated,prescribed,overridden}=calculateQuantity(product.unit,item);return{productId:item.productId,quantityPerDose:item.quantityPerDose,doseInputAmount:item.doseInputAmount,doseInputUnit:item.doseInputUnit,concentrationAmount:item.concentrationAmount,concentrationUnit:item.concentrationUnit,concentrationVolume:item.concentrationVolume,timesPerDay:item.timesPerDay,daysSupply:item.daysSupply,calculatedQuantity:calculated,prescribedQuantity:prescribed,quantityOverridden:overridden,overrideReason:overridden?item.overrideReason:null,dosageInstructions:item.dosageInstructions,frequency:item.frequency,duration:item.duration,notes:item.notes,administrationRoute:item.administrationRoute,mealTiming:item.mealTiming,asNeeded:item.asNeeded,specialInstructions:item.specialInstructions}});
     const proposed = { ...data, items };
     const material = prescriptionMaterialChanged(current, proposed);
-    if (material && current.paymentRequest && current.paymentRequest.status !== 'CANCELLED') {
+    if (current.status === 'PARTIALLY_DISPENSED') {
+      const existingIds = new Set(current.items.map((item) => item.id));
+      if (data.items.length !== current.items.length || data.items.some((item) => !existingIds.has(Number(item.id)))) {
+        throw new AppError(409, 'Keep the existing medicine lines when updating directions for a partially dispensed prescription.');
+      }
+      const stripDirections = (record) => {
+        const snapshot = prescriptionSnapshot(record);
+        snapshot.items = snapshot.items.map(({ dosageInstructions, specialInstructions, ...item }) => item);
+        return snapshot;
+      };
+      if (JSON.stringify(stripDirections(current)) !== JSON.stringify(stripDirections(proposed))) {
+        throw new AppError(409, 'For a partially dispensed prescription, only directions for medicines with remaining quantity can be changed.');
+      }
+      const submittedById = new Map(data.items.map((item) => [Number(item.id), item]));
+      for (const item of current.items) {
+        const submitted = submittedById.get(item.id);
+        const directionsChanged = submitted && (String(submitted.dosageInstructions || '').trim() !== String(item.dosageInstructions || '').trim()
+          || String(submitted.specialInstructions || '').trim() !== String(item.specialInstructions || '').trim());
+        if (directionsChanged && !remainingPrescriptionQuantity(item).greaterThan(0)) {
+          throw new AppError(409, 'Directions can only be changed for a medicine that still has quantity remaining.');
+        }
+      }
+    }
+    if (material && current.paymentRequest && !['CANCELLED', 'FULFILLED'].includes(current.paymentRequest.status)) {
       throw new AppError(409, 'Withdraw the active cashier bill before changing clinical details. The replacement invoice will need customer approval.');
     }
     const pickupNote = data.pickupNote || null;
@@ -497,7 +520,7 @@ export const prescriptionService = {
       if (available.lessThan(quantity)) throw new AppError(409, `Insufficient usable stock for ${item.product.genericName}.`);
       const lineTotal = item.product.sellingPrice.mul(quantity).toDecimalPlaces(2); subtotal = subtotal.add(lineTotal);
       allocations.push({ productId: item.productId, categoryId: item.product.categoryId, quantity, unitPrice: item.product.sellingPrice, lineTotal });
-      lines.push({ source: 'PRESCRIPTION', prescriptionItemId: item.id, productId: item.productId, name: `${item.product.genericName} ${item.product.strength}`, unit: item.product.unit, quantity, unitPrice: item.product.sellingPrice, lineTotal });
+      lines.push({ source: 'PRESCRIPTION', prescriptionItemId: item.id, productId: item.productId, name: `${item.product.genericName} ${item.product.strength}`, unit: item.product.unit, quantity, unitPrice: item.product.sellingPrice, lineTotal, dosageInstructions: item.dosageInstructions, specialInstructions: item.specialInstructions });
     }
 
     const retailRequests = input.retailItems || [];

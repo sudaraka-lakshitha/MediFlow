@@ -77,8 +77,11 @@ export function SessionGuard({ children }: { children: ReactNode }) {
       if (Date.now() - lastSent.current >= 30_000) void activity();
     };
     const visibility = () => {
-      // Background validation must not interrupt a valid workspace.
-      if (!document.hidden) void sync();
+      // Revalidate only if the tab returned after a server-enforced deadline.
+      // A normal tab switch should not trigger a session request or banner.
+      const snapshot = current.current;
+      const now = Date.now() + offset.current;
+      if (!document.hidden && snapshot && (now >= snapshot.lockAt || now >= snapshot.expiresAt)) void sync();
     };
     const preferences = () => { setIdleMinutes(current.current?.idleMinutes ?? 30); setPreferencesOpen(true); setError(''); };
     const storage = (event: StorageEvent) => {
@@ -97,7 +100,6 @@ export function SessionGuard({ children }: { children: ReactNode }) {
       }
       if (activityPending.current && Date.now() - lastSent.current >= 30_000 && !document.hidden) void activity();
     }, 1000);
-    const poll = window.setInterval(() => { if (!document.hidden && pendingWrites() === 0) void sync(); }, 60_000);
     window.addEventListener('mediflow:session-state', state);
     window.addEventListener('mediflow:session-preferences', preferences);
     window.addEventListener('mediflow:request-unlock', requestUnlock);
@@ -106,7 +108,7 @@ export function SessionGuard({ children }: { children: ReactNode }) {
     document.addEventListener('visibilitychange', visibility);
     for (const event of ['pointerdown', 'keydown', 'scroll']) window.addEventListener(event, interact, { passive: true });
     return () => {
-      mounted.current = false; clearInterval(timer); clearInterval(poll);
+      mounted.current = false; clearInterval(timer);
       window.removeEventListener('mediflow:session-state', state);
       window.removeEventListener('mediflow:session-preferences', preferences);
       window.removeEventListener('mediflow:request-unlock', requestUnlock);

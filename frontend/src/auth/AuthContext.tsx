@@ -48,7 +48,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       acceptSession: accept,
       logout: async () => {
-        await api.post('/auth/session/logout');
+        // Start server revocation with the captured token, then clear the tab
+        // synchronously. Do not make local logout wait on a sleeping/offline API.
+        const token = sessionToken();
+        if (token) void api.post('/auth/session/logout', undefined, {
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => undefined);
         clearSession();
         setWorkspaceLocked(false);
         setUser(null);

@@ -57,8 +57,8 @@ export const deliveryService = {
       return delivery;
     });
   },
-  async requestReshipment(id, user, withdraw = false) {
-    return serializable(async tx => {
+  async requestReshipment(id, user, withdraw = false, transaction = null) {
+    const operation = async tx => {
       const delivery = await tx.deliveryRequest.findUnique({ where: { paymentRequestId: id }, include: { paymentRequest: true } });
       if (!delivery || delivery.paymentRequest.patientId !== user.id) throw new AppError(404, 'Delivery not found.');
       if (withdraw) {
@@ -72,7 +72,8 @@ export const deliveryService = {
       await tx.deliveryRequest.update({ where: { id: delivery.id }, data: { status: 'RESHIP_REQUESTED' } });
       await tx.paymentRequestEvent.create({ data: { paymentRequestId: id, revision: delivery.paymentRequest.revision, actorId: user.id, kind: 'DELIVERY_RESHIP_REQUESTED', details: { deliveryId: delivery.id } } });
       return tx.deliveryRequest.findUnique({ where: { paymentRequestId: id }, include });
-    });
+    };
+    return transaction ? operation(transaction) : serializable(operation);
   },
   async act(id, input, user, transaction = null) {
     if (!['ADMIN', 'PHARMACIST'].includes(user.role)) throw new AppError(403, 'Only pharmacy staff can arrange dispatch.');

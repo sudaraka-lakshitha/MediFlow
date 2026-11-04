@@ -65,6 +65,7 @@ export const performPrescriptionDispense = async (tx, { prescriptionId, paymentR
       await tx.dispensingItem.create({ data: {
         dispensingId: dispensing.id, prescriptionItemId: paidItem.prescriptionItemId, batchId: entry.batchId,
         quantity: entry.quantity, unitPrice: paidItem.unitPrice, unitCost: entry.unitCost,
+        dosageInstructions: paidItem.dosageInstructions, specialInstructions: paidItem.specialInstructions,
       } });
       dispensedQuantities.set(paidItem.prescriptionItemId, (dispensedQuantities.get(paidItem.prescriptionItemId) || new Prisma.Decimal(0)).add(entry.quantity));
     }

@@ -78,7 +78,7 @@ type Upload = {
     patientProfile?: { id: number; patientNumber: string };
   };
   reviewedBy?: { id: number; fullName: string; role: string };
-  prescription?: { id: number; prescriptionNumber: string; status: string; paymentRequest?: { status: string; revision: number; acknowledgedRevision?: number; customerPaymentChoice?: string; reservationExpiresAt?: string } };
+  prescription?: { id: number; prescriptionNumber: string; status: string; paymentRequest?: { status: string; revision: number; acknowledgedRevision?: number; customerPaymentChoice?: string; reservationExpiresAt?: string } | null };
   paymentSlips?: UploadSlip[];
 };
 
@@ -1006,7 +1006,7 @@ export function PrescriptionUploadsPage() {
                     : `${item.patient.fullName} · ${item.patient.email} · ${new Date(item.createdAt).toLocaleString()}`}
                 </small>
               </div>
-              {item.prescription?.paymentRequest ? <div className="text-end"><small className="d-block">Current invoice</small><Status value={item.prescription.paymentRequest.status} /></div> : <UploadStatus value={item.status} />}
+              {item.prescription?.status === "CANCELLED" ? <div className="text-end"><small className="d-block">Prescription</small><Status value="CANCELLED" /></div> : item.prescription?.status === "REJECTED" ? <div className="text-end"><small className="d-block">Prescription</small><Status value="REJECTED" /></div> : item.prescription?.paymentRequest ? <div className="text-end"><small className="d-block">Current invoice</small><Status value={item.prescription.paymentRequest.status} /></div> : <UploadStatus value={item.status} />}
             </div>
             {item.patientNote && (
               <div className="upload-note">
@@ -1062,7 +1062,17 @@ export function PrescriptionUploadsPage() {
               <div>
                 <small>Availability review</small>
                 <strong>
-                  {item.status === "PENDING"
+                  {item.prescription?.status === "CANCELLED"
+                    ? "Prescription cancelled — no active order or stock reservation remains"
+                    : item.prescription?.status === "REJECTED"
+                    ? "Prescription rejected — see the pharmacist’s reason below"
+                    : item.prescription?.status === "DISPENSED"
+                    ? "Prescription dispensed — see the final invoice for the supplied items"
+                    : item.prescription?.status === "PARTIALLY_DISPENSED"
+                    ? "Partially dispensed — the prescription shows supplied and not supplied quantities"
+                    : item.prescription?.status === "VERIFIED" && !item.prescription.paymentRequest
+                    ? "Prescription verified — pharmacy still needs to create the final bill"
+                    : item.status === "PENDING"
                     ? "Waiting for pharmacist review"
                     : item.status === "AVAILABLE"
                     ? "All requested medicines are currently in stock"
@@ -1236,6 +1246,7 @@ export function PrescriptionUploadsPage() {
                   <i className="bi bi-file-earmark-medical me-1" /> Linked Prescription
                 </small>
                 <strong>{item.prescription.prescriptionNumber}</strong> · <Status value={item.prescription.status} />
+                {!item.prescription.paymentRequest && <small className="d-block mt-1 text-warning-emphasis">Cashier invoice has not been created yet.</small>}
                 {item.prescription.paymentRequest && (
                   <div className="mt-2"><strong>Current invoice: </strong><Status value={item.prescription.paymentRequest.status} />
                     {item.prescription.paymentRequest.status === "AWAITING_PAYMENT" && <small className="d-block">{item.prescription.paymentRequest.acknowledgedRevision !== item.prescription.paymentRequest.revision ? "Awaiting customer approval of the latest invoice" : "Customer approved — awaiting payment"}</small>}
@@ -1287,6 +1298,19 @@ export function PrescriptionUploadsPage() {
               )}
             </div>
             <div className="d-flex gap-2 mt-3 flex-wrap">
+              {!patient && !cashier && item.prescription && (
+                item.prescription.status === "VERIFIED" && (!item.prescription.paymentRequest || ["CANCELLED", "FULFILLED"].includes(item.prescription.paymentRequest.status))
+                || item.prescription.status === "PARTIALLY_DISPENSED" && ["CANCELLED", "FULFILLED"].includes(item.prescription.paymentRequest?.status || "")
+              ) && (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  onClick={() => navigate(`/prescriptions?continueRx=${item.prescription!.id}`)}
+                >
+                  <i className="bi bi-receipt me-1" />
+                  Continue to cashier bill
+                </button>
+              )}
               <button
                 className="btn btn-sm btn-outline-secondary"
                 onClick={() => openFile(item)}

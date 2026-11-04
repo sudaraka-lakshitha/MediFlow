@@ -13,6 +13,7 @@ import { deliveryBulkSchema, deliveryBulkService } from '../services/deliveryBul
 import { workflowLeaseService } from '../services/workflowLease.service.js';
 import { exportDeliveryWorkbook, readDeliveryWorkbook } from '../services/deliveryWorkbook.service.js';
 import { prisma } from '../config/prisma.js';
+import { AppError } from '../utils/AppError.js';
 export const deliveryRoutes = Router();
 // Authenticate only matching delivery routes; leave login and registration public.
 deliveryRoutes.use(['/deliveries', '/delivery-settings', '/payment-requests/:id/delivery'], authenticate);
@@ -46,12 +47,27 @@ deliveryRoutes.get('/deliveries/couriers', authorize('PATIENT', 'ADMIN', 'PHARMA
 deliveryRoutes.post('/payment-requests/:id/delivery', authorize('PATIENT'), validate({ params: idParams, body: deliveryContactSchema }), asyncHandler(withWorkflowLease(async (req, res) => res.status(201).json({ data: await deliveryService.request(Number(req.params.id), req.body, req.user) }))));
 // Patient can cancel their own REQUESTED delivery before the pharmacy confirms it
 deliveryRoutes.delete('/payment-requests/:id/delivery', authorize('PATIENT'), validate({ params: idParams }), asyncHandler(withWorkflowLease(async (req, res) => {
-  const row = await prisma.deliveryRequest.findFirst({
-    where: { paymentRequestId: Number(req.params.id), paymentRequest: { patientId: req.user.id } },
+  await prisma.$transaction(async (tx) => {
+    const row = await tx.deliveryRequest.findFirst({
+      where: { paymentRequestId: Number(req.params.id), paymentRequest: { patientId: req.user.id } },
+      include: { paymentRequest: { select: { revision: true } } },
+    });
+    // Do not reveal whether another patient's invoice has a delivery request.
+    if (!row) throw new AppError(404, 'Delivery request not found.');
+    if (row.status !== 'REQUESTED') throw new AppError(409, 'This delivery can no longer be cancelled. Contact the pharmacy for assistance.');
+    const changed = await tx.deliveryRequest.updateMany({
+      where: { id: row.id, status: 'REQUESTED' },
+      data: { status: 'CANCELLED' },
+    });
+    if (changed.count !== 1) throw new AppError(409, 'Delivery details changed. Refresh and review the latest status.');
+    await tx.paymentRequestEvent.create({ data: {
+      paymentRequestId: row.paymentRequestId,
+      revision: row.paymentRequest.revision,
+      actorId: req.user.id,
+      kind: 'DELIVERY_CANCELLED_BY_PATIENT',
+      details: { previousStatus: row.status },
+    } });
   });
-  if (!row) throw new Error('Delivery request not found or does not belong to your account.');
-  if (row.status !== 'REQUESTED') throw new Error('This delivery can no longer be cancelled. Contact the pharmacy for assistance.');
-  await prisma.deliveryRequest.update({ where: { id: row.id }, data: { status: 'CANCELLED' } });
   res.json({ message: 'Delivery request cancelled. You can re-request delivery if needed.' });
 })));
 deliveryRoutes.post('/payment-requests/:id/delivery/reshipment', authorize('PATIENT'), validate({ params: idParams }), asyncHandler(withWorkflowLease(async (req, res) => res.json({ data: await deliveryService.requestReshipment(Number(req.params.id), req.user) }))));

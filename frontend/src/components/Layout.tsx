@@ -9,6 +9,7 @@ import { Alert, Loading } from './Ui';
 import { MyActivityModal } from './MyActivityModal';
 import { ConfirmModal } from './ConfirmModal';
 import { SessionGuard } from '../auth/SessionGuard';
+import { workspaceLocked } from '../auth/workspaceLock';
 
 type AttentionKey = 'prescriptions' | 'prescriptionUploads' | 'cashier' | 'inventory' | 'sales' | 'audit';
 type AttentionSummary = Partial<Record<AttentionKey, { count: number; label: string; tone: 'danger' | 'warning' | 'info' | 'neutral' }>>;
@@ -114,24 +115,29 @@ export function Layout() {
   }, []);
   useEffect(() => {
     let active = true;
+    let requestPending = false;
     const loadAttention = async () => {
+      if (!active || document.hidden || workspaceLocked() || requestPending) return;
+      requestPending = true;
       try {
         const response = await api.get('/navigation/attention');
         if (active) setAttention(response.data.data);
       } catch {
         // Navigation counts are helpful but should never interrupt the workspace.
+      } finally {
+        requestPending = false;
       }
     };
     loadAttention();
     const timer = window.setInterval(loadAttention, 5_000);
-    const onFocus = () => loadAttention();
+    const onVisibility = () => { if (!document.hidden) loadAttention(); };
     const onAttentionRefresh = () => loadAttention();
-    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('mediflow:attention-refresh', onAttentionRefresh);
     return () => {
       active = false;
       window.clearInterval(timer);
-      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('mediflow:attention-refresh', onAttentionRefresh);
     };
   }, []);

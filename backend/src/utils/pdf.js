@@ -64,7 +64,9 @@ export const createPdf = ({ title, subtitle, columns, rows, summary = [], chart 
   const left = MARGIN;
   const right = doc.page.width - MARGIN;
   const available = right - left;
-  const bottomLimit = doc.page.height - 42;
+  // Keep the detailed ledger above the footer area so the last row on every page
+  // cannot collide with the generated-at / page-number line.
+  const bottomLimit = doc.page.height - 70;
 
   const fullHeading = () => {
     doc.font('Helvetica-Bold').fontSize(20).fillColor('#174a45').text(title, left, doc.y);
@@ -77,7 +79,7 @@ export const createPdf = ({ title, subtitle, columns, rows, summary = [], chart 
   const continuationHeading = () => {
     doc.font('Helvetica-Bold').fontSize(9).fillColor('#174a45').text(title, left, MARGIN);
     doc.font('Helvetica').fontSize(7.5).fillColor('#94a3b8')
-      .text(`${subtitle} (continued)`, left, MARGIN + 12);
+      .text(/\(continued\)$/i.test(subtitle) ? subtitle : `${subtitle} (continued)`, left, MARGIN + 12);
     doc.moveTo(left, MARGIN + 24).lineTo(right, MARGIN + 24).lineWidth(0.5).strokeColor('#cfe0dc').stroke();
     doc.y = MARGIN + 30;
   };
@@ -118,7 +120,7 @@ export const createPdf = ({ title, subtitle, columns, rows, summary = [], chart 
 
   if (notes.length) {
     doc.font('Helvetica').fontSize(7.5).fillColor('#64748b');
-    notes.forEach((note) => doc.text(`• ${note}`, left, doc.y));
+    notes.forEach((note) => doc.text(`- ${note}`, left, doc.y));
     doc.moveDown(0.6);
   }
 
@@ -178,8 +180,8 @@ export const createPdf = ({ title, subtitle, columns, rows, summary = [], chart 
   for (let page = pages.start; page < pages.start + pages.count; page += 1) {
     doc.switchToPage(page);
     doc.font('Helvetica').fontSize(7).fillColor('#94a3b8')
-      .text(`Generated ${generatedAt} UTC  •  Page ${page + 1 - pages.start} of ${pages.count}`,
-        left, doc.page.height - 25, { width: available, align: 'center', height: 20, lineBreak: false });
+      .text(`Generated ${generatedAt} UTC  -  Page ${page + 1 - pages.start} of ${pages.count}`,
+        left, doc.page.height - 48, { width: available, align: 'center', height: 10, lineBreak: false });
   }
   doc.end();
 });

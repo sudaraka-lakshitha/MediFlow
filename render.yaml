@@ -6,7 +6,7 @@ services:
     region: singapore
     buildCommand: npm install --include=dev && npm --prefix backend install --include=dev && npm --prefix frontend install --include=dev && npm --prefix backend run prisma:generate && npm --prefix frontend run build
     startCommand: npm --prefix backend run prisma:deploy && npm --prefix backend start
-    healthCheckPath: /health
+    healthCheckPath: /ready
     envVars:
       - key: NODE_ENV
         value: production

@@ -496,7 +496,7 @@ export function SalesPage() {
                         <small className="d-block text-secondary" key={item.id}>
                           {item.product.genericName} {item.product.strength} ×{" "}
                           {item.quantity} — {money(item.lineTotal)}
-                          {item.prescriptionItem && Number(item.quantity) > 0 && <span className="d-block mt-1" style={{ whiteSpace: 'pre-wrap' }}>Directions: {item.prescriptionItem.dosageInstructions?.trim() || 'Directions are not recorded. Ask the pharmacist before taking this medicine.'}{item.prescriptionItem.specialInstructions && <span className="d-block">Additional instructions: {item.prescriptionItem.specialInstructions}</span>}{item.product.storageInstructions && <span className="d-block">Storage: {item.product.storageInstructions}</span>}</span>}
+                          {item.prescriptionItem && Number(item.quantity) > 0 && <span className="d-block mt-1" style={{ whiteSpace: 'pre-wrap' }}>Directions: {item.dosageInstructions?.trim() || 'Directions are not recorded. Ask the pharmacist before taking this medicine.'}{item.specialInstructions && <span className="d-block">Additional instructions: {item.specialInstructions}</span>}{item.product.storageInstructions && <span className="d-block">Storage: {item.product.storageInstructions}</span>}</span>}
                         </small>
                       ))}
                     </div>

@@ -1069,6 +1069,29 @@ export function PrescriptionsPage() {
       }
     setAction({ type, rx });
   };
+  const continuationOpened = useRef(0);
+  useEffect(() => {
+    const prescriptionId = Number(searchParams.get("continueRx"));
+    if (!prescriptionId) {
+      continuationOpened.current = 0;
+      return;
+    }
+    if (!['ADMIN', 'PHARMACIST'].includes(user!.role) || continuationOpened.current === prescriptionId) return;
+    continuationOpened.current = prescriptionId;
+    api.get(`/prescriptions/${prescriptionId}`).then((response) => {
+      const rx = response.data.data as Rx;
+      const canCreateBill = rx.status === "VERIFIED"
+        && (!rx.paymentRequest || ["CANCELLED", "FULFILLED"].includes(rx.paymentRequest.status));
+      const canBillRemainder = rx.status === "PARTIALLY_DISPENSED"
+        && (!rx.paymentRequest || ["CANCELLED", "FULFILLED"].includes(rx.paymentRequest.status));
+      if (canCreateBill || canBillRemainder) openAction("dispense", rx);
+      else setError(`Prescription ${rx.prescriptionNumber} is ${rx.status.replaceAll("_", " ").toLowerCase()} and cannot be sent to the cashier right now.`);
+    }).catch((caught) => setError(errorMessage(caught))).finally(() => {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete("continueRx");
+      setSearchParams(nextParams, { replace: true });
+    });
+  }, [staff, user, searchParams, setSearchParams, openAction]);
   const closeAction = () => {
     if (sourceFileUrl) URL.revokeObjectURL(sourceFileUrl);
     setSourceFileUrl("");
@@ -1139,17 +1162,28 @@ export function PrescriptionsPage() {
   const printBagLabel = (rx: Rx, issue: Dispensing) => {
     const win = window.open("", "_blank", "width=600,height=800");
     if (!win) return;
+    // Names, product labels and directions may be entered by users. Escape all
+    // values before building this print-only document so none can become HTML.
+    const escapeHtml = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, (character) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    })[character]!);
+    // The print window has no reason to retain a reference to the signed-in app.
+    win.opener = null;
 
     const itemsHtml = issue.items
       .map(
         (item) => `
         <div style="border-bottom: 1px dashed #ccc; padding: 6px 0;">
           <div style="display: flex; justify-content: space-between; font-weight: bold;">
-            <span>${item.prescriptionItem.product.genericName}</span>
-            <span>Qty: ${item.quantity} ${item.prescriptionItem.product.unit}</span>
+            <span>${escapeHtml(item.prescriptionItem.product.genericName)}</span>
+            <span>Qty: ${escapeHtml(item.quantity)} ${escapeHtml(item.prescriptionItem.product.unit)}</span>
           </div>
-          <div style="font-size: 11px; color: #555; margin-top: 2px;">
-            ${item.prescriptionItem.dosageInstructions || "As directed."}
+          <div style="font-size: 11px; color: #555; margin-top: 2px; white-space: pre-wrap;">
+            ${escapeHtml(item.prescriptionItem.dosageInstructions || "As directed.")}
           </div>
         </div>
       `
@@ -1159,7 +1193,7 @@ export function PrescriptionsPage() {
     win.document.write(`
       <html>
         <head>
-          <title>Print Bag Label - ${rx.prescriptionNumber}</title>
+          <title>Print Bag Label - ${escapeHtml(rx.prescriptionNumber)}</title>
           <style>
             @page { size: A6; margin: 0; }
             body {
@@ -1253,13 +1287,13 @@ export function PrescriptionsPage() {
               
               <div class="patient-box">
                 <div style="font-size: 10px; text-transform: uppercase; color: #555;">Patient</div>
-                <div class="patient-name">${rx.patient.user.fullName}</div>
-                <div style="font-size: 11px;">No: ${rx.patient.patientNumber}</div>
+                <div class="patient-name">${escapeHtml(rx.patient.user.fullName)}</div>
+                <div style="font-size: 11px;">No: ${escapeHtml(rx.patient.patientNumber)}</div>
               </div>
               
               <div class="rx-info">
-                <span>RX: <strong>${rx.prescriptionNumber}</strong></span>
-                <span>Date: ${new Date(issue.dispensedAt).toLocaleDateString()}</span>
+                <span>RX: <strong>${escapeHtml(rx.prescriptionNumber)}</strong></span>
+                <span>Date: ${escapeHtml(new Date(issue.dispensedAt).toLocaleDateString())}</span>
               </div>
               
               <div class="items-title">Dispensed Medicines</div>
@@ -1269,8 +1303,8 @@ export function PrescriptionsPage() {
             </div>
             
             <div class="footer-box">
-              <div>Dispensed by: <strong>${issue.pharmacist.fullName}</strong></div>
-              <div>Time: ${new Date(issue.dispensedAt).toLocaleTimeString()}</div>
+              <div>Dispensed by: <strong>${escapeHtml(issue.pharmacist.fullName)}</strong></div>
+              <div>Time: ${escapeHtml(new Date(issue.dispensedAt).toLocaleTimeString())}</div>
               <div class="signature-line">
                 Verified & Handed Over By (Signature)
               </div>
@@ -1948,10 +1982,10 @@ export function PrescriptionsPage() {
                       {/* ── Compact overflow menu for secondary actions ── */}
                       <ActionsDropdown
                         actions={[
-                          ...(["PENDING", "VERIFIED"].includes(rx.status)
+                          ...(["PENDING", "VERIFIED", "PARTIALLY_DISPENSED"].includes(rx.status)
                             ? [
                                 {
-                                  label: "Edit prescription",
+                                  label: rx.status === "PARTIALLY_DISPENSED" ? "Update directions for remaining medicines" : "Edit prescription",
                                   icon: "pencil",
                                   onClick: () => openEditor(rx),
                                 },
@@ -2180,6 +2214,12 @@ export function PrescriptionsPage() {
               </aside>
             )}
             <form onSubmit={save} className="prescription-editor-form">
+              {editor?.rx?.status === "PARTIALLY_DISPENSED" && (
+                <div className="alert alert-info">
+                  <strong>Remaining medicine directions</strong><br />
+                  Update label directions or special instructions only for medicines that still have quantity remaining. Previously dispensed quantities and receipts keep their original directions.
+                </div>
+              )}
               <div className="form-grid">
                 <div>
                   <label className="form-label">Patient</label>

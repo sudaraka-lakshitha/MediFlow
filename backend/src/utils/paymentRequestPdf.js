@@ -63,6 +63,15 @@ const drawTableHeader = (doc, y) => {
   return y + 27;
 };
 
+const drawContinuationBanner = (doc, request, label) => {
+  doc.addPage();
+  doc.roundedRect(left, 30, contentWidth, 47, 7).fill('#174a45');
+  doc.rect(left, 30, 5, 47).fill('#18a999');
+  doc.font('Helvetica-Bold').fontSize(13).fillColor('#ffffff').text('MediFlow Pharmacy', left + 15, 39);
+  doc.font('Helvetica').fontSize(8).fillColor('#d4e7e3').text(label, left + 15, 58);
+  doc.font('Helvetica-Bold').fontSize(9).fillColor('#ffffff').text(request.requestNumber, 335, 46, { width: right - 335, align: 'right', ellipsis: true });
+};
+
 const drawTable = (doc, request, startY, retail) => {
   let y = drawTableHeader(doc, startY);
   if (request.deliveryFeeFor && !request.items.length) {
@@ -72,8 +81,8 @@ const drawTable = (doc, request, startY, retail) => {
   }
   request.items.forEach((item) => {
     if (y > 710) {
-      doc.addPage();
-      y = drawTableHeader(doc, 55);
+      drawContinuationBanner(doc, request, 'Invoice items continued');
+      y = drawTableHeader(doc, 91);
     }
     const rowHeight = 32;
     doc.font('Helvetica').fontSize(8.8).fillColor('#111827');
@@ -113,7 +122,7 @@ const drawTotals = (doc, request, startY) => {
 const drawMedicineDirections = (doc, request) => {
   const items = request.items.filter((item) => item.prescriptionItem && item.product?.productType === 'MEDICINE');
   if (!items.length) return doc.y;
-  if (doc.y + 70 > 744) doc.addPage();
+  if (doc.y + 70 > 744) { drawContinuationBanner(doc, request, 'Medicine directions'); doc.y = 91; }
   doc.moveDown(1).font('Helvetica-Bold').fontSize(12).fillColor('#174a45').text('Medicine directions', left, doc.y, { width: contentWidth });
   doc.font('Helvetica').fontSize(8.5).fillColor('#64748b').text('Directions for the medicines on this bill. Ask the pharmacist if you need clarification.', { width: contentWidth });
   for (const item of items) {
@@ -121,7 +130,7 @@ const drawMedicineDirections = (doc, request) => {
     const lines = [detail.dosageInstructions, detail.specialInstructions && `Additional instructions: ${detail.specialInstructions}`, item.product.storageInstructions && `Storage: ${item.product.storageInstructions}`].filter(Boolean);
     const text = `${productName(item.product)} · Supplied quantity: ${item.quantity} ${item.product.unit}\n${lines.join('\n')}`;
     const height = doc.heightOfString(text, { width: contentWidth - 24, font: 'Helvetica', size: 8.5 }) + 18;
-    if (doc.y + height > 754) doc.addPage();
+    if (doc.y + height > 754) { drawContinuationBanner(doc, request, 'Medicine directions continued'); doc.y = 91; }
     const y = doc.y + 5;
     doc.roundedRect(left, y, contentWidth, height, 5).fillAndStroke('#f7faf9', '#dce9e5');
     doc.font('Helvetica').fontSize(8.5).fillColor('#334155').text(text, left + 12, y + 8, { width: contentWidth - 24 });
@@ -178,7 +187,7 @@ const drawCompactSlip = (doc, request) => {
   y += 26;
 
   y = drawPin(doc, request.pickupPin, y - 18, retail);
-  doc.font('Helvetica').fontSize(7.5).fillColor('#82918e').text('MediFlow', left, 780, { width: contentWidth, align: 'center', lineBreak: false });
+  doc.font('Helvetica').fontSize(7.5).fillColor('#82918e').text('MediFlow', left, 730, { width: contentWidth, align: 'center', lineBreak: false, height: 10 });
 };
 
 export const createPaymentRequestPdf = (request, receipt = false, paperWidth = 80, fullReceipt = false) => {
@@ -199,14 +208,14 @@ export const createPaymentRequestPdf = (request, receipt = false, paperWidth = 8
     let y = drawHeader(doc, request, receipt);
     const retail = request.type === 'RETAIL';
     y = drawTable(doc, request, y, retail);
-    if (y + 120 > 790) {
-      doc.addPage();
-      y = 46;
+    if (y + 150 > 760) {
+      drawContinuationBanner(doc, request, 'Invoice totals');
+      y = 91;
     }
     y = drawTotals(doc, request, y);
 
     if (fullReceipt && request.pickupPin) {
-      if (y + 160 > 740) { doc.addPage(); y = 46; }
+      if (y + 160 > 760) { drawContinuationBanner(doc, request, 'Collection verification'); y = 91; }
       y = drawPin(doc, request.pickupPin, y, retail);
       doc.y = y;
     }
@@ -227,6 +236,7 @@ export const createPaymentRequestPdf = (request, receipt = false, paperWidth = 8
         : request.status === 'FULFILLED'
           ? { bg: '#eef2f7', border: '#9fb3c8', fg: '#33475b', bold: true }
           : { bg: '#f7faf9', border: '#cfe0dc', fg: '#526b67', bold: false };
+      if (y + 88 > 760) { drawContinuationBanner(doc, request, 'Payment request status'); y = 91; }
       doc.roundedRect(left, y + 18, contentWidth, 60, 8).fillAndStroke(boxStyle.bg, boxStyle.border);
       doc.font(boxStyle.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(9).fillColor(boxStyle.fg).text(message, left + 24, y + 37, { width: contentWidth - 48, align: 'center' });
     }
@@ -234,7 +244,7 @@ export const createPaymentRequestPdf = (request, receipt = false, paperWidth = 8
     const range = doc.bufferedPageRange();
     for (let index = range.start; index < range.start + range.count; index += 1) {
       doc.switchToPage(index);
-      doc.font('Helvetica').fontSize(7.5).fillColor('#82918e').text(`MediFlow - Page ${index + 1} of ${range.count}`, left, 780, { width: contentWidth, align: 'center', lineBreak: false });
+      doc.font('Helvetica').fontSize(7.5).fillColor('#82918e').text(`MediFlow - Page ${index + 1} of ${range.count}`, left, 790, { width: contentWidth, align: 'center', lineBreak: false, height: 10 });
     }
   }
   doc.end();

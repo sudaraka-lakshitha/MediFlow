@@ -181,6 +181,18 @@ npm --prefix backend run prisma:seed
 
 > **Important:** Do **not** run `prisma:seed` against an existing production or hosted database. For new cloud deployments, use the interactive `setup:admin` script detailed in [Deployment and upgrades](#15-hosted-deployment--upgrade-guide).
 
+### Optional — Add Workflow Demonstration Records to Aiven
+
+For a dedicated demonstration database, `backend/scripts/seed-demo-prescription-workflows.mjs` adds fictional prescription-upload states, linked prescriptions, payment and delivery scenarios, returns, a partially dispensed order, an offline order, and the related stock reservations. The records are marked as demo data; payment entries are fictional and do not represent real money. This script changes database records and stock, so do not run it against a live pharmacy database.
+
+The script refuses to run unless `AIVEN_PRISMA_URL` points to an Aiven `defaultdb`. Configure that variable locally in `backend/.env`, review the target host, then run from the repository root:
+
+```powershell
+npm --prefix backend run seed:demo-workflows
+```
+
+It creates or updates the demonstration pharmacist, cashier and patient accounts described in [Demo Accounts & Test Credentials](#9-demo-accounts--test-credentials). It does not create the administrator account; use `setup:admin` for that.
+
 ---
 
 ## 7. Experimental Drug Interaction Research Assets
@@ -230,7 +242,8 @@ npm run dev:web
 | Service | Address |
 |---|---|
 | **Web Application** | http://localhost:5173 |
-| **API Health Check** | http://localhost:5000/health |
+| **API Liveness Check** | http://localhost:5000/health |
+| **Database Readiness Check** | http://localhost:5000/ready |
 | **Swagger / OpenAPI Documentation** | http://localhost:5000/docs |
 | **OpenAPI Specification JSON** | http://localhost:5000/openapi.json |
 
@@ -238,7 +251,7 @@ npm run dev:web
 
 ## 9. Demo Accounts & Test Credentials
 
-All demo seed accounts use the default password: **`Demo123!`**
+The local baseline fixtures (`npm --prefix backend run prisma:seed`) use **`Demo123!`**. The Aiven workflow demonstration seed uses **`Demo@123!`** for its own accounts; the two fixture sets have different account names and passwords.
 
 | Role | Email | Access Scope |
 |---|---|---|
@@ -248,6 +261,8 @@ All demo seed accounts use the default password: **`Demo123!`**
 | **Patient** | `pharmacy.mediflow+patient@gmail.com` | Prescription image uploads, estimate acceptance, order & delivery tracking, personal health record portal |
 
 > Demo credentials are only visible on the login screen during local development (`DEV` mode). Change all credentials and disable demo seeding before any public deployment.
+
+The Aiven workflow seed creates or updates `pharmacy.mediflow+demopharmacist@gmail.com`, `pharmacy.mediflow+democashier@gmail.com`, and patient accounts `pharmacy.mediflow+patient1@gmail.com` through `pharmacy.mediflow+patient7@gmail.com`, all using **`Demo@123!`**. It does not create an administrator; set up the admin separately with `setup:admin`.
 
 ---
 
@@ -559,7 +574,7 @@ Create a Node web service from this repository and configure:
 | Root directory | `backend` |
 | Build command | `npm ci --include=dev && npm run prisma:generate` |
 | Start command | `npm run prisma:deploy && npm start` |
-| Health check | `/health` |
+| Health check | `/ready` (checks that the API can reach MySQL) |
 
 Set these backend environment variables:
 
@@ -594,7 +609,7 @@ Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS` and 
 
 Render Free blocks outbound ports 25, 465 and 587. It also spins down idle services, so cold starts can exceed ordinary request timeouts. Check [Render's current free-service limitations](https://render.com/docs/free) before choosing email transport and hosting. Monitoring is useful for availability checks but does not guarantee an always-on service. An email HTTP API would require an application integration; entering its key as `SMTP_PASS` is not sufficient.
 
-After deployment, check `/health`, sign-in, password-recovery email delivery and a small sample upload. The API root `/` may return 404; that alone is not a failed deployment.
+After deployment, check `/health` for API process liveness and `/ready` for database readiness, then check sign-in, password-recovery email delivery and a small sample upload. The Render blueprint uses `/ready`. The API root `/` may return 404; that alone is not a failed deployment.
 
 ### Initializing the First Administrator on Aiven MySQL
 
@@ -608,7 +623,7 @@ The script connects over TLS, checks for existing administrators, and prompts se
 
 ### Upgrading an Existing Deployment
 
-Back up the database first. Deploy the tested commit to Render and Vercel. Render's start command applies pending migrations before starting the API; do not use `prisma migrate reset` or re-run the demo seed on hosted data. After schema changes, local development also needs `prisma:deploy` and `prisma:generate`. The bulk-performance change in commit `6733e51` itself requires no new database migration.
+Back up the database first. Deploy the tested commit to Render and Vercel. Render's start command applies pending migrations before starting the API. Never use `prisma migrate reset` on hosted data, and do not run either demo seed against a real pharmacy database; the workflow demo seed is only for a dedicated demonstration database. After schema changes, local development also needs `prisma:deploy` and `prisma:generate`.
 
 ---
 
@@ -672,14 +687,14 @@ The following status codes appear in MediFlow's audit logs (`/audit`), applicati
 
 ## 17. Current QA Status & Verification Boundaries
 
-Verified on **28 October 2026**, for the code in commit **`6733e51`**:
+Verified on **4 November 2026** for the pre-commit working tree:
 
-- **Backend suite:** 736 tests passed across 66 files. These include unit and HTTP-boundary tests; many database dependencies are mocked.
-- **Bulk regressions:** 57 tests passed across stock, delivery and master-data suites, including batch reads, missing records, audit/movement batching, chunk limits, stale previews and lease cleanup.
-- **Frontend:** `tsc -b && vite build` passed.
-- **Not repeated in this verification:** the separate local-MySQL integration audit, frontend lint, Android device testing, hosted Aiven load testing, physical printers/scanners and production email delivery.
+- **Backend suite:** 739 tests passed across 66 files. These include unit and HTTP-boundary tests; most workflow tests use mocked database dependencies.
+- **Frontend:** `tsc -b && vite build` passed. The lint command exits successfully but reports non-blocking React warnings that still need review.
+- **Database:** Prisma client generation passed; migration `20261104000000_remaining_direction_snapshots` was applied to Aiven, migration status is up to date, and a read-only check confirmed all four new direction columns.
+- **Not verified here:** the final hosted Render/Vercel deployment, Android device behavior, Aiven load performance, physical printers/scanners and production email delivery.
 
-These results do not certify every business workflow or a maximum hosted upload time. Run the separate integration audit against the authorized local database and verify deployment-specific behavior before relying on a release. HTTP-boundary tests need access to temporary local test-server ports.
+These results do not certify every business workflow or a maximum hosted upload time. Review the hosted deployment after pushing, especially its `/ready` health check and required environment variables. HTTP-boundary tests need access to temporary local test-server ports.
 
 ---
 

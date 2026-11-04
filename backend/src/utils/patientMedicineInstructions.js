@@ -12,8 +12,10 @@ export const patientMedicineInstructions = record => {
   const lines = record.dispensing ? record.dispensing.items || [] : record.items || [];
   return lines.filter(line => line.prescriptionItem && Number(line.quantity) > 0).map(line => {
     const item = line.prescriptionItem; const product = item.product || line.product;
+    const directions = Object.hasOwn(line, 'dosageInstructions') ? line.dosageInstructions : item.dosageInstructions;
+    const special = Object.hasOwn(line, 'specialInstructions') ? line.specialInstructions : item.specialInstructions;
     return { id: line.id, name: `${product.genericName}${product.strength && product.strength !== 'N/A' ? ` ${product.strength}` : ''}`,
-      quantity: line.quantity, unit: product.unit, directions: item.dosageInstructions?.trim() || 'Directions are not recorded. Ask the pharmacist before taking this medicine.',
-      specialInstructions: item.specialInstructions || null, storageInstructions: product.storageInstructions || null };
+      quantity: line.quantity, unit: product.unit, directions: directions?.trim() || 'Directions are not recorded. Ask the pharmacist before taking this medicine.',
+      specialInstructions: special || null, storageInstructions: product.storageInstructions || null };
   });
 };

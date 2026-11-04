@@ -14,6 +14,7 @@ import { requestContext } from './middleware/requestContext.js';
 import { auditReadAccess } from './middleware/auditReadAccess.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { apiRoutes } from './routes/index.js';
+import { prisma } from './config/prisma.js';
 
 export const app = express();
 app.set('trust proxy', 1);
@@ -28,6 +29,16 @@ app.use('/api/prescription-uploads', express.json({ limit: '18mb' }));
 app.use(express.json({ limit: '5mb' }));
 app.use(morgan('combined', { stream: { write: (message) => logger.http(message.trim()) } }));
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'mediflow-api' }));
+app.get('/ready', async (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return res.json({ status: 'ready', service: 'mediflow-api' });
+  } catch {
+    // Do not expose database addresses, credentials, or driver details to probes.
+    return res.status(503).json({ status: 'unavailable', service: 'mediflow-api' });
+  }
+});
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.get('/openapi.json', (_req, res) => res.json(swaggerSpec));
 app.use('/api', apiRoutes);

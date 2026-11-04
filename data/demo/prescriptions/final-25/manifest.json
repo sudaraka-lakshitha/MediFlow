@@ -1,0 +1,602 @@
+{
+  "mode": "builtin imagegen",
+  "reference": "User supplied MediFlow Demonstration Clinic layout",
+  "purpose": "Fictional adult software demonstration, not treatment advice",
+  "samples": [
+    {
+      "id": "001",
+      "category": "Medicines",
+      "items": [
+        [
+          "Paracetamol 500 mg tablets",
+          "Take 1 tablet every 6 hours only if needed for pain or fever, for up to 3 days. Maximum 4 tablets in 24 hours. Do not combine with other paracetamol.",
+          "12 tablets"
+        ],
+        [
+          "Cetirizine 10 mg tablets",
+          "Take 1 tablet at night once daily for 5 days. May cause drowsiness.",
+          "5 tablets"
+        ],
+        [
+          "Omeprazole 20 mg capsules",
+          "Take 1 capsule every morning before food for 14 days. Swallow whole.",
+          "14 capsules"
+        ]
+      ],
+      "name": "Demo Patient One"
+    },
+    {
+      "id": "002",
+      "category": "Medicines",
+      "items": [
+        [
+          "Metformin 500 mg tablets",
+          "Take 1 tablet twice daily, with or after breakfast and dinner. 30-day supply; continue as prescribed.",
+          "60 tablets"
+        ],
+        [
+          "Amlodipine 5 mg tablets",
+          "Take 1 tablet every morning at the same time each day, with or without food. 30-day supply; continue as prescribed.",
+          "30 tablets"
+        ],
+        [
+          "Paracetamol 500 mg tablets",
+          "Take 1 tablet every 6 hours only if needed for pain or fever, for up to 3 days. Maximum 4 tablets in 24 hours. Do not combine with other paracetamol.",
+          "12 tablets"
+        ]
+      ],
+      "name": "Demo Patient Two"
+    },
+    {
+      "id": "003",
+      "category": "Medicines",
+      "items": [
+        [
+          "Metformin 500 mg tablets",
+          "Take 1 tablet twice daily, with or after breakfast and dinner. 30-day supply; continue as prescribed.",
+          "60 tablets"
+        ],
+        [
+          "Amlodipine 5 mg tablets",
+          "Take 1 tablet every morning at the same time each day, with or without food. 30-day supply; continue as prescribed.",
+          "30 tablets"
+        ],
+        [
+          "Omeprazole 20 mg capsules",
+          "Take 1 capsule every morning before food for 14 days. Swallow whole.",
+          "14 capsules"
+        ]
+      ],
+      "name": "Demo Patient Three"
+    },
+    {
+      "id": "004",
+      "category": "Medicines",
+      "items": [
+        [
+          "Paracetamol 500 mg tablets",
+          "Take 1 tablet every 6 hours only if needed for pain or fever, for up to 3 days. Maximum 4 tablets in 24 hours. Do not combine with other paracetamol.",
+          "12 tablets"
+        ],
+        [
+          "Cetirizine 10 mg tablets",
+          "Take 1 tablet at night once daily for 5 days. May cause drowsiness.",
+          "5 tablets"
+        ],
+        [
+          "Omeprazole 20 mg capsules",
+          "Take 1 capsule every morning before food for 14 days. Swallow whole.",
+          "14 capsules"
+        ]
+      ],
+      "name": "Demo Patient Four"
+    },
+    {
+      "id": "005",
+      "category": "Medicines",
+      "items": [
+        [
+          "Metformin 500 mg tablets",
+          "Take 1 tablet twice daily, with or after breakfast and dinner. 30-day supply; continue as prescribed.",
+          "60 tablets"
+        ],
+        [
+          "Amlodipine 5 mg tablets",
+          "Take 1 tablet every morning at the same time each day, with or without food. 30-day supply; continue as prescribed.",
+          "30 tablets"
+        ],
+        [
+          "Cetirizine 10 mg tablets",
+          "Take 1 tablet at night once daily for 5 days. May cause drowsiness.",
+          "5 tablets"
+        ]
+      ],
+      "name": "Demo Patient Five"
+    },
+    {
+      "id": "006",
+      "category": "Medicines",
+      "items": [
+        [
+          "Paracetamol 500 mg tablets",
+          "Take 1 tablet every 6 hours only if needed for pain or fever, for up to 3 days. Maximum 4 tablets in 24 hours. Do not combine with other paracetamol.",
+          "12 tablets"
+        ],
+        [
+          "Amlodipine 5 mg tablets",
+          "Take 1 tablet every morning at the same time each day, with or without food. 30-day supply; continue as prescribed.",
+          "30 tablets"
+        ],
+        [
+          "Omeprazole 20 mg capsules",
+          "Take 1 capsule every morning before food for 14 days. Swallow whole.",
+          "14 capsules"
+        ]
+      ],
+      "name": "Demo Patient Six"
+    },
+    {
+      "id": "007",
+      "category": "Medicines",
+      "items": [
+        [
+          "Metformin 500 mg tablets",
+          "Take 1 tablet twice daily, with or after breakfast and dinner. 30-day supply; continue as prescribed.",
+          "60 tablets"
+        ],
+        [
+          "Amlodipine 5 mg tablets",
+          "Take 1 tablet every morning at the same time each day, with or without food. 30-day supply; continue as prescribed.",
+          "30 tablets"
+        ],
+        [
+          "Paracetamol 500 mg tablets",
+          "Take 1 tablet every 6 hours only if needed for pain or fever, for up to 3 days. Maximum 4 tablets in 24 hours. Do not combine with other paracetamol.",
+          "12 tablets"
+        ],
+        [
+          "Cetirizine 10 mg tablets",
+          "Take 1 tablet at night once daily for 5 days. May cause drowsiness.",
+          "5 tablets"
+        ]
+      ],
+      "name": "Demo Patient Seven"
+    },
+    {
+      "id": "008",
+      "category": "Medicines",
+      "items": [
+        [
+          "Paracetamol 500 mg tablets",
+          "Take 1 tablet every 6 hours only if needed for pain or fever, for up to 3 days. Maximum 4 tablets in 24 hours. Do not combine with other paracetamol.",
+          "12 tablets"
+        ],
+        [
+          "Cetirizine 10 mg tablets",
+          "Take 1 tablet at night once daily for 5 days. May cause drowsiness.",
+          "5 tablets"
+        ],
+        [
+          "Omeprazole 20 mg capsules",
+          "Take 1 capsule every morning before food for 14 days. Swallow whole.",
+          "14 capsules"
+        ]
+      ],
+      "name": "Demo Patient Eight"
+    },
+    {
+      "id": "009",
+      "category": "Medicines and retail",
+      "items": [
+        [
+          "Paracetamol 500 mg tablets",
+          "Take 1 tablet every 6 hours only if needed for pain or fever, for up to 3 days. Maximum 4 tablets in 24 hours. Do not combine with other paracetamol.",
+          "12 tablets"
+        ],
+        [
+          "Amlodipine 5 mg tablets",
+          "Take 1 tablet every morning at the same time each day, with or without food. 30-day supply; continue as prescribed.",
+          "30 tablets"
+        ],
+        [
+          "Adult diapers - medium",
+          "Use the correct fit. Change when wet or soiled. Single use only.",
+          "1 pack"
+        ]
+      ],
+      "name": "Demo Patient Nine"
+    },
+    {
+      "id": "010",
+      "category": "Medicines and retail",
+      "items": [
+        [
+          "Metformin 500 mg tablets",
+          "Take 1 tablet twice daily, with or after breakfast and dinner. 30-day supply; continue as prescribed.",
+          "60 tablets"
+        ],
+        [
+          "Cetirizine 10 mg tablets",
+          "Take 1 tablet at night once daily for 5 days. May cause drowsiness.",
+          "5 tablets"
+        ],
+        [
+          "Digital thermometer",
+          "Use according to the manufacturer's instructions. Clean before and after use.",
+          "1 unit"
+        ],
+        [
+          "Fragrance-free moisturiser",
+          "Apply to clean, dry skin as needed. External use only.",
+          "1 bottle"
+        ]
+      ],
+      "name": "Demo Patient Ten"
+    },
+    {
+      "id": "011",
+      "category": "Medicines and retail",
+      "items": [
+        [
+          "Amlodipine 5 mg tablets",
+          "Take 1 tablet every morning at the same time each day, with or without food. 30-day supply; continue as prescribed.",
+          "30 tablets"
+        ],
+        [
+          "Omeprazole 20 mg capsules",
+          "Take 1 capsule every morning before food for 14 days. Swallow whole.",
+          "14 capsules"
+        ],
+        [
+          "Soft toothbrush",
+          "Brush gently morning and night. Do not share.",
+          "2 units"
+        ]
+      ],
+      "name": "Demo Patient Eleven"
+    },
+    {
+      "id": "012",
+      "category": "Medicines and retail",
+      "items": [
+        [
+          "Cetirizine 10 mg tablets",
+          "Take 1 tablet at night once daily for 5 days. May cause drowsiness.",
+          "5 tablets"
+        ],
+        [
+          "Paracetamol 500 mg tablets",
+          "Take 1 tablet every 6 hours only if needed for pain or fever, for up to 3 days. Maximum 4 tablets in 24 hours. Do not combine with other paracetamol.",
+          "12 tablets"
+        ],
+        [
+          "Fluoride toothpaste",
+          "Use with a toothbrush twice daily. Spit out after brushing; do not swallow.",
+          "1 tube"
+        ],
+        [
+          "Disposable face masks",
+          "Cover nose and mouth. Replace when damp or soiled. Single use only.",
+          "1 pack"
+        ]
+      ],
+      "name": "Demo Patient Twelve"
+    },
+    {
+      "id": "013",
+      "category": "Medicines and retail",
+      "items": [
+        [
+          "Omeprazole 20 mg capsules",
+          "Take 1 capsule every morning before food for 14 days. Swallow whole.",
+          "14 capsules"
+        ],
+        [
+          "Metformin 500 mg tablets",
+          "Take 1 tablet twice daily, with or after breakfast and dinner. 30-day supply; continue as prescribed.",
+          "60 tablets"
+        ],
+        [
+          "Fragrance-free moisturiser",
+          "Apply to clean, dry skin as needed. External use only.",
+          "1 bottle"
+        ]
+      ],
+      "name": "Demo Patient Thirteen"
+    },
+    {
+      "id": "014",
+      "category": "Medicines and retail",
+      "items": [
+        [
+          "Paracetamol 500 mg tablets",
+          "Take 1 tablet every 6 hours only if needed for pain or fever, for up to 3 days. Maximum 4 tablets in 24 hours. Do not combine with other paracetamol.",
+          "12 tablets"
+        ],
+        [
+          "Amlodipine 5 mg tablets",
+          "Take 1 tablet every morning at the same time each day, with or without food. 30-day supply; continue as prescribed.",
+          "30 tablets"
+        ],
+        [
+          "Hand sanitiser",
+          "Apply to hands and rub until dry. External use only. Keep away from flame.",
+          "1 bottle"
+        ],
+        [
+          "Pill organiser",
+          "Fill using the current medicine labels. Keep away from children.",
+          "1 unit"
+        ]
+      ],
+      "name": "Demo Patient Fourteen"
+    },
+    {
+      "id": "015",
+      "category": "Medicines and retail",
+      "items": [
+        [
+          "Metformin 500 mg tablets",
+          "Take 1 tablet twice daily, with or after breakfast and dinner. 30-day supply; continue as prescribed.",
+          "60 tablets"
+        ],
+        [
+          "Cetirizine 10 mg tablets",
+          "Take 1 tablet at night once daily for 5 days. May cause drowsiness.",
+          "5 tablets"
+        ],
+        [
+          "Disposable face masks",
+          "Cover nose and mouth. Replace when damp or soiled. Single use only.",
+          "1 pack"
+        ]
+      ],
+      "name": "Demo Patient Fifteen"
+    },
+    {
+      "id": "016",
+      "category": "Medicines and retail",
+      "items": [
+        [
+          "Amlodipine 5 mg tablets",
+          "Take 1 tablet every morning at the same time each day, with or without food. 30-day supply; continue as prescribed.",
+          "30 tablets"
+        ],
+        [
+          "Omeprazole 20 mg capsules",
+          "Take 1 capsule every morning before food for 14 days. Swallow whole.",
+          "14 capsules"
+        ],
+        [
+          "Cotton wool",
+          "For external care only. Use a clean piece each time. Not sterile.",
+          "1 pack"
+        ],
+        [
+          "Digital thermometer",
+          "Use according to the manufacturer's instructions. Clean before and after use.",
+          "1 unit"
+        ]
+      ],
+      "name": "Demo Patient Sixteen"
+    },
+    {
+      "id": "017",
+      "category": "Medicines and retail",
+      "items": [
+        [
+          "Cetirizine 10 mg tablets",
+          "Take 1 tablet at night once daily for 5 days. May cause drowsiness.",
+          "5 tablets"
+        ],
+        [
+          "Paracetamol 500 mg tablets",
+          "Take 1 tablet every 6 hours only if needed for pain or fever, for up to 3 days. Maximum 4 tablets in 24 hours. Do not combine with other paracetamol.",
+          "12 tablets"
+        ],
+        [
+          "Pill organiser",
+          "Fill using the current medicine labels. Keep away from children.",
+          "1 unit"
+        ]
+      ],
+      "name": "Demo Patient Seventeen"
+    },
+    {
+      "id": "018",
+      "category": "Retail only",
+      "items": [
+        [
+          "Adult diapers - medium",
+          "Use the correct fit. Change when wet or soiled. Single use only.",
+          "1 pack"
+        ],
+        [
+          "Fluoride toothpaste",
+          "Use with a toothbrush twice daily. Spit out after brushing; do not swallow.",
+          "1 tube"
+        ],
+        [
+          "Disposable face masks",
+          "Cover nose and mouth. Replace when damp or soiled. Single use only.",
+          "1 pack"
+        ],
+        [
+          "Cotton wool",
+          "For external care only. Use a clean piece each time. Not sterile.",
+          "1 pack"
+        ]
+      ],
+      "name": "Demo Patient Eighteen"
+    },
+    {
+      "id": "019",
+      "category": "Retail only",
+      "items": [
+        [
+          "Digital thermometer",
+          "Use according to the manufacturer's instructions. Clean before and after use.",
+          "1 unit"
+        ],
+        [
+          "Fragrance-free moisturiser",
+          "Apply to clean, dry skin as needed. External use only.",
+          "1 bottle"
+        ],
+        [
+          "Cotton wool",
+          "For external care only. Use a clean piece each time. Not sterile.",
+          "1 pack"
+        ]
+      ],
+      "name": "Demo Patient Nineteen"
+    },
+    {
+      "id": "020",
+      "category": "Retail only",
+      "items": [
+        [
+          "Soft toothbrush",
+          "Brush gently morning and night. Do not share.",
+          "2 units"
+        ],
+        [
+          "Hand sanitiser",
+          "Apply to hands and rub until dry. External use only. Keep away from flame.",
+          "1 bottle"
+        ],
+        [
+          "Pill organiser",
+          "Fill using the current medicine labels. Keep away from children.",
+          "1 unit"
+        ],
+        [
+          "Adult diapers - medium",
+          "Use the correct fit. Change when wet or soiled. Single use only.",
+          "1 pack"
+        ]
+      ],
+      "name": "Demo Patient Twenty"
+    },
+    {
+      "id": "021",
+      "category": "Retail only",
+      "items": [
+        [
+          "Fluoride toothpaste",
+          "Use with a toothbrush twice daily. Spit out after brushing; do not swallow.",
+          "1 tube"
+        ],
+        [
+          "Disposable face masks",
+          "Cover nose and mouth. Replace when damp or soiled. Single use only.",
+          "1 pack"
+        ],
+        [
+          "Adult diapers - medium",
+          "Use the correct fit. Change when wet or soiled. Single use only.",
+          "1 pack"
+        ]
+      ],
+      "name": "Demo Patient Twenty One"
+    },
+    {
+      "id": "022",
+      "category": "Retail only",
+      "items": [
+        [
+          "Fragrance-free moisturiser",
+          "Apply to clean, dry skin as needed. External use only.",
+          "1 bottle"
+        ],
+        [
+          "Cotton wool",
+          "For external care only. Use a clean piece each time. Not sterile.",
+          "1 pack"
+        ],
+        [
+          "Digital thermometer",
+          "Use according to the manufacturer's instructions. Clean before and after use.",
+          "1 unit"
+        ],
+        [
+          "Soft toothbrush",
+          "Brush gently morning and night. Do not share.",
+          "2 units"
+        ]
+      ],
+      "name": "Demo Patient Twenty Two"
+    },
+    {
+      "id": "023",
+      "category": "Retail only",
+      "items": [
+        [
+          "Hand sanitiser",
+          "Apply to hands and rub until dry. External use only. Keep away from flame.",
+          "1 bottle"
+        ],
+        [
+          "Pill organiser",
+          "Fill using the current medicine labels. Keep away from children.",
+          "1 unit"
+        ],
+        [
+          "Soft toothbrush",
+          "Brush gently morning and night. Do not share.",
+          "2 units"
+        ]
+      ],
+      "name": "Demo Patient Twenty Three"
+    },
+    {
+      "id": "024",
+      "category": "Retail only",
+      "items": [
+        [
+          "Disposable face masks",
+          "Cover nose and mouth. Replace when damp or soiled. Single use only.",
+          "1 pack"
+        ],
+        [
+          "Adult diapers - medium",
+          "Use the correct fit. Change when wet or soiled. Single use only.",
+          "1 pack"
+        ],
+        [
+          "Fluoride toothpaste",
+          "Use with a toothbrush twice daily. Spit out after brushing; do not swallow.",
+          "1 tube"
+        ],
+        [
+          "Fragrance-free moisturiser",
+          "Apply to clean, dry skin as needed. External use only.",
+          "1 bottle"
+        ]
+      ],
+      "name": "Demo Patient Twenty Four"
+    },
+    {
+      "id": "025",
+      "category": "Retail only",
+      "items": [
+        [
+          "Cotton wool",
+          "For external care only. Use a clean piece each time. Not sterile.",
+          "1 pack"
+        ],
+        [
+          "Digital thermometer",
+          "Use according to the manufacturer's instructions. Clean before and after use.",
+          "1 unit"
+        ],
+        [
+          "Fragrance-free moisturiser",
+          "Apply to clean, dry skin as needed. External use only.",
+          "1 bottle"
+        ]
+      ],
+      "name": "Demo Patient Twenty Five"
+    }
+  ]
+}
