@@ -4,6 +4,7 @@ import { paymentRequestService } from '../services/paymentRequest.service.js';
 import { createPaymentRequestPdf } from '../utils/paymentRequestPdf.js';
 import { recordAudit } from '../services/audit.service.js';
 import { listPagination } from '../utils/listPagination.js';
+import { AppError } from '../utils/AppError.js';
 
 export const cashierPaymentSchema = z.object({
   confirmHandover: z.boolean().default(false),
@@ -236,9 +237,11 @@ export const paymentRequestController = protectRetryController(protectWorkflowCo
     res.type('application/pdf').send(await createPaymentRequestPdf(data, false));
   },
   receipt: async (req, res) => {
+    const fullReceipt = req.query.format === 'full';
+    if (fullReceipt && req.user.role === 'PATIENT') throw new AppError(403, 'Detailed cashier receipts can only be printed by pharmacy staff.');
     const data = await paymentRequestService.documentData(Number(req.params.id), req.user, true);
-    res.setHeader('Content-Disposition', `inline; filename="${data.requestNumber}-receipt.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${data.requestNumber}-${fullReceipt ? 'itemized-' : ''}receipt.pdf"`);
     res.setHeader('Cache-Control', 'no-store');
-    res.type('application/pdf').send(await createPaymentRequestPdf(data, true, Number(req.query.width) === 58 ? 58 : 80));
+    res.type('application/pdf').send(await createPaymentRequestPdf(data, true, Number(req.query.width) === 58 ? 58 : 80, fullReceipt));
   },
 }));

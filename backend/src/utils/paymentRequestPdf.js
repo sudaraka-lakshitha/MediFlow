@@ -16,10 +16,14 @@ const statusBanners = {
 };
 
 const drawHeader = (doc, request, receipt) => {
-  doc.font('Helvetica-Bold').fontSize(22).fillColor('#174a45').text('MediFlow Pharmacy', left, 42);
+  doc.roundedRect(left, 32, contentWidth, 62, 8).fill('#eef8f5');
+  doc.rect(left, 32, 5, 62).fill('#18a999');
+  doc.circle(left + 28, 63, 15).fill('#18a999');
+  doc.font('Helvetica-Bold').fontSize(18).fillColor('#ffffff').text('+', left + 20, 48, { width: 16, align: 'center' });
+  doc.font('Helvetica-Bold').fontSize(22).fillColor('#174a45').text('MediFlow Pharmacy', left + 52, 42);
   const retail = request.type === 'RETAIL';
   const category = request.deliveryFeeFor ? 'Home delivery service' : retail ? 'Retail' : 'Prescription';
-  doc.font('Helvetica').fontSize(10).fillColor('#64748b').text(`${category} ${receipt ? 'payment receipt' : 'payment request'}`, left, 72);
+  doc.font('Helvetica').fontSize(10).fillColor('#64748b').text(`${category} ${receipt ? (request.pickupPin ? 'itemized payment receipt with collection PIN' : 'payment receipt') : 'payment request'}`, left + 52, 70);
   doc.font('Helvetica-Bold').fontSize(12).fillColor('#111827').text(request.requestNumber, 330, 46, { width: right - 330, align: 'right' });
   const created = new Date(request.createdAt).toISOString().replace('T', ' ').slice(0, 19);
   doc.font('Helvetica').fontSize(8).fillColor('#64748b').text(`Created: ${created} UTC`, 330, 68, { width: right - 330, align: 'right' });
@@ -97,12 +101,33 @@ const drawTotals = (doc, request, startY) => {
   ];
   rows.forEach(([label, value], index) => {
     const total = index === 4;
+    if (total) doc.roundedRect(340, y - 4, contentWidth - 296, 22, 5).fill('#eef8f5');
     doc.font(total ? 'Helvetica-Bold' : 'Helvetica').fontSize(total ? 11.5 : 9).fillColor(total ? '#174a45' : '#334155');
     doc.text(label, 350, y, { width: 90, align: 'right' });
     doc.text(value, 448, y, { width: right - 448, align: 'right' });
     y += total ? 23 : 17;
   });
   return y;
+};
+
+const drawMedicineDirections = (doc, request) => {
+  const items = request.items.filter((item) => item.prescriptionItem && item.product?.productType === 'MEDICINE');
+  if (!items.length) return doc.y;
+  if (doc.y + 70 > 744) doc.addPage();
+  doc.moveDown(1).font('Helvetica-Bold').fontSize(12).fillColor('#174a45').text('Medicine directions', left, doc.y, { width: contentWidth });
+  doc.font('Helvetica').fontSize(8.5).fillColor('#64748b').text('Directions for the medicines on this bill. Ask the pharmacist if you need clarification.', { width: contentWidth });
+  for (const item of items) {
+    const detail = item.prescriptionItem;
+    const lines = [detail.dosageInstructions, detail.specialInstructions && `Additional instructions: ${detail.specialInstructions}`, item.product.storageInstructions && `Storage: ${item.product.storageInstructions}`].filter(Boolean);
+    const text = `${productName(item.product)} · Supplied quantity: ${item.quantity} ${item.product.unit}\n${lines.join('\n')}`;
+    const height = doc.heightOfString(text, { width: contentWidth - 24, font: 'Helvetica', size: 8.5 }) + 18;
+    if (doc.y + height > 754) doc.addPage();
+    const y = doc.y + 5;
+    doc.roundedRect(left, y, contentWidth, height, 5).fillAndStroke('#f7faf9', '#dce9e5');
+    doc.font('Helvetica').fontSize(8.5).fillColor('#334155').text(text, left + 12, y + 8, { width: contentWidth - 24 });
+    doc.y = y + height + 7;
+  }
+  return doc.y;
 };
 
 const drawPin = (doc, pin, startY, retail) => {
@@ -156,8 +181,8 @@ const drawCompactSlip = (doc, request) => {
   doc.font('Helvetica').fontSize(7.5).fillColor('#82918e').text('MediFlow', left, 780, { width: contentWidth, align: 'center', lineBreak: false });
 };
 
-export const createPaymentRequestPdf = (request, receipt = false, paperWidth = 80) => {
-  if (receipt && request.status === 'PAID') return createCollectionSlipPdf(request, paperWidth);
+export const createPaymentRequestPdf = (request, receipt = false, paperWidth = 80, fullReceipt = false) => {
+  if (receipt && request.status === 'PAID' && !fullReceipt) return createCollectionSlipPdf(request, paperWidth);
   return new Promise((resolve, reject) => {
   const doc = new PDFDocument({ size: 'A4', margin: 44, bufferPages: true });
   const chunks = [];
@@ -168,7 +193,7 @@ export const createPaymentRequestPdf = (request, receipt = false, paperWidth = 8
   // While a paid order is still awaiting collection, the customer only needs a short slip
   // to match against the PIN. Once collected (or before payment), the PIN is gone and this
   // renders the normal full invoice instead - documentData() nulls the PIN in that case.
-  if (receipt && request.pickupPin) {
+  if (receipt && request.pickupPin && !fullReceipt) {
     drawCompactSlip(doc, request);
   } else {
     let y = drawHeader(doc, request, receipt);
@@ -180,6 +205,13 @@ export const createPaymentRequestPdf = (request, receipt = false, paperWidth = 8
     }
     y = drawTotals(doc, request, y);
 
+    if (fullReceipt && request.pickupPin) {
+      if (y + 160 > 740) { doc.addPage(); y = 46; }
+      y = drawPin(doc, request.pickupPin, y, retail);
+      doc.y = y;
+    }
+    if (fullReceipt) y = drawMedicineDirections(doc, request);
+
     const bottomMessages = {
       AWAITING_PAYMENT: retail
         ? 'Present this request at the cashier. Goods can be handed over only after full payment and PIN verification.'
@@ -188,14 +220,16 @@ export const createPaymentRequestPdf = (request, receipt = false, paperWidth = 8
       FULFILLED: 'This order has already been paid for and collected. No further payment or collection action is required.',
       CANCELLED: 'This payment request has been cancelled. It is not valid for payment, collection, or any other transaction.',
     };
-    const message = bottomMessages[request.status] || bottomMessages.AWAITING_PAYMENT;
-    const boxStyle = request.status === 'CANCELLED'
-      ? { bg: '#fdecea', border: '#e6786d', fg: '#9a2f24', bold: true }
-      : request.status === 'FULFILLED'
-        ? { bg: '#eef2f7', border: '#9fb3c8', fg: '#33475b', bold: true }
-        : { bg: '#f7faf9', border: '#cfe0dc', fg: '#526b67', bold: false };
-    doc.roundedRect(left, y + 18, contentWidth, 60, 8).fillAndStroke(boxStyle.bg, boxStyle.border);
-    doc.font(boxStyle.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(9).fillColor(boxStyle.fg).text(message, left + 24, y + 37, { width: contentWidth - 48, align: 'center' });
+    if (!fullReceipt) {
+      const message = bottomMessages[request.status] || bottomMessages.AWAITING_PAYMENT;
+      const boxStyle = request.status === 'CANCELLED'
+        ? { bg: '#fdecea', border: '#e6786d', fg: '#9a2f24', bold: true }
+        : request.status === 'FULFILLED'
+          ? { bg: '#eef2f7', border: '#9fb3c8', fg: '#33475b', bold: true }
+          : { bg: '#f7faf9', border: '#cfe0dc', fg: '#526b67', bold: false };
+      doc.roundedRect(left, y + 18, contentWidth, 60, 8).fillAndStroke(boxStyle.bg, boxStyle.border);
+      doc.font(boxStyle.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(9).fillColor(boxStyle.fg).text(message, left + 24, y + 37, { width: contentWidth - 48, align: 'center' });
+    }
 
     const range = doc.bufferedPageRange();
     for (let index = range.start; index < range.start + range.count; index += 1) {
