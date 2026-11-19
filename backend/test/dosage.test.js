@@ -42,6 +42,20 @@ describe('prescription quantity calculation', () => {
     expect(calculateQuantity('g', { quantityPerDose: 0.5, timesPerDay: 1, daysSupply: 3 }).calculated.toString()).toBe('1.5');
   });
 
+  it('converts a liquid course volume into whole 100 mL bottles', () => {
+    const result = calculateQuantity('bottle', {
+      quantityPerDose: 150, timesPerDay: 3, daysSupply: 3,
+    }, { liquid: true, packVolumeMl: 100 });
+    expect(result.calculated.toString()).toBe('14');
+    expect(result.prescribed.toString()).toBe('14');
+  });
+
+  it('requires a known container volume when a liquid is stocked by bottle', () => {
+    expect(() => calculateQuantity('bottle', {
+      quantityPerDose: 5, timesPerDay: 3, daysSupply: 5,
+    }, { liquid: true })).toThrow(/container size/);
+  });
+
   it('treats an unknown unit as countable so nothing fractional slips through', () => {
     expect(calculateQuantity('', { quantityPerDose: 2.25, timesPerDay: 1, daysSupply: 1 }).calculated.toString()).toBe('3');
   });

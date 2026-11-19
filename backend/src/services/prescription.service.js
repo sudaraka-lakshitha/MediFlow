@@ -6,6 +6,7 @@ import { prescriptionRepository } from '../repositories/prescription.repository.
 import { AppError } from '../utils/AppError.js';
 import { stockQuantity } from '../utils/stockQuantity.js';
 import { calculateQuantity } from '../utils/dosage.js';
+import { liquidPackVolumeMl } from '../utils/liquidPackaging.js';
 import { assertCouponMatched, calculateDiscounts } from './discount.service.js';
 import { normalizeLiquidDose } from '../utils/liquidDose.js';
 import { verifyPickupPin } from '../utils/pickupPin.js';
@@ -115,7 +116,7 @@ export const prescriptionService = {
     }
 
     const [products, retailProducts] = await Promise.all([
-      prisma.product.findMany({ where: { id: { in: data.items.map((item) => item.productId) }, active: true, productType: 'MEDICINE' }, select: { id: true, unit: true, genericName: true, minimumAgeYears: true, maximumAgeYears: true } }),
+      prisma.product.findMany({ where: { id: { in: data.items.map((item) => item.productId) }, active: true, productType: 'MEDICINE' }, select: { id: true, unit: true, genericName: true, brandName: true, strength: true, dosageForm: true, minimumAgeYears: true, maximumAgeYears: true } }),
       prisma.product.findMany({ where: { id: { in: data.retailItems.map((item) => item.productId) }, active: true, prescriptionRequired: false }, select: { id: true, unit: true } }),
     ]);
     if (products.length !== new Set(data.items.map((item) => item.productId)).size) throw new AppError(400, 'One or more selected products are unavailable.');
@@ -125,7 +126,9 @@ export const prescriptionService = {
     const items = data.items.map((rawItem) => {
       const item = normalizeLiquidDose(rawItem);
       const product = products.find((candidate) => candidate.id === item.productId);
-      const { calculated, prescribed, overridden } = calculateQuantity(product.unit, item);
+      const { calculated, prescribed, overridden } = calculateQuantity(product.unit, item, {
+        liquid: isLiquidProduct(product), packVolumeMl: liquidPackVolumeMl(product),
+      });
       return { productId: item.productId, quantityPerDose: item.quantityPerDose, doseInputAmount: item.doseInputAmount, doseInputUnit: item.doseInputUnit,
         concentrationAmount: item.concentrationAmount, concentrationUnit: item.concentrationUnit, concentrationVolume: item.concentrationVolume, timesPerDay: item.timesPerDay,
         daysSupply: item.daysSupply, calculatedQuantity: calculated, prescribedQuantity: prescribed,
@@ -236,13 +239,13 @@ export const prescriptionService = {
     if (current.sourceUploadId && current.patientId !== data.patientId) throw new AppError(409, 'A customer-uploaded prescription cannot be reassigned to a different customer.');
     if (!['PENDING', 'VERIFIED'].includes(current.status)) throw new AppError(409, 'Only pending or verified prescriptions can be edited.');
     const [products, retailProducts] = await Promise.all([
-      tx.product.findMany({ where: { id: { in:data.items.map((item)=>item.productId) }, active:true, productType:'MEDICINE' }, select:{ id:true,unit:true,genericName:true,minimumAgeYears:true,maximumAgeYears:true } }),
+      tx.product.findMany({ where: { id: { in:data.items.map((item)=>item.productId) }, active:true, productType:'MEDICINE' }, select:{ id:true,unit:true,genericName:true,brandName:true,strength:true,dosageForm:true,minimumAgeYears:true,maximumAgeYears:true } }),
       tx.product.findMany({ where: { id: { in:data.retailItems.map((item)=>item.productId) }, active:true, prescriptionRequired:false }, select:{ id:true,unit:true } }),
     ]);
     if(retailProducts.length!==new Set(data.retailItems.map((item)=>item.productId)).size)throw new AppError(400,'One or more selected retail items are unavailable or require a prescription.');
     for (const item of data.retailItems) stockQuantity(item.quantity, retailProducts.find((product) => product.id === item.productId).unit);
     await validatePatientAge(data, products, tx);
-    const items=data.items.map((rawItem)=>{const item=normalizeLiquidDose(rawItem);const product=products.find((candidate)=>candidate.id===item.productId);if(!product)throw new AppError(400,'One or more selected products are unavailable.');const{calculated,prescribed,overridden}=calculateQuantity(product.unit,item);return{productId:item.productId,quantityPerDose:item.quantityPerDose,doseInputAmount:item.doseInputAmount,doseInputUnit:item.doseInputUnit,concentrationAmount:item.concentrationAmount,concentrationUnit:item.concentrationUnit,concentrationVolume:item.concentrationVolume,timesPerDay:item.timesPerDay,daysSupply:item.daysSupply,calculatedQuantity:calculated,prescribedQuantity:prescribed,quantityOverridden:overridden,overrideReason:overridden?item.overrideReason:null,dosageInstructions:item.dosageInstructions,frequency:item.frequency,duration:item.duration,notes:item.notes,administrationRoute:item.administrationRoute,mealTiming:item.mealTiming,asNeeded:item.asNeeded,specialInstructions:item.specialInstructions}});
+    const items=data.items.map((rawItem)=>{const item=normalizeLiquidDose(rawItem);const product=products.find((candidate)=>candidate.id===item.productId);if(!product)throw new AppError(400,'One or more selected products are unavailable.');const{calculated,prescribed,overridden}=calculateQuantity(product.unit,item,{liquid:isLiquidProduct(product),packVolumeMl:liquidPackVolumeMl(product)});return{productId:item.productId,quantityPerDose:item.quantityPerDose,doseInputAmount:item.doseInputAmount,doseInputUnit:item.doseInputUnit,concentrationAmount:item.concentrationAmount,concentrationUnit:item.concentrationUnit,concentrationVolume:item.concentrationVolume,timesPerDay:item.timesPerDay,daysSupply:item.daysSupply,calculatedQuantity:calculated,prescribedQuantity:prescribed,quantityOverridden:overridden,overrideReason:overridden?item.overrideReason:null,dosageInstructions:item.dosageInstructions,frequency:item.frequency,duration:item.duration,notes:item.notes,administrationRoute:item.administrationRoute,mealTiming:item.mealTiming,asNeeded:item.asNeeded,specialInstructions:item.specialInstructions}});
     const proposed = { ...data, items };
     const material = prescriptionMaterialChanged(current, proposed);
     if (current.status === 'PARTIALLY_DISPENSED') {

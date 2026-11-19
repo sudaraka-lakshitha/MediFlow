@@ -21,6 +21,7 @@ import { SearchableSelect } from "../components/SearchableSelect";
 import { PredictiveSearchInput } from "../components/PredictiveSearchInput";
 import { Alert, Empty, Loading, Status } from "../components/Ui";
 import { isCountableUnit, issuableTotal, stockQuantityStep } from "../utils/unitMeasure";
+import { isLiquidContainerUnit, liquidPackVolumeMl } from "../utils/liquidPackaging";
 import "../prescriptions.css";
 
 type RxItem = {
@@ -306,6 +307,13 @@ const instructionOpening = (route: string, quantity: number, unit: string) => {
   if (["Subcutaneous", "Intramuscular", "Intravenous"].includes(route))
     return `Administer ${dose} by ${route.toLowerCase()} injection`;
   return `Take ${dose} by mouth`;
+};
+const medicineLabel = (product: { genericName: string; strength?: string }) => {
+  const name = String(product.genericName || "").trim();
+  const strength = String(product.strength || "").trim();
+  return strength && !name.toLowerCase().includes(strength.toLowerCase())
+    ? `${name} ${strength}`
+    : name;
 };
 
 import { WorkflowGuard } from '../components/WorkflowGuard';
@@ -755,7 +763,21 @@ export function PrescriptionsPage() {
     );
     const dose = effectiveDose(item);
     const raw = dose * Number(item.timesPerDay) * Number(item.daysSupply);
-    return { product, dose, total: issuableTotal(raw, product?.unit) };
+    const liquid = isLiquid(product);
+    const countable = isCountableUnit(product?.unit);
+    const packageUnit = liquid && countable && isLiquidContainerUnit(product?.unit);
+    const packVolumeMl = packageUnit ? liquidPackVolumeMl(product) : null;
+    const packSizeMissing = liquid && countable && !packVolumeMl;
+    const total = packVolumeMl
+      ? Math.ceil(raw / packVolumeMl)
+      : packSizeMissing
+        ? null
+        : issuableTotal(raw, product?.unit);
+    return {
+      product, dose, rawTotal: Number(raw.toFixed(3)), total,
+      packVolumeMl, suppliedVolumeMl: packVolumeMl && total != null ? total * packVolumeMl : null,
+      packSizeMissing,
+    };
   };
   const generatedDirections = (item: Line) => {
     const { product, dose } = calculated(item);
@@ -770,7 +792,8 @@ export function PrescriptionsPage() {
     const schedule = item.asNeeded
       ? `when needed, up to ${times === 1 ? "once a day" : `${times} times a day`}`
       : frequencyText(times);
-    const sentence = `${instructionOpening(item.administrationRoute, dose, product?.unit || "unit")} ${schedule}${timing[item.mealTiming] ? ` ${timing[item.mealTiming]}` : ""} for ${days} day${days === 1 ? "" : "s"}`;
+    const doseUnit = isLiquid(product) ? "ml" : product?.unit || "unit";
+    const sentence = `${instructionOpening(item.administrationRoute, dose, doseUnit)} ${schedule}${timing[item.mealTiming] ? ` ${timing[item.mealTiming]}` : ""} for ${days} day${days === 1 ? "" : "s"}`;
     const special = item.specialInstructions.trim().replace(/[.!]+$/, "");
     return `${sentence}${special ? `. ${special}` : ""}.`;
   };
@@ -888,6 +911,10 @@ export function PrescriptionsPage() {
   ) => {
     if (event) event.preventDefault();
     if (!editor) return;
+    if (form.items.some((item: Line) => calculated(item).packSizeMissing)) {
+      setError("A liquid medicine counted by container needs a supported container unit and its volume (for example, a 100 mL bottle). Update the product details before saving.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -2507,7 +2534,7 @@ export function PrescriptionsPage() {
                           )
                           .map((product) => ({
                             value: product.id,
-                            label: `${product.genericName} ${product.strength}`,
+                            label: medicineLabel(product),
                             description: `${product.brandName || "Generic"} · ${product.dosageForm} · ${product.sku}`,
                           }))}
                         value={item.productId}
@@ -2581,7 +2608,12 @@ export function PrescriptionsPage() {
                     <div className="col-md-2">
                       <label className="form-label small">Auto total</label>
                       <div className="form-control bg-light">
-                        {auto.total} {auto.product?.unit || "units"}
+                        {auto.total == null ? "Pack size required" : `${auto.total} ${displayUnit(auto.product?.unit || "unit", Number(auto.total))}`}
+                        {auto.packVolumeMl && auto.total != null && (
+                          <small className="d-block text-secondary">
+                            {auto.rawTotal.toLocaleString()} mL course · {auto.total} × {auto.packVolumeMl} mL = {auto.suppliedVolumeMl?.toLocaleString()} mL supplied
+                          </small>
+                        )}
                       </div>
                     </div>
                     {liquid && (
@@ -2592,7 +2624,7 @@ export function PrescriptionsPage() {
                               <strong>Liquid dose calculator</strong>
                               <small>
                                 Enter the prescribed volume directly, or
-                                calculate mL from the medicine concentration.
+                                calculate mL from the medicine concentration. The dose label stays in mL.
                               </small>
                             </div>
                             <select
@@ -2620,6 +2652,13 @@ export function PrescriptionsPage() {
                               </option>
                             </select>
                           </div>
+                          {auto.packSizeMissing && (
+                            <div className="alert alert-warning py-2 mt-2 mb-0">
+                              {isLiquidContainerUnit(auto.product?.unit)
+                                ? "This liquid is stocked by container. Add its container size to the medicine name or brand (for example, 100 mL), or set its stock unit to mL, before saving the prescription."
+                                : "This liquid uses a stock unit that cannot be converted from mL doses. Use mL stock, or a bottle, can, vial, ampoule, or sachet with its container volume recorded."}
+                            </div>
+                          )}
                           {item.liquidDoseMode === "STRENGTH" ? (
                             <div className="liquid-dose-grid">
                               <div>
@@ -2818,7 +2857,7 @@ export function PrescriptionsPage() {
                             updateLine(index, {
                               overrideEnabled: event.target.checked,
                               overrideQuantity: event.target.checked
-                                ? auto.total
+                                ? auto.total ?? ""
                                 : "",
                             })
                           }
