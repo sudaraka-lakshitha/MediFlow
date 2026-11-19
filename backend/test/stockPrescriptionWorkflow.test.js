@@ -363,6 +363,27 @@ describe('atomic prescription and bill creation', () => {
     expect(tx.prescription.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ sourceUploadId: 10, status: 'VERIFIED' }) }));
     expect(createBill).toHaveBeenCalledWith(7, expect.objectContaining({ items: [{ prescriptionItemId: 70, quantity: 1 }] }), 5, tx);
   });
+  it('lets an older sent quotation be finalized directly without waiting for quotation approval', async () => {
+    db.prescriptionUpload.findUnique.mockResolvedValue({
+      id: 11, patientId: 2, status: 'QUOTE_SENT', prepareRequested: false, quoteRevision: 2,
+      acknowledgedQuoteRevision: null, estimatedTotal: d(100), attachmentRemovedAt: null, prescription: null, paymentSlips: [],
+    });
+    db.patientProfile.findUnique.mockResolvedValue({ userId: 2, dateOfBirth: new Date('1990-01-01') });
+    db.product.findMany.mockResolvedValueOnce([{ id: 1, unit: 'tablet', genericName: 'Medicine' }]).mockResolvedValueOnce([]);
+    tx.prescriptionUpload.updateMany.mockResolvedValue({ count: 1 });
+    tx.prescription.create.mockResolvedValue({ id: 8 });
+    tx.prescriptionItem.findMany.mockResolvedValue([{ id: 80, prescribedQuantity: d(1) }]);
+    const createBill = vi.spyOn(paymentRequestService, 'create').mockResolvedValue({ id: 10 });
+
+    await prescriptionService.create({
+      patientId: 2, sourceUploadId: 11, orderedForSelf: true, prescriptionDate: new Date(), sendToCashier: true,
+      retailItems: [], items: [{ productId: 1, quantityPerDose: 1, timesPerDay: 1, daysSupply: 1, dosageInstructions: 'Take one tablet daily' }],
+    }, 5);
+
+    expect(tx.prescriptionUpload.updateMany.mock.calls[0][0].where).toMatchObject({ id: 11, status: 'QUOTE_SENT' });
+    expect(tx.prescriptionUpload.updateMany.mock.calls[1][0].data).toEqual({ status: 'PAYMENT_PENDING' });
+    expect(createBill).toHaveBeenCalledWith(8, expect.any(Object), 5, tx);
+  });
   it('creates a prepared upload invoice without a separate rough-quote acknowledgement', async () => {
     db.prescriptionUpload.findUnique.mockResolvedValue({
       id: 10, patientId: 2, status: 'AVAILABLE', prepareRequested: true, quoteRevision: 1,

@@ -86,13 +86,13 @@ export const navigationAttentionService = {
           prescription: null,
           OR: [
             { status: 'PENDING' },
+            { status: 'QUOTE_SENT' },
             {
               prepareRequested: true,
               status: {
                 in: [
                   'AVAILABLE',
                   'PARTIALLY_AVAILABLE',
-                  'QUOTE_SENT',
                   'QUOTE_ACCEPTED',
                   'PAYMENT_PENDING',
                   'PAYMENT_SUBMITTED',
@@ -155,7 +155,7 @@ export const navigationAttentionService = {
       ),
       prescriptionUploads: badge(
         uploads,
-        'Customer preparation requests or new uploads requiring attention',
+        'New uploads or quotations requiring pharmacy action',
         uploads ? 'danger' : 'neutral',
       ),
       cashier: badge(

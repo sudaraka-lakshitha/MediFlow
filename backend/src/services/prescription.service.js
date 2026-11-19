@@ -100,7 +100,7 @@ export const prescriptionService = {
       sourceUpload = upload;
       if (upload.attachmentRemovedAt) throw new AppError(409, 'The source attachment has expired. Ask the customer to submit it again.');
       patientUserId = profile.userId;
-      const canIssueFinalInvoice = ['PENDING', 'AVAILABLE', 'PARTIALLY_AVAILABLE'].includes(upload.status);
+      const canIssueFinalInvoice = ['PENDING', 'AVAILABLE', 'PARTIALLY_AVAILABLE', 'QUOTE_SENT'].includes(upload.status);
       const previouslyAcceptedQuote = upload.status === 'QUOTE_ACCEPTED';
       const verifiedPrepaidOrder = upload.status === 'READY_TO_PREPARE';
       if (!canIssueFinalInvoice && !previouslyAcceptedQuote && !verifiedPrepaidOrder) {

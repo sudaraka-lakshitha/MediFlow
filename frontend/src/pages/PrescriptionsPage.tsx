@@ -456,37 +456,6 @@ export function PrescriptionsPage() {
     const openWithPatient = (patient: any) => {
       if (!patient) return;
       uploadOpened.current = true;
-      // Pre-populate medicine rows from the estimate items so the pharmacist
-      // only has to fill in dosage instructions rather than re-selecting everything.
-      let items: Line[] = [line()];
-      let retailItems: { productId: number; quantity: number }[] = [];
-      let billingInput = { couponCode: "", containerFee: 0, tax: 0 };
-      try {
-        const raw = searchParams.get("estimateInput") || searchParams.get("estimateItems");
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          const input = Array.isArray(parsed) ? { items: parsed } : parsed;
-          const medicineLines: { productId: number; quantity: number }[] = input.items || [];
-          if (medicineLines.length) {
-            items = medicineLines.map((entry) => ({
-              ...line(),
-              productId: entry.productId,
-              prescribedQuantity: entry.quantity,
-              overrideEnabled: true,
-              overrideQuantity: entry.quantity,
-              overrideReason: "Pre-filled from upload quotation",
-            }));
-          }
-          retailItems = (input.retailItems || []).map((entry: any) => ({ productId: Number(entry.productId), quantity: Number(entry.quantity) }));
-          billingInput = {
-            couponCode: input.couponCode || "",
-            containerFee: Number(input.containerFee || 0),
-            tax: Number(input.tax || 0),
-          };
-        }
-      } catch {
-        // malformed JSON — fall back to a blank row
-      }
       setForm({
         ...emptyForm(),
         patientId: patient.id,
@@ -498,9 +467,6 @@ export function PrescriptionsPage() {
         recipientDateOfBirth: orderedForSelf ? "" : searchParams.get("recipientDateOfBirth") || "",
         recipientAllergies: orderedForSelf ? "" : searchParams.get("recipientAllergies") || "",
         recipientConditions: orderedForSelf ? "" : searchParams.get("recipientConditions") || "",
-        ...billingInput,
-        items,
-        retailItems,
       });
       setEditor({ mode: "create" });
       api
