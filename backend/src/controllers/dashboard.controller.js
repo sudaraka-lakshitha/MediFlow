@@ -13,6 +13,12 @@ const localStart = (daysAgo = 0) => {
   const [year, month, day] = date.split('-').map(Number);
   return new Date(Date.UTC(year, month - 1, day - daysAgo) - offsetMs);
 };
+const localWeekStart = (date = new Date()) => {
+  const local = new Date(date.getTime() + offsetMs);
+  const weekday = local.getUTCDay();
+  const daysSinceMonday = (weekday + 6) % 7;
+  return localStart(daysSinceMonday);
+};
 
 const recentActivity = (user) => prisma.auditLog.findMany({
   where: {
@@ -26,6 +32,42 @@ const recentActivity = (user) => prisma.auditLog.findMany({
 });
 
 export const dashboardController = {
+  prescriptionWorkflow: async (req, res) => {
+    const period = req.validatedQuery?.period || 'WEEK';
+    const now = new Date();
+    const start = period === 'DAY'
+      ? localStart()
+      : period === 'WEEK'
+        ? localWeekStart(now)
+        : period === 'MONTH'
+          ? localMonthStart(now)
+          : undefined;
+    const createdAt = start ? { gte: start, lte: now } : undefined;
+    const [prescriptions, uploadsAwaitingReview] = await Promise.all([
+      prisma.prescription.groupBy({
+        by: ['status'],
+        where: createdAt ? { createdAt } : undefined,
+        _count: { _all: true },
+      }),
+      prisma.prescriptionUpload.count({
+        where: {
+          status: 'PENDING',
+          prescription: { is: null },
+          attachmentRemovedAt: null,
+          ...(createdAt ? { createdAt } : {}),
+        },
+      }),
+    ]);
+    const statusOrder = ['PENDING', 'VERIFIED', 'PARTIALLY_DISPENSED', 'DISPENSED', 'REJECTED', 'CANCELLED'];
+    const prescriptionStatuses = [
+      ...(uploadsAwaitingReview ? [{ status: 'UPLOADS_AWAITING_REVIEW', count: uploadsAwaitingReview }] : []),
+      ...prescriptions
+        .map((entry) => ({ status: entry.status, count: entry._count._all }))
+        .sort((a, b) => statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status)),
+    ];
+    res.json({ data: { period, prescriptionStatuses } });
+  },
+
   summary: async (req, res) => {
     if (req.user.role === 'CASHIER') {
       const [awaitingPayment, ledger, recentRequests, recentActions] = await Promise.all([
@@ -55,20 +97,18 @@ export const dashboardController = {
     ]);
     const operationSettings = await operationSettingsService.get();
     const near = new Date(); near.setDate(near.getDate() + operationSettings.nearExpiryDays);
-    const [pendingPrescriptions, dispensedToday, expiredBatches, nearExpiryBatches, activeUsers, dispensingWeek, prescriptionStatuses, recentActions, recentPrescriptions, recentSales, products, discountMonth, pendingUploads] = await Promise.all([
+    const [pendingPrescriptions, dispensedToday, expiredBatches, nearExpiryBatches, activeUsers, dispensingWeek, recentActions, recentPrescriptions, recentSales, products, discountMonth] = await Promise.all([
       prisma.prescription.count({ where: { status: 'PENDING' } }),
       prisma.dispensing.count({ where: { dispensedAt: { gte: today } } }),
       prisma.inventoryBatch.count({ where: { expiryDate: { lt: new Date() }, quantityAvailable: { gt: 0 } } }),
       prisma.inventoryBatch.count({ where: { expiryDate: { gte: new Date(), lte: near }, quantityAvailable: { gt: 0 } } }),
       req.user.role === 'ADMIN' ? prisma.user.count({ where: { active: true } }) : Promise.resolve(undefined),
       prisma.dispensing.findMany({ where: { dispensedAt: { gte: sevenDays } }, select: { dispensedAt: true } }),
-      prisma.prescription.groupBy({ by: ['status'], _count: { _all: true } }),
       recentActivity(req.user),
       prisma.prescription.findMany({ include: { patient: { include: { user: { select: { fullName: true } } } } }, orderBy: { createdAt: 'desc' }, take: 6 }),
       prisma.sale.findMany({ include: { patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } }, discountApplications: true }, orderBy: { createdAt: 'desc' }, take: 6 }),
       prisma.product.findMany({ where: { active: true }, include: { batches: { where: { quantityAvailable: { gt: 0 }, expiryDate: { gte: new Date() }, restricted: false }, select: { quantityAvailable: true, quantityReserved: true } } } }),
       prisma.discountApplication.aggregate({ where: { createdAt: { gte: monthStart } }, _sum: { amount: true }, _count: { _all: true } }),
-      prisma.prescriptionUpload.count({ where: { status: 'PENDING', prescription: { is: null }, attachmentRemovedAt: null } }),
     ]);
 
     const days = Array.from({ length: 7 }, (_, index) => { const date = new Date(sevenDays); date.setUTCDate(date.getUTCDate() + index); return localKey(date); });
@@ -84,11 +124,6 @@ export const dashboardController = {
       expiredBatches, nearExpiryBatches, activeUsers,
       operationSettings,
       salesSeries: days.map((date) => ({ date, sales: salesMap[date], dispensings: issueMap[date] })),
-      pendingUploads,
-      prescriptionStatuses: [
-        ...(pendingUploads ? [{ status: 'UPLOADS_AWAITING_REVIEW', count: pendingUploads }] : []),
-        ...prescriptionStatuses.map((entry) => ({ status: entry.status, count: entry._count._all })),
-      ],
       discountMonth: { amount: Number(discountMonth._sum.amount || 0), applications: discountMonth._count._all },
       lowStock, recentActions, recentPrescriptions, recentSales,
     } });

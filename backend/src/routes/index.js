@@ -67,6 +67,7 @@ apiRoutes.use('/prescription-uploads', prescriptionUploadRoutes);
 apiRoutes.use('/discounts', discountRoutes);
 apiRoutes.use('/drug-information', drugInformationRoutes);
 apiRoutes.get('/dashboard', authenticate, asyncHandler(dashboardController.summary));
+apiRoutes.get('/dashboard/prescription-workflow', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ query: z.object({ period: z.enum(['DAY', 'WEEK', 'MONTH', 'ALL']).default('WEEK') }) }), asyncHandler(dashboardController.prescriptionWorkflow));
 apiRoutes.get('/navigation/attention', authenticate, asyncHandler(navigationAttentionController.summary));
 apiRoutes.use('/patients', patientRoutes);
 apiRoutes.get('/sales', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), asyncHandler(saleController.list));

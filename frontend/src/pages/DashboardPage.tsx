@@ -148,6 +148,10 @@ export function DashboardPage() {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
   const [notices, setNotices] = useState<any[]>([]);
+  const [workflowPeriod, setWorkflowPeriod] = useState("WEEK");
+  const [workflowData, setWorkflowData] = useState<any>(null);
+  const [workflowLoading, setWorkflowLoading] = useState(false);
+  const [workflowError, setWorkflowError] = useState("");
   useEffect(() => {
     api
       .get("/dashboard")
@@ -155,25 +159,44 @@ export function DashboardPage() {
       .catch((caught) => setError(errorMessage(caught)));
   }, []);
   useEffect(() => {
+    if (user?.role !== "ADMIN" && user?.role !== "PHARMACIST") return;
+    let current = true;
+    setWorkflowData(null);
+    setWorkflowLoading(true);
+    setWorkflowError("");
+    api
+      .get("/dashboard/prescription-workflow", { params: { period: workflowPeriod } })
+      .then((response) => {
+        if (current) setWorkflowData(response.data.data);
+      })
+      .catch((caught) => {
+        if (current) setWorkflowError(errorMessage(caught));
+      })
+      .finally(() => {
+        if (current) setWorkflowLoading(false);
+      });
+    return () => { current = false; };
+  }, [user?.role, workflowPeriod]);
+  useEffect(() => {
     if (user?.role === "PATIENT") api.get("/patients/my-notices").then((response) => setNotices(response.data.data)).catch((caught) => setError(errorMessage(caught)));
   }, [user?.role]);
   const statusTotal =
-    data?.prescriptionStatuses?.reduce(
+    workflowData?.prescriptionStatuses?.reduce(
       (sum: number, item: any) => sum + item.count,
       0,
     ) || 0;
   const donut = useMemo(() => {
-    if (!data?.prescriptionStatuses?.length || !statusTotal)
+    if (!workflowData?.prescriptionStatuses?.length || !statusTotal)
       return "#edf2f1 0 100%";
     let at = 0;
-    return data.prescriptionStatuses
+    return workflowData.prescriptionStatuses
       .map((item: any, index: number) => {
         const start = at;
         at += (item.count / statusTotal) * 100;
         return `${statusColours[index % statusColours.length]} ${start}% ${at}%`;
       })
       .join(", ");
-  }, [data, statusTotal]);
+  }, [workflowData, statusTotal]);
   if (!data && !error) return <Loading />;
   const patient = user!.role === "PATIENT";
   if (user!.role === "CASHIER")
@@ -419,11 +442,33 @@ export function DashboardPage() {
               <div>
                 <h3>Prescription workflow</h3>
                 <small className="text-secondary">
-                  Prescriptions and uploads awaiting review
+                  Requests received during the selected period
                 </small>
               </div>
             </div>
-            {statusTotal ? (
+            <div className="workflow-period-filter" role="group" aria-label="Prescription workflow date range">
+              {[
+                ["DAY", "Today"],
+                ["WEEK", "This week"],
+                ["MONTH", "This month"],
+                ["ALL", "All time"],
+              ].map(([period, label]) => (
+                <button
+                  type="button"
+                  key={period}
+                  className={`btn btn-sm ${workflowPeriod === period ? "btn-primary" : "btn-outline-secondary"}`}
+                  aria-pressed={workflowPeriod === period}
+                  onClick={() => setWorkflowPeriod(period)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {workflowError ? (
+              <Alert message={workflowError} />
+            ) : workflowLoading && !workflowData ? (
+              <div className="text-secondary small py-4" role="status">Loading workflow…</div>
+            ) : statusTotal ? (
               <div className="status-chart-wrap">
                 <div
                   className="donut-chart"
@@ -435,7 +480,7 @@ export function DashboardPage() {
                   </div>
                 </div>
                 <div className="chart-legend">
-                  {data.prescriptionStatuses.map((item: any, index: number) => (
+                  {workflowData.prescriptionStatuses.map((item: any, index: number) => (
                     <div key={item.status}>
                       <span
                         style={{
@@ -452,7 +497,7 @@ export function DashboardPage() {
                 </div>
               </div>
             ) : (
-              <Empty />
+              <Empty text="No prescriptions or uploads were received during this period." />
             )}
           </div>
         </div>

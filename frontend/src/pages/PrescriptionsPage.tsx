@@ -2516,7 +2516,7 @@ export function PrescriptionsPage() {
                 return (
                   <div className="border rounded-3 p-2 mb-3" key={index}>
                     <div className="row g-2">
-                    <div className="col-md-5">
+                    <div className="col-md-4">
                       <label className="form-label small">Medicine</label>
                       <SearchableSelect
                         options={products
@@ -2591,7 +2591,7 @@ export function PrescriptionsPage() {
                         <option value="24">Every hour</option>
                       </select>
                     </div>
-                    <div className="col-md-1">
+                    <div className="col-md-2">
                       <label className="form-label small">Days</label>
                       <input
                         className="form-control"
