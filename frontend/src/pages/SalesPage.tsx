@@ -306,6 +306,32 @@ export function SalesPage() {
     }
   };
 
+  const applyInvoiceCoupon = async () => {
+    if (!invoiceAck || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await api.post(`/payment-requests/${invoiceAck.invoice.id}/coupon`, {
+        revision: invoiceAck.invoice.revision,
+        couponCode: invoiceAck.couponCode?.trim() || null,
+      });
+      setInvoiceAck((current: any) => current ? {
+        ...current,
+        invoice: response.data.data,
+        paymentChoice: bankAccounts.length ? "BANK_TRANSFER" : "CASH",
+        changeChoice: false,
+        couponMessage: response.data.data.couponCode
+          ? "Coupon applied. Review the revised total and acknowledge this invoice again."
+          : "Coupon removed. Review the revised total and acknowledge this invoice again.",
+      } : current);
+      await load();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const submitDecline = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -496,7 +522,7 @@ export function SalesPage() {
                         <small className="d-block text-secondary" key={item.id}>
                           {item.product.genericName} {item.product.strength} ×{" "}
                           {item.quantity} — {money(item.lineTotal)}
-                          {item.prescriptionItem && Number(item.quantity) > 0 && <span className="d-block mt-1" style={{ whiteSpace: 'pre-wrap' }}>Directions: {item.dosageInstructions?.trim() || 'Directions are not recorded. Ask the pharmacist before taking this medicine.'}{item.specialInstructions && <span className="d-block">Additional instructions: {item.specialInstructions}</span>}{item.product.storageInstructions && <span className="d-block">Storage: {item.product.storageInstructions}</span>}</span>}
+                          {item.prescriptionItem && ["PAID", "FULFILLED"].includes(invoice.status) && Number(item.quantity) > 0 && <span className="d-block mt-1" style={{ whiteSpace: 'pre-wrap' }}>Directions: {item.dosageInstructions?.trim() || 'Directions are not recorded. Ask the pharmacist before taking this medicine.'}{item.specialInstructions && <span className="d-block">Additional instructions: {item.specialInstructions}</span>}{item.product.storageInstructions && <span className="d-block">Storage: {item.product.storageInstructions}</span>}</span>}
                         </small>
                       ))}
                     </div>
@@ -584,7 +610,7 @@ export function SalesPage() {
                             <small className="d-block mb-2">
                               Confirm revision {invoice.revision} and choose how you intend to pay. Any acknowledgement of an older revision is withdrawn automatically.
                             </small>
-                            <button className="btn btn-primary" onClick={() => { setError(""); setInvoiceAck({ invoice, paymentChoice: bankAccounts.length ? "BANK_TRANSFER" : "CASH", customerNote: invoice.customerNote || "" }); }}>
+                            <button className="btn btn-primary" onClick={() => { setError(""); setInvoiceAck({ invoice, paymentChoice: bankAccounts.length ? "BANK_TRANSFER" : "CASH", customerNote: invoice.customerNote || "", couponCode: invoice.couponCode || "" }); }}>
                               Review &amp; choose payment
                             </button>
                           </div>
@@ -649,7 +675,7 @@ export function SalesPage() {
                           </button>
                         </div>
                         {invoice.acknowledgedRevision === invoice.revision && (
-                          <button className="btn btn-outline-secondary mt-2" onClick={() => { setError(""); setInvoiceAck({ invoice, changeChoice: true, paymentChoice: invoice.customerPaymentChoice || "CASH", customerNote: invoice.customerNote || "" }); }}>
+                          <button className="btn btn-outline-secondary mt-2" onClick={() => { setError(""); setInvoiceAck({ invoice, changeChoice: true, paymentChoice: invoice.customerPaymentChoice || "CASH", customerNote: invoice.customerNote || "", couponCode: invoice.couponCode || "" }); }}>
                             Change payment method / renew reservation
                           </button>
                         )}
@@ -1130,12 +1156,44 @@ export function SalesPage() {
                   <strong>{money(item.lineTotal)}</strong>
                 </div>
               ))}
+              <div className="border-top mt-2 pt-2 small">
+                <div className="d-flex justify-content-between"><span>Subtotal</span><span>{money(invoiceAck.invoice.subtotal)}</span></div>
+                {Number(invoiceAck.invoice.discount) > 0 && <div className="d-flex justify-content-between text-success"><span>Discount{invoiceAck.invoice.couponCode ? ` (${invoiceAck.invoice.couponCode})` : ""}</span><span>− {money(invoiceAck.invoice.discount)}</span></div>}
+                {Number(invoiceAck.invoice.containerFee) > 0 && <div className="d-flex justify-content-between"><span>Container fee</span><span>{money(invoiceAck.invoice.containerFee)}</span></div>}
+                {Number(invoiceAck.invoice.tax) > 0 && <div className="d-flex justify-content-between"><span>Tax</span><span>{money(invoiceAck.invoice.tax)}</span></div>}
+              </div>
               {invoiceAck.invoice.pharmacyNote && (
                 <div className="border-top pt-2 mt-2 small">
                   <strong>Pharmacy note:</strong> {invoiceAck.invoice.pharmacyNote}
                 </div>
               )}
             </div>
+            {!invoiceAck.changeChoice && (
+              <div className="border rounded-3 p-3 mb-3">
+                <label className="form-label fw-semibold" htmlFor="patient-invoice-coupon">Coupon code (optional)</label>
+                <div className="input-group">
+                  <input
+                    id="patient-invoice-coupon"
+                    className="form-control text-uppercase"
+                    maxLength={40}
+                    value={invoiceAck.couponCode || ""}
+                    onChange={(event) => setInvoiceAck({ ...invoiceAck, couponCode: event.target.value.toUpperCase() })}
+                    placeholder="Enter a pharmacy coupon"
+                    disabled={busy}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-outline-primary"
+                    onClick={applyInvoiceCoupon}
+                    disabled={busy || (!(invoiceAck.couponCode || "").trim() && !invoiceAck.invoice.couponCode)}
+                  >
+                    {busy ? "Updating…" : "Apply"}
+                  </button>
+                </div>
+                <small className="d-block text-secondary mt-1">The pharmacy checks the code against this invoice. A changed bill needs your acknowledgement again.</small>
+                {invoiceAck.couponMessage && <small className="d-block text-success mt-1">{invoiceAck.couponMessage}</small>}
+              </div>
+            )}
             <InvoiceChanges invoice={invoiceAck.invoice} />
             <fieldset>
               <legend className="form-label fw-semibold">How will you pay?</legend>

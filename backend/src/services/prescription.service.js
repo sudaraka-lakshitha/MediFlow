@@ -79,6 +79,7 @@ export const prescriptionService = {
             id: true,
             patientId: true,
             status: true,
+            prepareRequested: true,
             quoteRevision: true, acknowledgedQuoteRevision: true,
             estimatedTotal: true,
             attachmentRemovedAt: true,
@@ -99,11 +100,12 @@ export const prescriptionService = {
       sourceUpload = upload;
       if (upload.attachmentRemovedAt) throw new AppError(409, 'The source attachment has expired. Ask the customer to submit it again.');
       patientUserId = profile.userId;
-      if (!['QUOTE_ACCEPTED', 'READY_TO_PREPARE'].includes(upload.status)) {
-        throw new AppError(409, 'The customer must approve the latest quotation before the final prescription and invoice are created.');
+      const preparedOrderReady = upload.prepareRequested && ['AVAILABLE', 'PARTIALLY_AVAILABLE'].includes(upload.status);
+      if (!preparedOrderReady && !['QUOTE_ACCEPTED', 'READY_TO_PREPARE'].includes(upload.status)) {
+        throw new AppError(409, 'This upload is not ready for a final invoice. Review availability first, or have the customer approve the quotation-only request.');
       }
-      if (upload.status === 'QUOTE_ACCEPTED' && !data.sendToCashier) {
-        throw new AppError(409, 'An approved online quotation must be finalized and sent as an invoice in the same step.');
+      if ((preparedOrderReady || upload.status === 'QUOTE_ACCEPTED') && !data.sendToCashier) {
+        throw new AppError(409, 'A prepared online order must be clinically reviewed and issued as a final invoice in the same step.');
       }
     } else {
       const profile = await prisma.patientProfile.findUnique({ where: { id: data.patientId }, select: { userId: true } });
@@ -141,7 +143,7 @@ export const prescriptionService = {
             attachmentRemovedAt: null, prescription: { is: null } },
           data: { status: sourceUpload.status },
         });
-        if (claimed.count !== 1) throw new AppError(409, 'The quotation changed or was already processed. Refresh and obtain approval of the latest quotation.');
+        if (claimed.count !== 1) throw new AppError(409, 'This upload changed or was already processed. Refresh before creating its final invoice.');
       }
       const prescription = await withUniqueRetry(() => tx.prescription.create({ data: {
         prescriptionNumber: `RX-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,

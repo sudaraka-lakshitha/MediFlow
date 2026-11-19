@@ -206,6 +206,9 @@ const emptyForm = () => ({
   notes: "",
   pickupNote: "",
   plannedPickupAt: "",
+  couponCode: "",
+  containerFee: 0,
+  tax: 0,
   items: [line()],
   retailItems: [] as { productId: number; quantity: number }[],
 });
@@ -456,12 +459,16 @@ export function PrescriptionsPage() {
       // Pre-populate medicine rows from the estimate items so the pharmacist
       // only has to fill in dosage instructions rather than re-selecting everything.
       let items: Line[] = [line()];
+      let retailItems: { productId: number; quantity: number }[] = [];
+      let billingInput = { couponCode: "", containerFee: 0, tax: 0 };
       try {
-        const raw = searchParams.get("estimateItems");
+        const raw = searchParams.get("estimateInput") || searchParams.get("estimateItems");
         if (raw) {
-          const parsed: { productId: number; quantity: number }[] = JSON.parse(decodeURIComponent(raw));
-          if (parsed.length) {
-            items = parsed.map((entry) => ({
+          const parsed = JSON.parse(raw);
+          const input = Array.isArray(parsed) ? { items: parsed } : parsed;
+          const medicineLines: { productId: number; quantity: number }[] = input.items || [];
+          if (medicineLines.length) {
+            items = medicineLines.map((entry) => ({
               ...line(),
               productId: entry.productId,
               prescribedQuantity: entry.quantity,
@@ -470,6 +477,12 @@ export function PrescriptionsPage() {
               overrideReason: "Pre-filled from upload quotation",
             }));
           }
+          retailItems = (input.retailItems || []).map((entry: any) => ({ productId: Number(entry.productId), quantity: Number(entry.quantity) }));
+          billingInput = {
+            couponCode: input.couponCode || "",
+            containerFee: Number(input.containerFee || 0),
+            tax: Number(input.tax || 0),
+          };
         }
       } catch {
         // malformed JSON — fall back to a blank row
@@ -485,7 +498,9 @@ export function PrescriptionsPage() {
         recipientDateOfBirth: orderedForSelf ? "" : searchParams.get("recipientDateOfBirth") || "",
         recipientAllergies: orderedForSelf ? "" : searchParams.get("recipientAllergies") || "",
         recipientConditions: orderedForSelf ? "" : searchParams.get("recipientConditions") || "",
+        ...billingInput,
         items,
+        retailItems,
       });
       setEditor({ mode: "create" });
       api
@@ -897,6 +912,9 @@ export function PrescriptionsPage() {
       productId: Number(item.productId),
       quantity: Number(item.quantity),
     })),
+    couponCode: form.couponCode || null,
+    containerFee: Number(form.containerFee || 0),
+    tax: Number(form.tax || 0),
   });
   const save = async (
     event?: FormEvent,

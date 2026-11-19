@@ -65,6 +65,10 @@ export const invoiceAcknowledgementSchema = z.object({
   paymentChoice: z.enum(['CASH', 'BANK_TRANSFER']),
   customerNote: z.string().trim().max(500).optional().nullable(),
 });
+export const invoiceCouponSchema = z.object({
+  revision: z.coerce.number().int().positive(),
+  couponCode: z.string().trim().max(40).optional().nullable(),
+});
 import { protectWorkflowController } from '../middleware/workflowLease.js';
 import { protectRetryController } from '../utils/operationContext.js';
 export const paymentRequestController = protectRetryController(protectWorkflowController({
@@ -80,6 +84,11 @@ export const paymentRequestController = protectRetryController(protectWorkflowCo
   },
   resolveCancellation: async (req, res) => res.json({ data: await paymentRequestService.resolveCancellation(Number(req.params.id), req.body, req.user) }),
   changePaymentChoice: async (req, res) => res.json({ data: await paymentRequestService.acknowledge(Number(req.params.id), req.body, req.user, true) }),
+  applyCoupon: async (req, res) => {
+    const data = await paymentRequestService.applyPatientCoupon(Number(req.params.id), req.body, req.user);
+    await recordAudit({ userId: req.user.id, action: 'CUSTOMER_INVOICE_COUPON_UPDATED', entityType: 'PAYMENT_REQUEST', entityId: data.id, details: { requestNumber: data.requestNumber, total: data.total, couponApplied: Boolean(data.couponCode) }, ipAddress: req.ip });
+    res.json({ data });
+  },
   list: async (req, res) => {
     const pagination = listPagination(req.query, ['AWAITING_PAYMENT', 'SLIP_SUBMITTED', 'PAID', 'FULFILLED', 'CANCELLED']);
     if (req.query.type) pagination.type = z.enum(['PRESCRIPTION', 'RETAIL']).parse(req.query.type);

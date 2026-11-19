@@ -99,6 +99,37 @@ describe('quotation revision acceptance', () => {
   });
 });
 
+describe('patient coupon application on online invoices', () => {
+  const onlineBill = () => ({
+    id: 9, patientId: 2, prescriptionId: 1, status: 'AWAITING_PAYMENT', revision: 3,
+    couponCode: null, containerFee: d(0), tax: d(0),
+    items: [{ prescriptionItemId: 7, productId: 4, quantity: d(2) }, { prescriptionItemId: null, productId: 8, quantity: d(1) }],
+  });
+  it('does not allow a patient to apply a coupon to another patient’s invoice', async () => {
+    db.paymentRequest.findUnique.mockResolvedValue(onlineBill());
+    await expect(paymentRequestService.applyPatientCoupon(9, { revision: 3, couponCode: 'SAVE10' }, { id: 88 }))
+      .rejects.toMatchObject({ statusCode: 403 });
+  });
+  it('copies invoice quantities from the saved bill and requires the current revision', async () => {
+    db.paymentRequest.findUnique.mockResolvedValue(onlineBill());
+    db.prescription.findUnique.mockResolvedValue({ isOnline: true, sourceUploadId: 5 });
+    const update = vi.spyOn(paymentRequestService, 'update').mockResolvedValue({ id: 9, couponCode: 'SAVE10' });
+    await paymentRequestService.applyPatientCoupon(9, { revision: 3, couponCode: 'SAVE10' }, { id: 2 });
+    expect(update).toHaveBeenCalledWith(1, expect.objectContaining({
+      revision: 3, couponCode: 'SAVE10', containerFee: 0, tax: 0,
+      items: [{ prescriptionItemId: 7, quantity: 2 }],
+      retailItems: [{ productId: 8, quantity: 1 }],
+      revisionReason: 'Customer applied coupon SAVE10',
+    }), 2);
+  });
+  it('rejects offline bills from the patient coupon endpoint', async () => {
+    db.paymentRequest.findUnique.mockResolvedValue(onlineBill());
+    db.prescription.findUnique.mockResolvedValue({ isOnline: false, sourceUploadId: null });
+    await expect(paymentRequestService.applyPatientCoupon(9, { revision: 3, couponCode: 'SAVE10' }, { id: 2 }))
+      .rejects.toMatchObject({ statusCode: 403 });
+  });
+});
+
 describe('payment choice changes do not imply fresh invoice approval', () => {
   const approvedAt = new Date('2026-01-01');
   beforeEach(() => {
@@ -286,6 +317,48 @@ describe('attachment retention', () => {
 });
 
 describe('atomic prescription and bill creation', () => {
+  it('accepts a prepared online order only when the pharmacist creates its final bill in the same step', async () => {
+    db.prescriptionUpload.findUnique.mockResolvedValue({
+      id: 10, patientId: 2, status: 'AVAILABLE', prepareRequested: true, quoteRevision: 1,
+      acknowledgedQuoteRevision: null, estimatedTotal: d(100), attachmentRemovedAt: null, prescription: null, paymentSlips: [],
+    });
+    db.patientProfile.findUnique.mockResolvedValue({ userId: 2 });
+    await expect(prescriptionService.create({
+      patientId: 2, sourceUploadId: 10, sendToCashier: false, items: [], retailItems: [],
+    }, 5)).rejects.toThrow('final invoice in the same step');
+    expect(db.product.findMany).not.toHaveBeenCalled();
+  });
+  it('does not let quotation-only uploads skip the customer approval step', async () => {
+    db.prescriptionUpload.findUnique.mockResolvedValue({
+      id: 10, patientId: 2, status: 'AVAILABLE', prepareRequested: false, quoteRevision: 1,
+      acknowledgedQuoteRevision: null, estimatedTotal: d(100), attachmentRemovedAt: null, prescription: null, paymentSlips: [],
+    });
+    db.patientProfile.findUnique.mockResolvedValue({ userId: 2 });
+    await expect(prescriptionService.create({
+      patientId: 2, sourceUploadId: 10, sendToCashier: true, items: [], retailItems: [],
+    }, 5)).rejects.toThrow('not ready for a final invoice');
+    expect(db.product.findMany).not.toHaveBeenCalled();
+  });
+  it('creates a prepared upload invoice without a separate rough-quote acknowledgement', async () => {
+    db.prescriptionUpload.findUnique.mockResolvedValue({
+      id: 10, patientId: 2, status: 'AVAILABLE', prepareRequested: true, quoteRevision: 1,
+      acknowledgedQuoteRevision: null, estimatedTotal: d(100), attachmentRemovedAt: null, prescription: null, paymentSlips: [],
+    });
+    db.patientProfile.findUnique.mockResolvedValue({ userId: 2, dateOfBirth: new Date('1990-01-01') });
+    db.product.findMany.mockResolvedValueOnce([{ id: 1, unit: 'tablet', genericName: 'Medicine' }]).mockResolvedValueOnce([]);
+    tx.prescriptionUpload.updateMany.mockResolvedValue({ count: 1 });
+    tx.prescription.create.mockResolvedValue({ id: 7 });
+    tx.prescriptionItem.findMany.mockResolvedValue([{ id: 70, prescribedQuantity: d(1) }]);
+    tx.prescription.findUnique.mockResolvedValue({ id: 7 });
+    const createBill = vi.spyOn(paymentRequestService, 'create').mockResolvedValue({ id: 9 });
+    await prescriptionService.create({
+      patientId: 2, sourceUploadId: 10, orderedForSelf: true, prescriptionDate: new Date(), sendToCashier: true,
+      retailItems: [], couponCode: 'SAVE10', containerFee: 0, tax: 0,
+      items: [{ productId: 1, quantityPerDose: 1, timesPerDay: 1, daysSupply: 1, dosageInstructions: 'Take one tablet daily' }],
+    }, 5);
+    expect(createBill).toHaveBeenCalledWith(7, expect.objectContaining({ couponCode: 'SAVE10', items: [{ prescriptionItemId: 70, quantity: 1 }] }), 5, tx);
+    expect(tx.prescriptionUpload.updateMany.mock.calls[0][0].where).toMatchObject({ status: 'AVAILABLE', quoteRevision: 1 });
+  });
   it('passes the same transaction into billing and propagates failure to roll back prescription creation', async () => {
     db.patientProfile.findUnique.mockResolvedValue({ userId: 2, dateOfBirth: new Date('1990-01-01') });
     db.product.findMany.mockResolvedValueOnce([{ id: 1, unit: 'tablet', genericName: 'Medicine' }]).mockResolvedValueOnce([]);

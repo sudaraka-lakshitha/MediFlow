@@ -28,7 +28,7 @@ import { discountRoutes } from './discount.routes.js';
 import { drugInformationRoutes } from './drugInformation.routes.js';
 import { prescriptionUploadRoutes } from './prescriptionUpload.routes.js';
 import { adminExportController } from '../controllers/adminExport.controller.js';
-import { paymentRequestController, cashierPaymentSchema, retailFulfillSchema, retailPaymentRequestSchema, paymentSlipSchema, slipReviewSchema, declineInvoiceSchema, partialCancelSchema, requestCancellationSchema, invoiceAcknowledgementSchema } from '../controllers/paymentRequest.controller.js';
+import { paymentRequestController, cashierPaymentSchema, retailFulfillSchema, retailPaymentRequestSchema, paymentSlipSchema, slipReviewSchema, declineInvoiceSchema, partialCancelSchema, requestCancellationSchema, invoiceAcknowledgementSchema, invoiceCouponSchema } from '../controllers/paymentRequest.controller.js';
 import { bankAccountController, bankAccountSchema, bankAccountActiveSchema } from '../controllers/bankAccount.controller.js';
 import { authorizeCashier } from '../middleware/authorizeCashier.js';
 import { auditQuerySchema, myActivityQuerySchema, staffAuditSummaryQuerySchema } from '../validators/audit.validator.js';
@@ -86,6 +86,7 @@ apiRoutes.post('/payment-requests/:id/pay', authenticate, authorizeCashier, vali
 apiRoutes.post('/payment-requests/:id/reset-pickup-pin', authenticate, authorize('ADMIN'), validate({ params: idParams, body: z.object({ reason: z.string().trim().min(3).max(500) }) }), asyncHandler(paymentRequestController.resetPickupPin));
 apiRoutes.post('/payment-requests/:id/acknowledge', authenticate, authorize('PATIENT'), validate({ params: idParams, body: invoiceAcknowledgementSchema }), asyncHandler(paymentRequestController.acknowledge));
 apiRoutes.post('/payment-requests/:id/payment-choice', authenticate, authorize('PATIENT'), validate({ params: idParams, body: invoiceAcknowledgementSchema }), asyncHandler(paymentRequestController.changePaymentChoice));
+apiRoutes.post('/payment-requests/:id/coupon', authenticate, authorize('PATIENT'), validate({ params: idParams, body: invoiceCouponSchema }), asyncHandler(paymentRequestController.applyCoupon));
 apiRoutes.post('/payment-requests/:id/cancel', authenticate, authorize('ADMIN', 'PHARMACIST', 'CASHIER'), validate({ params: idParams, body: z.object({ reason: z.string().trim().min(3).max(500) }) }), asyncHandler(paymentRequestController.cancel));
 apiRoutes.post('/payment-requests/:id/fulfill-retail', authenticate, authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: retailFulfillSchema }), asyncHandler(paymentRequestController.fulfillRetail));
 // Online bank-transfer path: the customer pays into a pharmacy account and uploads proof,

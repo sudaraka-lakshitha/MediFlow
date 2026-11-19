@@ -78,7 +78,7 @@ type Upload = {
     patientProfile?: { id: number; patientNumber: string };
   };
   reviewedBy?: { id: number; fullName: string; role: string };
-  prescription?: { id: number; prescriptionNumber: string; status: string; paymentRequest?: { status: string; revision: number; acknowledgedRevision?: number; customerPaymentChoice?: string; reservationExpiresAt?: string } | null };
+  prescription?: { id: number; prescriptionNumber: string; status: string; paymentRequest?: { requestNumber: string; total: string; status: string; revision: number; acknowledgedRevision?: number; customerPaymentChoice?: string; reservationExpiresAt?: string } | null };
   paymentSlips?: UploadSlip[];
 };
 
@@ -125,7 +125,7 @@ const ageFromDob = (dob?: string) => {
 };
 const buildPrescriptionCreateUrl = (
   uploadItem: Upload,
-  estimateItems: any[] = [],
+  estimateInput: NonNullable<Upload["estimateDetails"]>["input"] = undefined,
 ) => {
   const params = new URLSearchParams({
     uploadId: String(uploadItem.id),
@@ -137,7 +137,7 @@ const buildPrescriptionCreateUrl = (
     recipientDateOfBirth: uploadItem.recipientDateOfBirth ? uploadItem.recipientDateOfBirth.slice(0, 10) : "",
     recipientAllergies: uploadItem.recipientAllergies || "",
     recipientConditions: uploadItem.recipientConditions || "",
-    estimateItems: JSON.stringify(estimateItems),
+    estimateInput: JSON.stringify(estimateInput || uploadItem.estimateDetails?.input || {}),
   });
   return `/prescriptions?${params.toString()}`;
 };
@@ -969,8 +969,8 @@ export function PrescriptionUploadsPage() {
         >
           <option value="">All statuses</option>
           <option value="PENDING">Awaiting review</option>
-          <option value="AVAILABLE">Available — awaiting quotation</option>
-          <option value="PARTIALLY_AVAILABLE">Partially available</option>
+          <option value="AVAILABLE">Availability reviewed — available</option>
+          <option value="PARTIALLY_AVAILABLE">Availability reviewed — partial</option>
           <option value="UNAVAILABLE">Unavailable</option>
           <option value="REJECTED">Rejected</option>
           <option value="QUOTE_SENT">Quotation sent — awaiting customer</option>
@@ -1075,9 +1075,13 @@ export function PrescriptionUploadsPage() {
                     : item.status === "PENDING"
                     ? "Waiting for pharmacist review"
                     : item.status === "AVAILABLE"
-                    ? "All requested medicines are currently in stock"
+                    ? patient && item.prepareRequested
+                      ? "Availability confirmed — pharmacy is preparing your final bill"
+                      : "All requested medicines are currently in stock"
                     : item.status === "PARTIALLY_AVAILABLE"
-                    ? "Only some requested medicines are currently in stock"
+                    ? patient && item.prepareRequested
+                      ? "Availability review complete — pharmacy is preparing your final bill"
+                      : "Only some requested medicines are currently in stock"
                     : item.status === "UNAVAILABLE"
                     ? "Requested medicines are currently unavailable"
                     : item.status === "QUOTE_SENT"
@@ -1094,15 +1098,27 @@ export function PrescriptionUploadsPage() {
                 </strong>
               </div>
               <div>
-                <small>Estimated final invoice</small>
+                <small>
+                  {item.prescription?.paymentRequest
+                    ? "Final invoice"
+                    : item.prepareRequested
+                      ? "Final invoice"
+                      : ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status)
+                        ? "Quotation"
+                        : "Amount"}
+                </small>
                 <strong>
-                  {item.estimatedTotal != null
-                    ? money(item.estimatedTotal)
-                    : "Not available"}
+                  {item.prescription?.paymentRequest
+                    ? money(item.prescription.paymentRequest.total)
+                    : !item.prepareRequested && ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status) && item.estimatedTotal != null
+                      ? money(item.estimatedTotal)
+                      : item.prepareRequested
+                        ? "Awaiting final bill"
+                        : "Not available"}
                 </strong>
               </div>
             </div>
-            {patient && item.estimatedTotal != null && (
+            {patient && !item.prepareRequested && item.estimatedTotal != null && ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status) && (
               <div className="alert alert-warning small mt-2 mb-0">
                 <i className="bi bi-exclamation-triangle me-2" />
                 This amount is an estimate based on current prices, stock,
@@ -1110,7 +1126,7 @@ export function PrescriptionUploadsPage() {
                 review and is not guaranteed until the final invoice is issued.
               </div>
             )}
-            {patient &&
+            {patient && !item.prepareRequested &&
               item.estimatedTotal != null &&
               item.status === "QUOTE_SENT" && (
                 <div className="alert alert-info small mt-2 mb-0">
@@ -1338,7 +1354,7 @@ export function PrescriptionUploadsPage() {
                   setUploadOpen(true);
                 }}>Edit upload</button>
               )}
-              {!patient && !cashier && ["AVAILABLE", "PARTIALLY_AVAILABLE", "QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status) && !item.prescription && (
+              {!patient && !cashier && !item.prepareRequested && ["AVAILABLE", "PARTIALLY_AVAILABLE", "QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status) && !item.prescription && (
                 <button
                   className="btn btn-sm btn-outline-success"
                   onClick={() => openReview(item)}
@@ -1351,20 +1367,27 @@ export function PrescriptionUploadsPage() {
                 <button
                   className="btn btn-sm btn-success"
                   onClick={() => {
-                    const estimateItems = item.estimateDetails?.input?.items || [];
-                    navigate(buildPrescriptionCreateUrl(item, estimateItems));
+                    navigate(buildPrescriptionCreateUrl(item));
                   }}
                 >
                   <i className="bi bi-file-medical me-1" />
                   Create prescription
                 </button>
               )}
+              {!patient && !cashier && item.prepareRequested && ["AVAILABLE", "PARTIALLY_AVAILABLE"].includes(item.status) && !item.prescription && (
+                  <button
+                    className="btn btn-sm btn-primary"
+                    onClick={() => navigate(buildPrescriptionCreateUrl(item))}
+                  >
+                    <i className="bi bi-file-medical me-1" />
+                    Prepare final prescription &amp; issue invoice
+                  </button>
+                )}
               {!patient && !cashier && item.status === "QUOTE_ACCEPTED" && !item.prescription && (
                   <button
                     className="btn btn-sm btn-outline-primary"
                     onClick={() => {
-                      const estimateItems = item.estimateDetails?.input?.items || [];
-                      navigate(buildPrescriptionCreateUrl(item, estimateItems));
+                      navigate(buildPrescriptionCreateUrl(item));
                     }}
                   >
                     <i className="bi bi-file-medical me-1" />
@@ -1726,17 +1749,17 @@ export function PrescriptionUploadsPage() {
                   <div className="step-divider text-secondary align-self-center">&rarr;</div>
                   <div className={`step-item fw-bold ${["AVAILABLE","PARTIALLY_AVAILABLE"].includes(review.status) ? "text-primary" : ["PAYMENT_PENDING","PAYMENT_SUBMITTED","READY_TO_PREPARE"].includes(review.status) ? "text-success" : "text-secondary"}`}>
                     <span className={`badge rounded-circle me-1 ${["AVAILABLE","PARTIALLY_AVAILABLE"].includes(review.status) ? "bg-primary" : ["PAYMENT_PENDING","PAYMENT_SUBMITTED","READY_TO_PREPARE"].includes(review.status) ? "bg-success" : "bg-secondary"}`}>2</span>
-                    Build estimate
+                    {review.prepareRequested ? "Check stock" : "Build quotation"}
                   </div>
                   <div className="step-divider text-secondary align-self-center">&rarr;</div>
-                  <div className={`step-item fw-bold ${review.status === "PAYMENT_PENDING" ? "text-primary" : ["PAYMENT_SUBMITTED","READY_TO_PREPARE"].includes(review.status) ? "text-success" : "text-secondary"}`}>
-                    <span className={`badge rounded-circle me-1 ${review.status === "PAYMENT_PENDING" ? "bg-primary" : ["PAYMENT_SUBMITTED","READY_TO_PREPARE"].includes(review.status) ? "bg-success" : "bg-secondary"}`}>3</span>
-                    Send quotation
+                  <div className={`step-item fw-bold ${review.prescription?.paymentRequest ? "text-success" : review.status === "QUOTE_ACCEPTED" ? "text-primary" : "text-secondary"}`}>
+                    <span className={`badge rounded-circle me-1 ${review.prescription?.paymentRequest ? "bg-success" : review.status === "QUOTE_ACCEPTED" ? "bg-primary" : "bg-secondary"}`}>3</span>
+                    {review.prepareRequested ? "Issue final bill" : "Send quotation"}
                   </div>
                   <div className="step-divider text-secondary align-self-center">&rarr;</div>
-                  <div className={`step-item fw-bold ${review.status === "READY_TO_PREPARE" ? "text-primary" : "text-secondary"}`}>
-                    <span className={`badge rounded-circle me-1 ${review.status === "READY_TO_PREPARE" ? "bg-primary" : "bg-secondary"}`}>4</span>
-                    Prepare &amp; Create Rx
+                  <div className={`step-item fw-bold ${["PAID", "FULFILLED"].includes(review.prescription?.paymentRequest?.status || "") ? "text-success" : review.prescription?.paymentRequest ? "text-primary" : "text-secondary"}`}>
+                    <span className={`badge rounded-circle me-1 ${["PAID", "FULFILLED"].includes(review.prescription?.paymentRequest?.status || "") ? "bg-success" : review.prescription?.paymentRequest ? "bg-primary" : "bg-secondary"}`}>4</span>
+                    {review.prepareRequested ? "Customer payment" : "Final prescription"}
                   </div>
                 </div>
               )}
@@ -1759,7 +1782,7 @@ export function PrescriptionUploadsPage() {
                   <small>Customer instruction</small>
                   <strong>
                     {review.prepareRequested
-                      ? "Prepare medicines after approval and payment"
+                      ? "Prepare medicines after the final bill is accepted and paid"
                       : "Review and quote only — do not prepare yet"}
                   </strong>
                 </div>
@@ -1768,10 +1791,11 @@ export function PrescriptionUploadsPage() {
                 <section className="estimate-calculator">
                   <div className="estimate-calculator-heading">
                     <div>
-                      <strong>Expected invoice calculator</strong>
+                      <strong>{review.prepareRequested ? "Internal stock &amp; pricing check" : "Quotation calculator"}</strong>
                       <small>
-                        Uses current prices, usable stock, discounts, coupon,
-                        bottle fees, and tax. No stock is deducted.
+                        {review.prepareRequested
+                          ? "For pharmacy use only. The final bill is recalculated when issued; this working amount is not sent to the patient."
+                          : "Uses current prices, usable stock, discounts, coupon, bottle fees, and tax. No stock is deducted."}
                       </small>
                     </div>
                     <i className="bi bi-calculator" />
@@ -2194,7 +2218,7 @@ export function PrescriptionUploadsPage() {
                           Tax <strong>{money(estimateQuote.tax)}</strong>
                         </span>
                         <span className="estimate-grand-total">
-                          Expected final invoice{" "}
+                          {review.prepareRequested ? "Internal working total " : "Quotation total "}
                           <strong>{money(estimateQuote.total)}</strong>
                         </span>
                       </div>
@@ -2238,7 +2262,9 @@ export function PrescriptionUploadsPage() {
                 </div>
                 {!['UNAVAILABLE', 'REJECTED'].includes(reviewForm.status) && (
                   <div>
-                    <label className="form-label">Expected final invoice</label>
+                    <label className="form-label">
+                      {review.prepareRequested ? "Internal working amount (not sent to patient)" : "Quotation amount"}
+                    </label>
                     <div className="input-group">
                       <span className="input-group-text">Rs.</span>
                       <input
@@ -2265,7 +2291,7 @@ export function PrescriptionUploadsPage() {
                 )}
                 <div className="full">
                   <label className="form-label">
-                    Availability and estimate notes{" "}
+                    {review.prepareRequested ? "Availability review notes" : "Availability and quotation notes"}{" "}
                     {reviewForm.status === "AVAILABLE" && "(optional)"}
                   </label>
                   <textarea
@@ -2284,23 +2310,23 @@ export function PrescriptionUploadsPage() {
                     placeholder={
                       reviewForm.status === "AVAILABLE"
                         ? "Optional note for the patient."
-                        : "Explain which medicines are unavailable, substitutions to discuss, and anything excluded from the estimate."
+                        : "Explain which medicines are unavailable, substitutions to discuss, and anything excluded from this review."
                     }
                     required={reviewForm.status !== "AVAILABLE"}
                   />
                 </div>
               </div>
               <div className="alert alert-warning small mt-3 mb-0">
-                This is an availability estimate only. The final invoice is
-                created after the customer approves the quotation and the pharmacist completes clinical verification and final pricing.
+                {review.prepareRequested
+                  ? "This stock and price check is internal. Save the availability review, then create the structured prescription and final itemised invoice. The patient sees and acknowledges that bill before payment."
+                  : "This quotation is for availability and price review only. The patient must accept it before the pharmacy starts preparing an order."}
               </div>
-              {/* ── After reviewing availability: send quotation to patient ── */}
-              {["AVAILABLE", "PARTIALLY_AVAILABLE"].includes(review.status) && review.prepareRequested && !review.prescription && (
+              {/* ── Quote-only requests retain their explicit customer decision ── */}
+              {["AVAILABLE", "PARTIALLY_AVAILABLE"].includes(review.status) && !review.prepareRequested && !review.prescription && (
                 <div className="mt-3">
                   <div className="alert alert-info small mb-2">
                     <i className="bi bi-send me-2" />
-                    Once you are happy with the estimate above, send the rough quotation to the patient.
-                    They must approve it before you can create the final prescription and invoice; payment is chosen only after that final invoice is acknowledged.
+                    Send this quotation to the patient. Their approval changes the request into an order the pharmacy may prepare.
                   </div>
                   <button
                     type="button"
@@ -2344,8 +2370,7 @@ export function PrescriptionUploadsPage() {
                     type="button"
                     className="btn btn-primary w-100"
                     onClick={() => {
-                      const estimateItems = review.estimateDetails?.input?.items || [];
-                      navigate(buildPrescriptionCreateUrl(review, estimateItems));
+                      navigate(buildPrescriptionCreateUrl(review));
                     }}
                   >
                     <i className="bi bi-file-medical me-2" />
@@ -2357,8 +2382,7 @@ export function PrescriptionUploadsPage() {
                   type="button"
                   className="btn btn-outline-primary w-100 mt-3"
                   onClick={() => {
-                    const estimateItems = review.estimateDetails?.input?.items || [];
-                    navigate(buildPrescriptionCreateUrl(review, estimateItems));
+                    navigate(buildPrescriptionCreateUrl(review));
                   }}
                 >
                   <i className="bi bi-file-medical me-2" />
@@ -2382,9 +2406,11 @@ export function PrescriptionUploadsPage() {
                   <button type="button" className="btn btn-light" disabled={busy} onClick={closeReview}>
                     Cancel
                   </button>
-                  <button type="submit" className="btn btn-primary" disabled={busy || estimateBusy}>
-                    {busy ? "Saving…" : review.status === "PENDING" ? "Save review" : "Save notes"}
-                  </button>
+                  {review.status === "PENDING" && (
+                    <button type="submit" className="btn btn-primary" disabled={busy || estimateBusy}>
+                      {busy ? "Saving…" : "Save availability review"}
+                    </button>
+                  )}
                 </div>
               </div>
             </form>

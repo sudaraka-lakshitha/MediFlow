@@ -27,7 +27,7 @@ const summarySelect = {
   quoteRevision: true, acknowledgedQuoteRevision: true, quoteSentAt: true, quoteAcknowledgedAt: true,
   patient: { select: { id: true, fullName: true, email: true, patientProfile: { select: { id: true, patientNumber: true } } } },
   reviewedBy: { select: { id: true, fullName: true, role: true } },
-  prescription: { select: { id: true, prescriptionNumber: true, status: true, paymentRequest: { select: { status: true, revision: true, acknowledgedRevision: true, customerPaymentChoice: true, reservationExpiresAt: true } }, items: { select: { id: true, dosageInstructions: true, frequency: true, duration: true, prescribedQuantity: true, product: { select: { genericName: true, strength: true, unit: true, storageInstructions: true } } } } } },
+  prescription: { select: { id: true, prescriptionNumber: true, status: true, paymentRequest: { select: { requestNumber: true, total: true, status: true, revision: true, acknowledgedRevision: true, customerPaymentChoice: true, reservationExpiresAt: true } }, items: { select: { id: true, dosageInstructions: true, frequency: true, duration: true, prescribedQuantity: true, product: { select: { genericName: true, strength: true, unit: true, storageInstructions: true } } } } } },
   paymentSlips: { select: slipSelect, orderBy: { createdAt: 'desc' } },
 };
 
@@ -43,6 +43,13 @@ const validSignature = (buffer, mimeType) => {
 const ensureAccess = (record, user) => {
   if (!record) throw new AppError(404, 'Uploaded prescription not found.');
   if (user.role === 'PATIENT' && record.patientId !== user.id) throw new AppError(403, 'This uploaded prescription does not belong to you.');
+};
+const visibleUpload = (record, user) => {
+  if (user.role !== 'PATIENT' || !record?.prepareRequested) return record;
+  // A prepare request is not a quotation. Keep the internal stock/price check
+  // pharmacist-only until the final itemised payment request exists.
+  const { estimatedTotal, estimateDetails, ...visible } = record;
+  return { ...visible, estimatedTotal: null, estimateDetails: null };
 };
 const isLiquidProduct = (product) =>
   ['ml', 'millilitre', 'milliliter', 'l', 'litre', 'liter'].includes(String(product?.unit || '').toLowerCase())
@@ -85,14 +92,14 @@ export const prescriptionUploadService = {
   },
   async retention() { const setting = await prisma.systemSetting.findUnique({ where: { key: 'prescriptionUploadRetentionDays' } }); return { days: Number(setting?.value || 30) }; },
   async setRetention(days) { await prisma.systemSetting.upsert({ where: { key: 'prescriptionUploadRetentionDays' }, update: { value: String(days) }, create: { key: 'prescriptionUploadRetentionDays', value: String(days) } }); return { days }; },
-  async list(user, { page = 1, pageSize = 300, search, status } = {}) { await this.cleanupExpired(); return prisma.prescriptionUpload.findMany({
+  async list(user, { page = 1, pageSize = 300, search, status } = {}) { await this.cleanupExpired(); const records = await prisma.prescriptionUpload.findMany({
     where: { ...(user.role === 'PATIENT' ? { patientId: user.id } : {}), ...historySearch(search, ['originalName', 'patient.fullName', 'patientNote', 'recipientName']),
       ...(status ? { AND: [{ OR: [
         ...(['AWAITING_PAYMENT', 'SLIP_SUBMITTED', 'PAID', 'FULFILLED', 'CANCELLED'].includes(status) ? [{ prescription: { paymentRequest: { status } } }] : []),
         ...(['PENDING', 'AVAILABLE', 'PARTIALLY_AVAILABLE', 'UNAVAILABLE', 'REJECTED', 'QUOTE_SENT', 'QUOTE_ACCEPTED', 'PAYMENT_PENDING', 'PAYMENT_SUBMITTED', 'READY_TO_PREPARE'].includes(status) ? [{ status, OR: [{ prescription: { is: null } }, { prescription: { paymentRequest: { is: null } } }] }] : []),
       ] }] } : {}) }, select: summarySelect,
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize,
-  }); },
+  }); return records.map(record => visibleUpload(record, user)); },
   async create(data, userId) {
     const { submissionKey, ...content } = data;
     const submissionHash = submissionKey ? crypto.createHash('sha256').update(JSON.stringify(content)).digest('hex') : null;
@@ -115,7 +122,7 @@ export const prescriptionUploadService = {
     if (!fileData.length || fileData.length > 2_500_000) throw new AppError(413, 'Prescription files must be 2.5 MB or smaller.');
     if (!validSignature(fileData, data.mimeType)) throw new AppError(400, 'The file content does not match the selected PDF or image type.');
     const retention = await this.retention(); const deleteAt = new Date(); deleteAt.setDate(deleteAt.getDate() + retention.days);
-    try { return await prisma.prescriptionUpload.create({ data: {
+    try { return visibleUpload(await prisma.prescriptionUpload.create({ data: {
       ...(submissionKey ? { submissionKey, submissionHash } : {}),
       deliveryRequested: Boolean(data.deliveryRequested), deliveryRecipientName: data.deliveryRequested ? data.deliveryRecipientName : null, deliveryAddress: data.deliveryRequested ? data.deliveryAddress : null, deliveryPhone: data.deliveryRequested ? data.deliveryPhone : null,
       attachments: { create: attachments },
@@ -127,7 +134,7 @@ export const prescriptionUploadService = {
       recipientAllergies: data.orderedForSelf ? null : (data.recipientAllergies || null),
       recipientConditions: data.orderedForSelf ? null : (data.recipientConditions || null),
       deleteAt,
-    }, select: summarySelect });
+    }, select: summarySelect }), { id: userId, role: 'PATIENT' });
     } catch (error) {
       if (submissionKey && error.code === 'P2002') { const existing = await existingSubmission(); if (existing) return existing; }
       throw error;
@@ -193,7 +200,7 @@ export const prescriptionUploadService = {
     if (result.count !== 1) throw new AppError(409, 'This upload changed or pharmacy review has started. Close the form and refresh before continuing.');
     if (removed.size) await tx.prescriptionUploadAttachment.deleteMany({ where: { uploadId: id, id: { in: [...removed].filter(value => value !== 0) } } });
     if (additions.length) await tx.prescriptionUploadAttachment.createMany({ data: additions.map(file => ({ ...file, uploadId: id })) });
-    return tx.prescriptionUpload.findUnique({ where: { id }, select: summarySelect });
+    return visibleUpload(await tx.prescriptionUpload.findUnique({ where: { id }, select: summarySelect }), user);
     });
   },
   async review(id, data, userId) {
@@ -208,10 +215,12 @@ export const prescriptionUploadService = {
     if (claimed.count !== 1) throw new AppError(409, 'This uploaded prescription was just processed by another staff member. Refresh to see its latest status.');
     return prisma.prescriptionUpload.findUnique({ where: { id }, select: summarySelect });
   },
-  // Pharmacist finalises the estimate and sends the quotation — moves status to PAYMENT_PENDING
+  // Only quote-only requests use this customer-approval step. Prepared orders
+  // go directly from the private availability review to a final invoice.
   async sendQuotation(id, userId) {
-    const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true, status: true, estimatedTotal: true, quoteRevision: true } });
+    const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true, status: true, prepareRequested: true, estimatedTotal: true, quoteRevision: true } });
     if (!record) throw new AppError(404, 'Uploaded prescription not found.');
+    if (record.prepareRequested) throw new AppError(409, 'This customer requested preparation. Create the final prescription and invoice after review instead of sending a rough quotation.');
     if (!['AVAILABLE', 'PARTIALLY_AVAILABLE'].includes(record.status)) throw new AppError(409, 'The upload must be marked as available before sending the quotation.');
     if (record.estimatedTotal == null) throw new AppError(409, 'Calculate and save an estimated invoice before sending the quotation.');
     const sent = await prisma.prescriptionUpload.updateMany({ where: { id, status: record.status, quoteRevision: record.quoteRevision, prescription: { is: null } }, data: {
@@ -382,7 +391,7 @@ export const prescriptionUploadService = {
       prepareRequested: true, status: 'QUOTE_ACCEPTED', acknowledgedQuoteRevision: record.quoteRevision, quoteAcknowledgedAt: new Date(),
     } });
     if (accepted.count !== 1) throw new AppError(409, 'The quotation has changed. Refresh and review it again.');
-    return prisma.prescriptionUpload.findUnique({ where: { id }, select: summarySelect });
+    return visibleUpload(await prisma.prescriptionUpload.findUnique({ where: { id }, select: summarySelect }), { id: userId, role: 'PATIENT' });
   },
   async cancelByPatient(id, reason, user) {
     const upload = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true, patientId: true, status: true, prescription: { select: { id: true } } } });
@@ -407,7 +416,7 @@ export const prescriptionUploadService = {
       },
     });
     if (cancelled.count !== 1) throw new AppError(409, 'This upload changed or was converted into a final invoice. Refresh before cancelling.');
-    return prisma.prescriptionUpload.findUnique({ where: { id }, select: summarySelect });
+    return visibleUpload(await prisma.prescriptionUpload.findUnique({ where: { id }, select: summarySelect }), user);
   },
   async setDeadline(id, deleteAt) {
     const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true } });
@@ -455,7 +464,7 @@ export const prescriptionUploadService = {
         data: { status: 'PAYMENT_SUBMITTED' },
       }),
     ]);
-    return tx.prescriptionUpload.findUnique({ where: { id }, select: summarySelect });
+    return visibleUpload(await tx.prescriptionUpload.findUnique({ where: { id }, select: summarySelect }), user);
     });
   },
 

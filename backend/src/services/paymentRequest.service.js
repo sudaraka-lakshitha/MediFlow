@@ -247,6 +247,38 @@ export const paymentRequestService = {
       return safeRecord(await tx.paymentRequest.findUnique({ where: { id: existing.id }, include }));
     });
   },
+  async applyPatientCoupon(id, { revision, couponCode }, user) {
+    const record = await prisma.paymentRequest.findUnique({
+      where: { id },
+      select: {
+        id: true, patientId: true, prescriptionId: true, status: true, revision: true,
+        couponCode: true, containerFee: true, tax: true,
+        items: { select: { prescriptionItemId: true, productId: true, quantity: true } },
+      },
+    });
+    if (!record) throw new AppError(404, 'Invoice not found.');
+    if (record.patientId !== user.id) throw new AppError(403, 'This invoice does not belong to you.');
+    if (record.status !== 'AWAITING_PAYMENT') throw new AppError(409, 'A coupon can only be applied before payment is completed.');
+    if (record.revision !== revision) throw new AppError(409, 'This invoice changed. Refresh and review the latest version before applying a coupon.');
+    const prescription = record.prescriptionId
+      ? await prisma.prescription.findUnique({ where: { id: record.prescriptionId }, select: { isOnline: true, sourceUploadId: true } })
+      : null;
+    if (!prescription?.isOnline && !prescription?.sourceUploadId) throw new AppError(403, 'Coupons can only be applied to your online pharmacy invoices.');
+
+    const medicineItems = record.items.filter(item => item.prescriptionItemId != null)
+      .map(item => ({ prescriptionItemId: item.prescriptionItemId, quantity: Number(item.quantity) }));
+    const retailItems = record.items.filter(item => item.prescriptionItemId == null)
+      .map(item => ({ productId: item.productId, quantity: Number(item.quantity) }));
+    return this.update(record.prescriptionId, {
+      revision,
+      revisionReason: couponCode?.trim() ? `Customer applied coupon ${couponCode.trim()}` : 'Customer removed the coupon',
+      items: medicineItems,
+      retailItems,
+      couponCode: couponCode?.trim() || null,
+      containerFee: Number(record.containerFee || 0),
+      tax: Number(record.tax || 0),
+    }, user.id);
+  },
   async cancel(id, reason, user, tx = null) {
     if (!tx) return serializable((transaction) => this.cancel(id, reason, user, transaction));
       const current = await tx.paymentRequest.findUnique({ where: { id }, include: { delivery: true, deliveryFeeFor: true, prescription: { select: { sourceUploadId: true, isOnline: true } } } });
