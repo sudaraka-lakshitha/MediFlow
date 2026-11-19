@@ -4,6 +4,7 @@ import { uploadAttemptKey, completeUploadAttempt } from '../utils/uploadAttempt'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api/client";
 import { stockQuantityStep } from "../utils/unitMeasure";
+import { productStockDescription, productStockTone, usableProductStock } from "../utils/productStock";
 import { useHistoryPage } from "../api/useHistoryPage";
 import { useAuth } from "../auth/useAuth";
 import { useNavigate } from "react-router-dom";
@@ -144,13 +145,7 @@ const isLiquidProduct = (product: any) =>
   /syrup|suspension|solution|elixir|liquid/i.test(
     String(product?.dosageForm || ""),
   );
-const usableStock = (product: any) =>
-  product.batches
-    .filter((batch: any) => new Date(batch.expiryDate) >= new Date())
-    .reduce(
-      (sum: number, batch: any) => sum + Number(batch.quantityAvailable) - Number(batch.quantityReserved || 0),
-      0,
-    );
+const usableStock = usableProductStock;
 const emptyEstimate = () => ({
   items: [{ productId: "", quantity: 1 }],
   retailItems: [],
@@ -1774,7 +1769,7 @@ export function PrescriptionUploadsPage() {
                                   value: product.id,
                                   label:
                                     `${product.genericName} ${product.strength}`.trim(),
-                                  description: `${product.sku} · ${money(product.sellingPrice)} per ${product.unit} · Usable stock ${usableStock(product)}`,
+                                  description: `${product.sku} · ${money(product.sellingPrice)} per ${product.unit} · ${productStockDescription(product)}`,
                                 }))}
                               value={item.productId}
                               onChange={(productId) =>
@@ -1787,6 +1782,11 @@ export function PrescriptionUploadsPage() {
                               placeholder="Search medicine, SKU or brand"
                               required
                             />
+                            {selectedProduct && (
+                              <small className={`d-block mt-1 ${productStockTone(selectedProduct)}`}>
+                                {productStockDescription(selectedProduct)}
+                              </small>
+                            )}
                           </div>
                           <div>
                             <label className="form-label">
@@ -1924,7 +1924,7 @@ export function PrescriptionUploadsPage() {
                                       .map((product) => ({
                                         value: product.id,
                                         label: `${product.genericName}${product.strength && product.strength !== "N/A" ? ` ${product.strength}` : ""}`,
-                                        description: `${product.sku}${product.barcode ? ` · ${product.barcode}` : ""} · ${money(product.sellingPrice)} per ${product.unit} · Usable stock ${usableStock(product)}`,
+                                        description: `${product.sku}${product.barcode ? ` · ${product.barcode}` : ""} · ${money(product.sellingPrice)} per ${product.unit} · ${productStockDescription(product)}`,
                                       }))}
                                     value={item.productId}
                                     onChange={(productId) =>
@@ -1937,6 +1937,11 @@ export function PrescriptionUploadsPage() {
                                     placeholder="Search item, SKU or barcode"
                                     required
                                   />
+                                  {selectedProduct && (
+                                    <small className={`d-block mt-1 ${productStockTone(selectedProduct)}`}>
+                                      {productStockDescription(selectedProduct)}
+                                    </small>
+                                  )}
                                 </div>
                                 <div>
                                   <label className="form-label">

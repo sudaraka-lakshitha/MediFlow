@@ -23,6 +23,7 @@ import { PredictiveSearchInput } from "../components/PredictiveSearchInput";
 import { Alert, Empty, Loading, Status } from "../components/Ui";
 import { isCountableUnit, issuableTotal, stockQuantityStep } from "../utils/unitMeasure";
 import { isLiquidContainerUnit, liquidPackVolumeMl } from "../utils/liquidPackaging";
+import { productStockDescription, productStockTone, usableProductStock } from "../utils/productStock";
 import "../prescriptions.css";
 
 type RxItem = {
@@ -237,15 +238,7 @@ const ageFromDob = (dob?: string) => {
     age -= 1;
   return String(age);
 };
-const usableStock = (product: any) =>
-  product?.batches?.reduce(
-    (sum: number, batch: any) =>
-      Number(batch.quantityAvailable) > 0 &&
-      (!batch.expiryDate || new Date(batch.expiryDate) >= new Date())
-        ? sum + Number(batch.quantityAvailable) - Number(batch.quantityReserved || 0)
-        : sum,
-    0,
-  ) || 0;
+const usableStock = usableProductStock;
 const isLiquid = (product?: any) =>
   /^(ml|millilitre|milliliter)s?$/i.test(product?.unit || "") ||
   /syrup|suspension|solution|elixir|liquid/i.test(product?.dosageForm || "");
@@ -573,17 +566,13 @@ export function PrescriptionsPage() {
         .filter(
           (product) =>
             product.active &&
-            !product.prescriptionRequired &&
-            usableStock(product) > 0,
+            !product.prescriptionRequired,
         )
-        .map((product) => {
-          const available = usableStock(product);
-          return {
-            value: product.id,
-            label: `${product.genericName}${product.strength && product.strength !== "N/A" ? ` ${product.strength}` : ""}`,
-            description: `${product.sku}${product.barcode ? ` · ${product.barcode}` : ""} · ${money(product.sellingPrice)} · Stock ${available} ${product.unit}`,
-          };
-        }),
+        .map((product) => ({
+          value: product.id,
+          label: `${product.genericName}${product.strength && product.strength !== "N/A" ? ` ${product.strength}` : ""}`,
+          description: `${product.sku}${product.barcode ? ` · ${product.barcode}` : ""} · ${money(product.sellingPrice)} · ${productStockDescription(product)}`,
+        })),
     [products],
   );
   useEffect(() => {
@@ -2534,7 +2523,7 @@ export function PrescriptionsPage() {
                           .map((product) => ({
                             value: product.id,
                             label: medicineLabel(product),
-                            description: `${product.brandName || "Generic"} · ${product.dosageForm} · ${product.sku}`,
+                            description: `${product.brandName || "Generic"} · ${product.dosageForm} · ${product.sku} · ${productStockDescription(product)}`,
                           }))}
                         value={item.productId}
                         onChange={(productId) =>
@@ -2544,6 +2533,11 @@ export function PrescriptionsPage() {
                         placeholder="Search name, brand, strength or SKU"
                         required
                       />
+                      {auto.product && (
+                        <small className={`d-block mt-1 ${productStockTone(auto.product)}`}>
+                          {productStockDescription(auto.product)}
+                        </small>
+                      )}
                     </div>
                     <div className="col-md-2">
                       <label className="form-label small">
@@ -3102,7 +3096,6 @@ export function PrescriptionsPage() {
                                     (product) =>
                                       product.active &&
                                       !product.prescriptionRequired &&
-                                      usableStock(product) > 0 &&
                                       !selectedIds.includes(
                                         Number(product.id),
                                       ),
@@ -3110,7 +3103,7 @@ export function PrescriptionsPage() {
                                   .map((product) => ({
                                     value: product.id,
                                     label: `${product.genericName}${product.strength && product.strength !== "N/A" ? ` ${product.strength}` : ""}`,
-                                    description: `${product.sku}${product.barcode ? ` · ${product.barcode}` : ""} · ${money(product.sellingPrice)} · Stock ${usableStock(product)} ${product.unit}`,
+                                    description: `${product.sku}${product.barcode ? ` · ${product.barcode}` : ""} · ${money(product.sellingPrice)} · ${productStockDescription(product)}`,
                                   }))}
                                 value={retailItem.productId}
                                 onChange={(productId) => {
@@ -3125,6 +3118,11 @@ export function PrescriptionsPage() {
                                 placeholder="Search product, SKU or barcode"
                                 required
                               />
+                              {selectedProduct && (
+                                <small className={`d-block mt-1 ${productStockTone(selectedProduct)}`}>
+                                  {productStockDescription(selectedProduct)}
+                                </small>
+                              )}
                             </div>
                             <div>
                               <label className="form-label">

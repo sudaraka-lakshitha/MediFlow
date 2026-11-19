@@ -51,7 +51,36 @@ export const catalogService = {
   deleteCategory: (id) => prisma.category.delete({ where: { id } }),
   async listProducts(search) {
     const [products, total] = await catalogRepository.products(search);
-    return { rows: products.map((product) => ({ ...product, batches: product.batches.map((batch) => ({ ...batch, quantityAvailable: Number(batch.quantityAvailable) })) })), total };
+    const stockBatches = products.length
+      ? await prisma.inventoryBatch.findMany({
+        where: { productId: { in: products.map((product) => product.id) }, quantityAvailable: { gt: 0 } },
+        select: { productId: true, quantityAvailable: true, quantityReserved: true, expiryDate: true, restricted: true },
+      })
+      : [];
+    const stockByProduct = new Map();
+    const now = new Date();
+    for (const batch of stockBatches) {
+      const stock = stockByProduct.get(batch.productId) || { inDateOnHand: 0, reserved: 0, expired: 0, restricted: 0 };
+      const quantity = Number(batch.quantityAvailable);
+      if (batch.restricted) stock.restricted += quantity;
+      else if (batch.expiryDate < now) stock.expired += quantity;
+      else {
+        stock.inDateOnHand += quantity;
+        stock.reserved += Math.min(quantity, Number(batch.quantityReserved || 0));
+      }
+      stockByProduct.set(batch.productId, stock);
+    }
+    return {
+      rows: products.map((product) => {
+        const stock = stockByProduct.get(product.id) || { inDateOnHand: 0, reserved: 0, expired: 0, restricted: 0 };
+        return {
+          ...product,
+          batches: product.batches.map((batch) => ({ ...batch, quantityAvailable: Number(batch.quantityAvailable) })),
+          stockSummary: { ...stock, available: Math.max(0, stock.inDateOnHand - stock.reserved) },
+        };
+      }),
+      total,
+    };
   },
   createProduct: (data) => prisma.$transaction(async (tx) => tx.product.create({ data: await prepareProductData(tx, data), include: { category: true, manufacturer: true, drugConcept: true } })),
   updateProduct: (id, data) => prisma.$transaction(async (tx) => {
