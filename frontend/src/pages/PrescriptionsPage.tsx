@@ -472,6 +472,7 @@ export function PrescriptionsPage() {
       api
         .get(`/prescription-uploads/${uploadId}/file`, { responseType: "blob" })
         .then(async (response) => {
+          if (sourceFileUrl) URL.revokeObjectURL(sourceFileUrl);
           setSourceFileUrl(URL.createObjectURL(response.data));
           setSourceFileMimeType(response.data.type || "");
           setSourceFileText(
@@ -640,6 +641,7 @@ export function PrescriptionsPage() {
       setForm({
         patientId: rx.patient.id,
         sourceUploadId: rx.sourceUpload?.id || null,
+        sourceUploadStatus: rx.sourceUpload?.status || null,
         prescriberTitle: rx.prescriberTitle || "",
         prescriberName: rx.prescriberName,
         prescriberReference: rx.prescriberReference || "",

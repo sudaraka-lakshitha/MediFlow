@@ -128,6 +128,8 @@ enum UploadReviewStatus {
   PAYMENT_SUBMITTED
   // Cashier verified payment — pharmacist should prepare and create the prescription
   READY_TO_PREPARE
+  // Patient withdrew the uploaded request before it became a prescription.
+  CANCELLED
 }
 
 enum UploadSlipStatus {

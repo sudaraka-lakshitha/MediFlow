@@ -6,7 +6,10 @@ import { prescriptionUploadService } from './services/prescriptionUpload.service
 import { auditService } from './services/audit.service.js';
 import { cleanupExpiredCashReservations } from './utils/reservationExpiry.js';
 
-const server = app.listen(env.PORT, () => logger.info(`MediFlow API listening on port ${env.PORT}`));
+const onListening = () => logger.info(`MediFlow API listening on port ${env.PORT}`);
+const server = env.NODE_ENV === 'production'
+  ? app.listen(env.PORT, onListening)
+  : app.listen(env.PORT, '127.0.0.1', onListening);
 let reservationCleanupRunning = false;
 const cleanupReservations = async () => {
   if (reservationCleanupRunning) return;

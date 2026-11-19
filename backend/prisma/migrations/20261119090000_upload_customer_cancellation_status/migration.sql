@@ -1,0 +1,7 @@
+ALTER TABLE `prescription_uploads`
+  MODIFY `status` ENUM('PENDING','AVAILABLE','PARTIALLY_AVAILABLE','UNAVAILABLE','REJECTED','QUOTE_SENT','QUOTE_ACCEPTED','PAYMENT_PENDING','PAYMENT_SUBMITTED','READY_TO_PREPARE','CANCELLED') NOT NULL DEFAULT 'PENDING';
+
+UPDATE `prescription_uploads`
+SET `status` = 'CANCELLED'
+WHERE `status` = 'REJECTED'
+  AND `availability_notes` LIKE 'Declined / Cancelled by customer:%';

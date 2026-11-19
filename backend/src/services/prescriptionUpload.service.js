@@ -49,6 +49,12 @@ const visibleUpload = (record, user) => {
   // Rough working amounts are private unless an older quotation was explicitly
   // sent through the legacy quote workflow. New availability reviews reveal a
   // payable amount only after a final invoice exists.
+  if (['QUOTE_SENT', 'QUOTE_ACCEPTED'].includes(record.status)) {
+    // Patients need the estimate amount to decide whether to proceed, but the
+    // saved calculator inputs and internal quote snapshot are pharmacy data.
+    const { estimateDetails, ...visible } = record;
+    return { ...visible, estimateDetails: null };
+  }
   if (!record.prepareRequested && ['QUOTE_SENT', 'QUOTE_ACCEPTED', 'PAYMENT_PENDING', 'PAYMENT_SUBMITTED', 'READY_TO_PREPARE'].includes(record.status)) return record;
   const { estimatedTotal, estimateDetails, ...visible } = record;
   return { ...visible, estimatedTotal: null, estimateDetails: null };
@@ -98,7 +104,7 @@ export const prescriptionUploadService = {
     where: { ...(user.role === 'PATIENT' ? { patientId: user.id } : {}), ...historySearch(search, ['originalName', 'patient.fullName', 'patientNote', 'recipientName']),
       ...(status ? { AND: [{ OR: [
         ...(['AWAITING_PAYMENT', 'SLIP_SUBMITTED', 'PAID', 'FULFILLED', 'CANCELLED'].includes(status) ? [{ prescription: { paymentRequest: { status } } }] : []),
-        ...(['PENDING', 'AVAILABLE', 'PARTIALLY_AVAILABLE', 'UNAVAILABLE', 'REJECTED', 'QUOTE_SENT', 'QUOTE_ACCEPTED', 'PAYMENT_PENDING', 'PAYMENT_SUBMITTED', 'READY_TO_PREPARE'].includes(status) ? [{ status, OR: [{ prescription: { is: null } }, { prescription: { paymentRequest: { is: null } } }] }] : []),
+        ...(['PENDING', 'AVAILABLE', 'PARTIALLY_AVAILABLE', 'UNAVAILABLE', 'REJECTED', 'CANCELLED', 'QUOTE_SENT', 'QUOTE_ACCEPTED', 'PAYMENT_PENDING', 'PAYMENT_SUBMITTED', 'READY_TO_PREPARE'].includes(status) ? [{ status, OR: [{ prescription: { is: null } }, { prescription: { paymentRequest: { is: null } } }] }] : []),
       ] }] } : {}) }, select: summarySelect,
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize,
   }); return records.map(record => visibleUpload(record, user)); },
@@ -401,7 +407,7 @@ export const prescriptionUploadService = {
     if (user.role === 'PATIENT' && upload.patientId !== user.id) {
       throw new AppError(403, 'This prescription does not belong to you.');
     }
-    if (['UNAVAILABLE', 'REJECTED'].includes(upload.status)) {
+    if (['UNAVAILABLE', 'REJECTED', 'CANCELLED'].includes(upload.status)) {
       throw new AppError(409, 'This upload is already cancelled or rejected.');
     }
     if (upload.prescription) {
@@ -413,8 +419,8 @@ export const prescriptionUploadService = {
     const cancelled = await prisma.prescriptionUpload.updateMany({
       where: { id, status: upload.status, prescription: { is: null } },
       data: {
-        status: 'REJECTED',
-        availabilityNotes: `Declined / Cancelled by customer: ${reason}`,
+        status: 'CANCELLED',
+        availabilityNotes: `Cancelled by customer: ${reason}`,
       },
     });
     if (cancelled.count !== 1) throw new AppError(409, 'This upload changed or was converted into a final invoice. Refresh before cancelling.');

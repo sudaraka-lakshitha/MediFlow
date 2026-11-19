@@ -4,7 +4,7 @@ import { authenticate } from '../middleware/authenticate.js';
 import { authorize } from '../middleware/authorize.js';
 import { validate } from '../middleware/validate.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
-import { idParams, searchQuery } from '../validators/common.validator.js';
+import { idParams, patientListQuery } from '../validators/common.validator.js';
 import { createPatientSchema, patientNoticeSchema, patientPasswordSchema, updatePatientSchema } from '../validators/patient.validator.js';
 import { activeSchema } from '../validators/common.validator.js';
 
@@ -12,7 +12,7 @@ export const patientRoutes=Router();
 patientRoutes.use(authenticate);
 patientRoutes.get('/my-notices',authorize('PATIENT'),asyncHandler(patientController.myNotices));
 patientRoutes.get('/me/health-record',authorize('PATIENT'),asyncHandler(patientController.myHealthRecord));
-patientRoutes.get('/',authorize('ADMIN','PHARMACIST','CASHIER'),validate({query:searchQuery}),asyncHandler(patientController.list));
+patientRoutes.get('/',authorize('ADMIN','PHARMACIST','CASHIER'),validate({query:patientListQuery}),asyncHandler(patientController.list));
 patientRoutes.use(authorize('ADMIN','PHARMACIST'));
 patientRoutes.get('/:id/health-record',validate({params:idParams}),asyncHandler(patientController.healthRecord));
 patientRoutes.post('/:id/notices',validate({params:idParams,body:patientNoticeSchema}),asyncHandler(patientController.createNotice));

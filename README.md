@@ -61,6 +61,12 @@ git clone https://github.com/sudaraka-lakshitha/MediFlow.git
 cd MediFlow
 ```
 
+### Quick first-time setup on Windows
+
+After installing Node.js and XAMPP and cloning the repository, double-click **`setup-mediflow.bat`**. It starts XAMPP MySQL, creates a local `mediflow` database and restricted application user, generates local-only secrets in the ignored `backend/.env`, installs backend and frontend packages, applies migrations, and starts the app. It asks whether to load sample records only when the database has no tables; existing records are never reset or seeded by this setup. At the MySQL password prompt, press Enter for the standard XAMPP root account with no password, or type the root password if one was set.
+
+This helper is for a local XAMPP database only. It stops if cloud database overrides are configured, to avoid applying local setup migrations to Aiven by mistake. It expects XAMPP in `C:\xampp`. If you want MediFlow to use the existing hosted Aiven data, follow the hosted configuration steps in [Hosted Deployment & Upgrade Guide](#15-hosted-deployment--upgrade-guide) instead of running the local setup helper.
+
 ---
 
 ## 3. Create the Local MySQL Database (XAMPP)
@@ -170,6 +176,18 @@ npm --prefix backend run prisma:generate
 # Apply all database migrations
 npm --prefix backend run prisma:deploy
 ```
+
+### Generate and View the Liam ER Diagram
+
+MediFlow's ER diagram is generated from `backend/prisma/schema.prisma`; this reads the project schema and does not connect to MySQL or include patient records or database credentials. From the project root, run:
+
+```powershell
+npm run erd:open
+```
+
+Open the local address printed by the server (port `5174`). To only regenerate the diagram, use `npm run erd:build`. The generated site is kept under the ignored `docs/erd/` folder and is not committed. Liam supports Prisma schemas directly; raw MySQL parsing is not required for this project. See the [Liam Prisma guide](https://liambx.com/docs/parser/supported-formats/prisma) and [CLI guide](https://liambx.com/docs/cli).
+
+GitHub Actions also builds the diagram when `master` changes the Prisma schema. Download the `mediflow-liam-erd` artifact from that workflow run to view the static site. It is not automatically published as a public website.
 
 ### Optional — Load Demo Fixtures (Local Development Only)
 
@@ -693,6 +711,8 @@ Verified on **4 November 2026** for the pre-commit working tree:
 - **Frontend:** `tsc -b && vite build` passed. The lint command exits successfully but reports non-blocking React warnings that still need review.
 - **Database:** Prisma client generation passed; migration `20261104000000_remaining_direction_snapshots` was applied to Aiven, migration status is up to date, and a read-only check confirmed all four new direction columns.
 - **Not verified here:** the final hosted Render/Vercel deployment, Android device behavior, Aiven load performance, physical printers/scanners and production email delivery.
+
+Follow-up on **19 November 2026:** the new Windows first-time setup script passed PowerShell syntax parsing, but has not yet been run on a clean Windows/XAMPP computer. The test and build results above are from 4 November 2026.
 
 These results do not certify every business workflow or a maximum hosted upload time. Review the hosted deployment after pushing, especially its `/ready` health check and required environment variables. HTTP-boundary tests need access to temporary local test-server ports.
 

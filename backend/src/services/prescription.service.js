@@ -95,8 +95,11 @@ export const prescriptionService = {
         }),
         prisma.patientProfile.findUnique({ where: { id: data.patientId }, select: { userId: true } }),
       ]);
-      if (!upload || upload.prescription || !profile || upload.patientId !== profile.userId) {
-        throw new AppError(400, 'The uploaded prescription does not belong to the selected patient or is already linked.');
+      if (!profile) throw new AppError(400, 'The selected patient profile was not found.');
+      if (!upload) throw new AppError(400, 'The uploaded prescription was not found.');
+      if (upload.prescription) throw new AppError(400, 'This uploaded prescription has already been linked to a prescription.');
+      if (upload.patientId !== profile.userId) {
+        throw new AppError(400, 'The uploaded prescription does not belong to the selected patient.');
       }
       sourceUpload = upload;
       if (upload.attachmentRemovedAt) throw new AppError(409, 'The source attachment has expired. Ask the customer to submit it again.');
@@ -112,7 +115,8 @@ export const prescriptionService = {
       }
     } else {
       const profile = await prisma.patientProfile.findUnique({ where: { id: data.patientId }, select: { userId: true } });
-      patientUserId = profile?.userId || null;
+      if (!profile) throw new AppError(400, 'The selected patient profile was not found.');
+      patientUserId = profile.userId;
     }
 
     const [products, retailProducts] = await Promise.all([
@@ -220,13 +224,9 @@ export const prescriptionService = {
         tax: Number(data.tax || 0),
       };
       await paymentRequestService.create(prescription.id, payInput, userId, tx);
-      if (sourceUpload) {
-        const issued = await tx.prescriptionUpload.updateMany({
-          where: { id: sourceUpload.id, status: sourceUpload.status, prescription: { is: { id: prescription.id } } },
-          data: { status: 'PAYMENT_PENDING' },
-        });
-        if (issued.count !== 1) throw new AppError(409, 'The final invoice was not linked to the upload. Refresh and review its latest status.');
-      }
+      // paymentRequestService.create already advances a linked upload to
+      // PAYMENT_PENDING in this transaction. Do not try to transition it again
+      // using the pre-transaction status captured above; that status is now stale.
     }
 
     return tx.prescription.findUnique({ where: { id: prescription.id }, include: { items: { include: { product: true } }, patient: { include: { user: { select: { id: true, fullName: true } } } } } });
@@ -237,7 +237,7 @@ export const prescriptionService = {
     const current = await tx.prescription.findUnique({ where: { id }, include: { items: true, retailItems: true, paymentRequest: true } });
     if (!current) throw new AppError(404, 'Prescription not found.');
     if (current.sourceUploadId && current.patientId !== data.patientId) throw new AppError(409, 'A customer-uploaded prescription cannot be reassigned to a different customer.');
-    if (!['PENDING', 'VERIFIED'].includes(current.status)) throw new AppError(409, 'Only pending or verified prescriptions can be edited.');
+    if (!['PENDING', 'VERIFIED', 'PARTIALLY_DISPENSED'].includes(current.status)) throw new AppError(409, 'Only pending, verified, or partially dispensed prescriptions can be edited.');
     const [products, retailProducts] = await Promise.all([
       tx.product.findMany({ where: { id: { in:data.items.map((item)=>item.productId) }, active:true, productType:'MEDICINE' }, select:{ id:true,unit:true,genericName:true,brandName:true,strength:true,dosageForm:true,minimumAgeYears:true,maximumAgeYears:true } }),
       tx.product.findMany({ where: { id: { in:data.retailItems.map((item)=>item.productId) }, active:true, prescriptionRequired:false }, select:{ id:true,unit:true } }),

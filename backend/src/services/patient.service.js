@@ -26,7 +26,7 @@ export const patientService = {
   async list(query = {}) {
     const search = query.search?.trim();
     const take = Math.min(Number(query.limit) || 100, 200);
-    const where = search ? { OR: [
+    const where = query.userId ? { userId: Number(query.userId) } : search ? { OR: [
       { user: { fullName: { contains: search } } },
       { user: { email: { contains: search } } },
       { user: { phone: { contains: search } } },

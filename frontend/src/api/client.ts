@@ -10,7 +10,7 @@ const finishWrite = (config?: TrackedConfig) => {
   if (config?.workspaceWrite) { config.workspaceWrite = false; trackWrite(-1); }
 };
 
-const defaultApiUrl = import.meta.env.DEV ? 'http://localhost:5000/api' : '/api';
+const defaultApiUrl = '/api';
 export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || defaultApiUrl, timeout: 30000 });
 let redirectingToLogin = false;
 api.interceptors.request.use(async (config) => {

@@ -1,4 +1,6 @@
-export const workflowClientId = crypto.randomUUID();
+import { createBrowserId } from "../utils/browserCrypto";
+
+export const workflowClientId = createBrowserId();
 let lease: string | null = null;
 let ready: Promise<boolean> = Promise.resolve(true);
 let resolveReady: ((value: boolean) => void) | null = null;

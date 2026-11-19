@@ -93,9 +93,46 @@ describe('quotation revision acceptance', () => {
     await prescriptionUploadService.acceptEstimate(1, 2, 3);
     expect(db.prescriptionUpload.updateMany.mock.calls[0][0].where).toEqual({ id: 1, patientId: 2, status: 'QUOTE_SENT', quoteRevision: 3 });
   });
+  it('keeps the accepted rough estimate visible to the patient until the final invoice is issued', async () => {
+    db.prescriptionUpload.findUnique
+      .mockResolvedValueOnce({ id: 1, patientId: 2, status: 'QUOTE_SENT', prepareRequested: false, estimatedTotal: d(100), quoteRevision: 3 })
+      .mockResolvedValueOnce({ id: 1, patientId: 2, status: 'QUOTE_ACCEPTED', prepareRequested: true, estimatedTotal: d(100), estimateDetails: { savedAt: '2026-11-19' } });
+    db.prescriptionUpload.updateMany.mockResolvedValue({ count: 1 });
+
+    const accepted = await prescriptionUploadService.acceptEstimate(1, 2, 3);
+
+    expect(accepted.estimatedTotal.toString()).toBe('100');
+    expect(accepted.estimateDetails).toBeNull();
+  });
   it('rejects a quotation revised during acceptance', async () => {
     db.prescriptionUpload.updateMany.mockResolvedValue({ count: 0 });
     await expect(prescriptionUploadService.acceptEstimate(1, 2, 3)).rejects.toThrow('quotation has changed');
+  });
+});
+
+describe('partially dispensed prescription editing', () => {
+  it('allows the edit workflow to reach the remaining-line guard', async () => {
+    tx.prescription.findUnique.mockResolvedValue({
+      id: 31,
+      patientId: 3,
+      sourceUploadId: null,
+      status: 'PARTIALLY_DISPENSED',
+      items: [{ id: 41, productId: 2, prescribedQuantity: d(10), dispensedQuantity: d(3), cancelledQuantity: d(0) }],
+      retailItems: [],
+      paymentRequest: null,
+    });
+    tx.product.findMany.mockResolvedValue([]);
+    tx.patientProfile.findUnique.mockResolvedValue({ dateOfBirth: new Date('1990-01-01') });
+
+    await expect(prescriptionService.update(31, {
+      patientId: 3,
+      orderedForSelf: true,
+      prescriptionDate: new Date('2026-11-19'),
+      items: [],
+      retailItems: [],
+    }, 8)).rejects.toThrow('Keep the existing medicine lines when updating directions for a partially dispensed prescription.');
+
+    expect(tx.prescription.update).not.toHaveBeenCalled();
   });
 });
 

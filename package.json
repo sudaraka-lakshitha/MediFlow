@@ -7,6 +7,9 @@
     "test": "npm --prefix backend test",
     "build": "npm --prefix frontend run build",
     "lint": "npm --prefix frontend run lint",
+    "erd:build": "npx --yes @liam-hq/cli@0.7.24 erd build --input backend/prisma/schema.prisma --format prisma --output-dir docs/erd",
+    "erd:serve": "npx --yes serve docs/erd --listen 5174",
+    "erd:open": "npm run erd:build && npm run erd:serve",
     "verify": "npm test && npm run lint && npm run build"
   }
 }

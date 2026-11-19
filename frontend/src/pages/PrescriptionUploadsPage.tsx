@@ -90,8 +90,9 @@ const uploadStatusLabels: Record<string, string> = {
   PARTIALLY_AVAILABLE: "Partial availability — final bill in progress",
   UNAVAILABLE: "Medicines unavailable",
   REJECTED: "Upload rejected",
-  QUOTE_SENT: "Pharmacy is finalizing the prescription and bill",
-  QUOTE_ACCEPTED: "Pharmacy is finalizing the prescription and bill",
+  CANCELLED: "Cancelled by customer",
+  QUOTE_SENT: "Rough quotation sent — your decision is needed",
+  QUOTE_ACCEPTED: "Estimate accepted — pharmacy preparing final bill",
   PAYMENT_PENDING: "Final invoice issued — payment decision pending",
   PAYMENT_SUBMITTED: "Payment receipt awaiting review",
   READY_TO_PREPARE: "Payment verified — prepare medicines",
@@ -366,6 +367,22 @@ export function PrescriptionUploadsPage() {
     try {
       await api.put(`/prescription-uploads/${item.id}/send-quotation`);
       closeReview();
+      await load();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const acceptQuotation = async (item: Upload) => {
+    setBusy(true);
+    setError("");
+    try {
+      const response = await api.put(`/prescription-uploads/${item.id}/accept`, {
+        revision: item.quoteRevision,
+      });
+      const accepted = response.data.data as Upload;
+      setRows((current) => current.map((row) => row.id === item.id ? accepted : row));
       await load();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -899,7 +916,6 @@ export function PrescriptionUploadsPage() {
               });
               setUploadOpen(true);
               setEditingUpload(null);
-              setUploadForm({ file: null, prescriptionText: '', patientNote: '', prepareRequested: true, orderedForSelf: true, recipientName: '', recipientRelationship: '', recipientDateOfBirth: '', recipientAllergies: '', recipientConditions: '' });
             }}
           >
             <i className="bi bi-cloud-arrow-up me-2" />
@@ -968,7 +984,7 @@ export function PrescriptionUploadsPage() {
           <option value="SLIP_SUBMITTED">Final invoice — bank slip to check</option>
           <option value="PAID">Paid — awaiting collection</option>
           <option value="FULFILLED">Collected</option>
-          <option value="CANCELLED">Invoice cancelled</option>
+          <option value="CANCELLED">Cancelled request or invoice</option>
           <option value="PAYMENT_SUBMITTED">Bank slip submitted — awaiting cashier</option>
           <option value="READY_TO_PREPARE">Payment verified — ready to prepare</option>
         </select>
@@ -1072,10 +1088,12 @@ export function PrescriptionUploadsPage() {
                       : "Only some requested medicines are currently in stock"
                     : item.status === "UNAVAILABLE"
                     ? "Requested medicines are currently unavailable"
+                    : item.status === "CANCELLED"
+                    ? "Cancelled by customer — no prescription or stock reservation was created"
                     : item.status === "QUOTE_SENT"
-                    ? "The pharmacy is finalizing your prescription and complete bill"
+                    ? "A rough quotation is ready — review it and choose whether the pharmacy should process the complete prescription"
                     : item.status === "QUOTE_ACCEPTED"
-                    ? "The pharmacy is finalizing your prescription and complete bill"
+                    ? "You accepted the rough estimate — the pharmacy is preparing the prescription and final bill"
                     : item.status === "PAYMENT_PENDING"
                     ? "Final invoice issued — review it under Sales & billing"
                     : item.status === "PAYMENT_SUBMITTED"
@@ -1089,6 +1107,10 @@ export function PrescriptionUploadsPage() {
                 <small>
                   {item.prescription?.paymentRequest
                     ? "Final invoice"
+                    : item.status === "QUOTE_SENT"
+                      ? "Rough quotation — not payable"
+                      : item.status === "QUOTE_ACCEPTED"
+                        ? "Accepted estimate — final bill may differ"
                     : item.prepareRequested
                       ? "Final invoice"
                       : ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status)
@@ -1098,8 +1120,10 @@ export function PrescriptionUploadsPage() {
                 <strong>
                   {item.prescription?.paymentRequest
                     ? money(item.prescription.paymentRequest.total)
-                      : !item.prepareRequested && ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status)
-                        ? "Pharmacy is preparing your complete final bill"
+                    : ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status) && item.estimatedTotal != null
+                      ? money(item.estimatedTotal)
+                    : !item.prepareRequested && ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status)
+                      ? "Quotation amount not available"
                       : item.prepareRequested
                         ? "Awaiting final bill"
                         : ["AVAILABLE", "PARTIALLY_AVAILABLE"].includes(item.status)
@@ -1108,10 +1132,26 @@ export function PrescriptionUploadsPage() {
                 </strong>
               </div>
             </div>
-            {patient && !item.prescription && ["AVAILABLE", "PARTIALLY_AVAILABLE", "QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status) && (
+            {patient && !item.prescription && ["AVAILABLE", "PARTIALLY_AVAILABLE", "QUOTE_ACCEPTED"].includes(item.status) && (
               <div className="alert alert-info small mt-2 mb-0">
                 <strong>No further request is needed.</strong> The pharmacist is preparing the complete prescription and final bill. You can acknowledge the invoice and choose payment under Sales &amp; billing when it is issued.
               </div>
+            )}
+            {patient && !item.prescription && item.status === "QUOTE_SENT" && (
+              <div className="alert alert-warning small mt-2 mb-0">
+                <strong>This is an estimate, not a payable invoice.</strong> Approve it if you want the pharmacy to process the complete prescription. The pharmacist will issue a final bill for your review before payment.
+              </div>
+            )}
+            {patient && !item.prescription && item.status === "QUOTE_SENT" && (
+              <button
+                type="button"
+                className="btn btn-sm btn-primary mt-2"
+                disabled={busy || item.quoteRevision == null || item.estimatedTotal == null}
+                onClick={() => void acceptQuotation(item)}
+              >
+                <i className="bi bi-check-circle me-1" />
+                Approve estimate &amp; process my prescription
+              </button>
             )}
             {/* Patient: cancel request */}
             {patient &&

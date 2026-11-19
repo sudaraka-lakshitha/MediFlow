@@ -1,0 +1,27 @@
+name: Build Liam ERD
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - backend/prisma/schema.prisma
+      - .github/workflows/erd.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-erd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate interactive ER diagram
+        run: npx --yes @liam-hq/cli@0.7.24 erd build --input backend/prisma/schema.prisma --format prisma --output-dir ./erd-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mediflow-liam-erd
+          path: erd-output/
+          if-no-files-found: error
