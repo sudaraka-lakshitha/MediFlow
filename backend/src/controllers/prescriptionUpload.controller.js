@@ -63,11 +63,6 @@ export const prescriptionUploadController = protectWorkflowController({
     await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOAD_ESTIMATE_ACCEPTED', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id, ipAddress: req.ip });
     res.json({ data });
   },
-  proceedToOrder: async (req, res) => {
-    const data = await prescriptionUploadService.proceedToOrder(Number(req.params.id), req.body, req.user);
-    await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOAD_PROCESSING_REQUESTED', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id, details: { deliveryRequested: Boolean(req.body.deliveryRequested), status: data.status }, ipAddress: req.ip });
-    res.json({ data });
-  },
   cancel: async (req, res) => {
     const data = await prescriptionUploadService.cancelByPatient(Number(req.params.id), req.body.reason, req.user);
     await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_UPLOAD_CANCELLED_BY_PATIENT', entityType: 'PRESCRIPTION_UPLOAD', entityId: data.id, details: { reason: req.body.reason }, ipAddress: req.ip });

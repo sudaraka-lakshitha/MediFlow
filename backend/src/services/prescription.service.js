@@ -100,12 +100,14 @@ export const prescriptionService = {
       sourceUpload = upload;
       if (upload.attachmentRemovedAt) throw new AppError(409, 'The source attachment has expired. Ask the customer to submit it again.');
       patientUserId = profile.userId;
-      const preparedOrderReady = upload.prepareRequested && ['AVAILABLE', 'PARTIALLY_AVAILABLE'].includes(upload.status);
-      if (!preparedOrderReady && !['QUOTE_ACCEPTED', 'READY_TO_PREPARE'].includes(upload.status)) {
-        throw new AppError(409, 'This upload is not ready for a final invoice. Review availability first, or have the customer approve the quotation-only request.');
+      const canIssueFinalInvoice = ['PENDING', 'AVAILABLE', 'PARTIALLY_AVAILABLE'].includes(upload.status);
+      const previouslyAcceptedQuote = upload.status === 'QUOTE_ACCEPTED';
+      const verifiedPrepaidOrder = upload.status === 'READY_TO_PREPARE';
+      if (!canIssueFinalInvoice && !previouslyAcceptedQuote && !verifiedPrepaidOrder) {
+        throw new AppError(409, 'This upload is not ready for a final invoice. Review or resolve its current status first.');
       }
-      if ((preparedOrderReady || upload.status === 'QUOTE_ACCEPTED') && !data.sendToCashier) {
-        throw new AppError(409, 'A prepared online order must be clinically reviewed and issued as a final invoice in the same step.');
+      if ((canIssueFinalInvoice || previouslyAcceptedQuote) && !data.sendToCashier) {
+        throw new AppError(409, 'An uploaded prescription must be fully reviewed and issued with its final invoice in the same step.');
       }
     } else {
       const profile = await prisma.patientProfile.findUnique({ where: { id: data.patientId }, select: { userId: true } });
@@ -215,6 +217,13 @@ export const prescriptionService = {
         tax: Number(data.tax || 0),
       };
       await paymentRequestService.create(prescription.id, payInput, userId, tx);
+      if (sourceUpload) {
+        const issued = await tx.prescriptionUpload.updateMany({
+          where: { id: sourceUpload.id, status: sourceUpload.status, prescription: { is: { id: prescription.id } } },
+          data: { status: 'PAYMENT_PENDING' },
+        });
+        if (issued.count !== 1) throw new AppError(409, 'The final invoice was not linked to the upload. Refresh and review its latest status.');
+      }
     }
 
     return tx.prescription.findUnique({ where: { id: prescription.id }, include: { items: { include: { product: true } }, patient: { include: { user: { select: { id: true, fullName: true } } } } } });

@@ -99,69 +99,6 @@ describe('quotation revision acceptance', () => {
   });
 });
 
-describe('patient decision after availability review', () => {
-  const patient = { id: 2, role: 'PATIENT' };
-  const availableUpload = (status = 'AVAILABLE') => ({
-    id: 1, patientId: 2, status, prepareRequested: false, prescription: null,
-  });
-
-  it('claims a fully available upload and keeps the rough amount private', async () => {
-    tx.prescriptionUpload.findUnique
-      .mockResolvedValueOnce(availableUpload())
-      .mockResolvedValueOnce({ ...availableUpload(), prepareRequested: true, estimatedTotal: d(99), estimateDetails: { secret: true } });
-    tx.prescriptionUpload.updateMany.mockResolvedValue({ count: 1 });
-
-    const result = await prescriptionUploadService.proceedToOrder(1, { deliveryRequested: false }, patient);
-
-    expect(tx.prescriptionUpload.updateMany.mock.calls[0][0]).toEqual({
-      where: { id: 1, patientId: 2, status: 'AVAILABLE', prepareRequested: false, prescription: { is: null } },
-      data: { prepareRequested: true, deliveryRequested: false, deliveryRecipientName: null, deliveryAddress: null, deliveryPhone: null },
-    });
-    expect(result.estimatedTotal).toBeNull();
-    expect(result.estimateDetails).toBeNull();
-  });
-
-  it('saves validated delivery contact details when the patient requests delivery', async () => {
-    tx.prescriptionUpload.findUnique
-      .mockResolvedValueOnce(availableUpload('PARTIALLY_AVAILABLE'))
-      .mockResolvedValueOnce({ ...availableUpload('PARTIALLY_AVAILABLE'), prepareRequested: true, deliveryRequested: true });
-    tx.prescriptionUpload.updateMany.mockResolvedValue({ count: 1 });
-
-    await prescriptionUploadService.proceedToOrder(1, {
-      deliveryRequested: true,
-      recipientName: 'Demo Patient',
-      address: '12 Main Street, Colombo',
-      phone: '0701234567',
-    }, patient);
-
-    expect(tx.prescriptionUpload.updateMany.mock.calls[0][0].data).toMatchObject({
-      prepareRequested: true, deliveryRequested: true,
-      deliveryRecipientName: 'Demo Patient', deliveryAddress: '12 Main Street, Colombo', deliveryPhone: '0701234567',
-    });
-  });
-
-  it('prevents another patient from claiming an upload', async () => {
-    tx.prescriptionUpload.findUnique.mockResolvedValue({ ...availableUpload(), patientId: 88 });
-    await expect(prescriptionUploadService.proceedToOrder(1, { deliveryRequested: false }, patient))
-      .rejects.toMatchObject({ statusCode: 403 });
-    expect(tx.prescriptionUpload.updateMany).not.toHaveBeenCalled();
-  });
-
-  it('rejects a duplicate or stale decision instead of creating a second request', async () => {
-    tx.prescriptionUpload.findUnique.mockResolvedValue(availableUpload());
-    tx.prescriptionUpload.updateMany.mockResolvedValue({ count: 0 });
-    await expect(prescriptionUploadService.proceedToOrder(1, { deliveryRequested: false }, patient))
-      .rejects.toMatchObject({ statusCode: 409 });
-  });
-
-  it('does not allow proceeding before the pharmacy confirms availability', async () => {
-    tx.prescriptionUpload.findUnique.mockResolvedValue({ ...availableUpload(), status: 'PENDING' });
-    await expect(prescriptionUploadService.proceedToOrder(1, { deliveryRequested: false }, patient))
-      .rejects.toMatchObject({ statusCode: 409 });
-    expect(tx.prescriptionUpload.updateMany).not.toHaveBeenCalled();
-  });
-});
-
 describe('patient coupon application on online invoices', () => {
   const onlineBill = () => ({
     id: 9, patientId: 2, prescriptionId: 1, status: 'AWAITING_PAYMENT', revision: 3,
@@ -391,16 +328,40 @@ describe('atomic prescription and bill creation', () => {
     }, 5)).rejects.toThrow('final invoice in the same step');
     expect(db.product.findMany).not.toHaveBeenCalled();
   });
-  it('does not let quotation-only uploads skip the customer approval step', async () => {
+  it('lets a quotation-only upload go straight to the final prescription and bill', async () => {
     db.prescriptionUpload.findUnique.mockResolvedValue({
-      id: 10, patientId: 2, status: 'AVAILABLE', prepareRequested: false, quoteRevision: 1,
-      acknowledgedQuoteRevision: null, estimatedTotal: d(100), attachmentRemovedAt: null, prescription: null, paymentSlips: [],
+      id: 10, patientId: 2, status: 'PENDING', prepareRequested: false, quoteRevision: 0,
+      acknowledgedQuoteRevision: null, estimatedTotal: null, attachmentRemovedAt: null, prescription: null, paymentSlips: [],
     });
     db.patientProfile.findUnique.mockResolvedValue({ userId: 2 });
     await expect(prescriptionService.create({
-      patientId: 2, sourceUploadId: 10, sendToCashier: true, items: [], retailItems: [],
-    }, 5)).rejects.toThrow('not ready for a final invoice');
-    expect(db.product.findMany).not.toHaveBeenCalled();
+      patientId: 2, sourceUploadId: 10, sendToCashier: false, items: [], retailItems: [],
+    }, 5)).rejects.toThrow('final invoice in the same step');
+  });
+  it('creates the final invoice directly from a pending quote-only upload in one transaction', async () => {
+    db.prescriptionUpload.findUnique.mockResolvedValue({
+      id: 10, patientId: 2, status: 'PENDING', prepareRequested: false, quoteRevision: 0,
+      acknowledgedQuoteRevision: null, estimatedTotal: null, attachmentRemovedAt: null, prescription: null, paymentSlips: [],
+    });
+    db.patientProfile.findUnique.mockResolvedValue({ userId: 2, dateOfBirth: new Date('1990-01-01') });
+    db.product.findMany.mockResolvedValueOnce([{ id: 1, unit: 'tablet', genericName: 'Medicine' }]).mockResolvedValueOnce([]);
+    tx.prescriptionUpload.updateMany.mockResolvedValue({ count: 1 });
+    tx.prescription.create.mockResolvedValue({ id: 7 });
+    tx.prescriptionItem.findMany.mockResolvedValue([{ id: 70, prescribedQuantity: d(1) }]);
+    const createBill = vi.spyOn(paymentRequestService, 'create').mockResolvedValue({ id: 9 });
+
+    await prescriptionService.create({
+      patientId: 2, sourceUploadId: 10, orderedForSelf: true, prescriptionDate: new Date(), sendToCashier: true,
+      retailItems: [], items: [{ productId: 1, quantityPerDose: 1, timesPerDay: 1, daysSupply: 1, dosageInstructions: 'Take one tablet daily' }],
+    }, 5);
+
+    expect(tx.prescriptionUpload.updateMany.mock.calls[0][0].where).toMatchObject({ id: 10, status: 'PENDING' });
+    expect(tx.prescriptionUpload.updateMany.mock.calls[1][0]).toMatchObject({
+      where: { id: 10, status: 'PENDING', prescription: { is: { id: 7 } } },
+      data: { status: 'PAYMENT_PENDING' },
+    });
+    expect(tx.prescription.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ sourceUploadId: 10, status: 'VERIFIED' }) }));
+    expect(createBill).toHaveBeenCalledWith(7, expect.objectContaining({ items: [{ prescriptionItemId: 70, quantity: 1 }] }), 5, tx);
   });
   it('creates a prepared upload invoice without a separate rough-quote acknowledgement', async () => {
     db.prescriptionUpload.findUnique.mockResolvedValue({

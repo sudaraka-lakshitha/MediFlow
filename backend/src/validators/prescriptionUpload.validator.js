@@ -65,18 +65,6 @@ export const reviewUploadSchema = z.object({
   }
 });
 
-export const proceedUploadSchema = z.object({
-  deliveryRequested: z.boolean().default(false),
-  recipientName: z.string().trim().min(2).max(150).optional(),
-  address: z.string().trim().min(10).max(500).optional(),
-  phone: z.string().trim().regex(/^(?:0|\+94)\d{9}$/, 'Use 0701234567 or +94701234567.').optional(),
-}).superRefine((data, context) => {
-  if (!data.deliveryRequested) return;
-  if (!data.recipientName) context.addIssue({ code: 'custom', path: ['recipientName'], message: 'Enter the delivery recipient name.' });
-  if (!data.address) context.addIssue({ code: 'custom', path: ['address'], message: 'Enter a complete delivery address.' });
-  if (!data.phone) context.addIssue({ code: 'custom', path: ['phone'], message: 'Enter a valid Sri Lankan mobile number.' });
-});
-
 const estimateItem = z.object({
   productId: z.coerce.number().int().positive(),
   quantity: z.coerce.number().positive().max(1_000_000),

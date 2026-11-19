@@ -14,7 +14,6 @@ import {
   uploadSlipSchema,
   uploadSlipReviewSchema,
   cancelUploadSchema,
-  proceedUploadSchema,
 } from '../validators/prescriptionUpload.validator.js';
 import { prescriptionUploadController } from '../controllers/prescriptionUpload.controller.js';
 
@@ -32,9 +31,8 @@ prescriptionUploadRoutes.put('/retention', authorize('ADMIN'), validate({ body: 
 prescriptionUploadRoutes.post('/', authorize('PATIENT'), validate({ body: uploadPrescriptionSchema }), asyncHandler(prescriptionUploadController.create));
 prescriptionUploadRoutes.put('/:id', authorize('PATIENT'), validate({ params: idParams, body: editUploadSchema }), asyncHandler(prescriptionUploadController.edit));
 
-// Patient: accept the estimate (no-prepare → prepare)
+// Legacy patient quotation flow. New uploads go directly to final prescription and billing.
 prescriptionUploadRoutes.put('/:id/accept', authorize('PATIENT'), validate({ params: idParams, body: z.object({ revision: z.coerce.number().int().nonnegative() }) }), asyncHandler(prescriptionUploadController.acceptEstimate));
-prescriptionUploadRoutes.post('/:id/proceed', authorize('PATIENT'), validate({ params: idParams, body: proceedUploadSchema }), asyncHandler(prescriptionUploadController.proceedToOrder));
 
 // Patient / Staff: cancel or decline quotation / upload
 prescriptionUploadRoutes.post('/:id/cancel', authorize('PATIENT', 'ADMIN', 'PHARMACIST'), validate({ params: idParams, body: cancelUploadSchema }), asyncHandler(prescriptionUploadController.cancel));
@@ -43,7 +41,7 @@ prescriptionUploadRoutes.post('/:id/cancel', authorize('PATIENT', 'ADMIN', 'PHAR
 prescriptionUploadRoutes.get('/:id/attachments', authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams }), asyncHandler(prescriptionUploadController.attachments));
 prescriptionUploadRoutes.get('/:id/file', authorize('ADMIN', 'PHARMACIST', 'CASHIER', 'PATIENT'), validate({ params: idParams, query: z.object({ attachmentId: z.coerce.number().int().positive().optional() }) }), asyncHandler(prescriptionUploadController.file));
 
-// Pharmacist / Admin: build and save an estimate quote
+// Legacy quotation support for records already in the estimate workflow.
 prescriptionUploadRoutes.post('/:id/estimate-quote', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: uploadEstimateQuoteSchema }), asyncHandler(prescriptionUploadController.estimateQuote));
 
 // Pharmacist / Admin: save the availability review (status PENDING → AVAILABLE / PARTIALLY_AVAILABLE / etc.)

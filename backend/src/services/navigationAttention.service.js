@@ -15,7 +15,7 @@ export const navigationAttentionService = {
         where: { userId: user.id },
         select: { id: true },
       });
-      const [prescriptions, uploads, availabilityAwaitingDecision, quotationsAwaitingDecision, invoicesAwaitingAction, sales] = await Promise.all([
+      const [prescriptions, uploads, quotationsAwaitingDecision, invoicesAwaitingAction, sales] = await Promise.all([
         prisma.prescription.count({
           where: {
             patientId: profile?.id || -1,
@@ -24,9 +24,6 @@ export const navigationAttentionService = {
         }),
         prisma.prescriptionUpload.count({
           where: { patientId: user.id, status: 'PENDING' },
-        }),
-        prisma.prescriptionUpload.count({
-          where: { patientId: user.id, status: { in: ['AVAILABLE', 'PARTIALLY_AVAILABLE'] }, prepareRequested: false, prescription: { is: null } },
         }),
         prisma.prescriptionUpload.count({
           where: { patientId: user.id, status: 'QUOTE_SENT' },
@@ -38,15 +35,13 @@ export const navigationAttentionService = {
           where: { patientId: user.id, status: 'PENDING' },
         }),
       ]);
-      const uploadTotal = uploads + availabilityAwaitingDecision + quotationsAwaitingDecision;
+      const uploadTotal = uploads + quotationsAwaitingDecision;
       const uploadLabel = quotationsAwaitingDecision
         ? 'Quotation received — your decision is required'
-        : availabilityAwaitingDecision
-          ? 'Availability confirmed — choose whether to proceed'
-          : 'Uploads awaiting pharmacy review';
+        : 'Uploads awaiting pharmacy review';
       return {
         prescriptions: badge(prescriptions, 'Active prescriptions', 'info'),
-        prescriptionUploads: badge(uploadTotal, uploadLabel, quotationsAwaitingDecision || availabilityAwaitingDecision ? 'danger' : 'warning'),
+        prescriptionUploads: badge(uploadTotal, uploadLabel, quotationsAwaitingDecision ? 'danger' : 'warning'),
         sales: badge(sales + invoicesAwaitingAction, invoicesAwaitingAction ? 'Final invoice requires payment action' : 'Invoices with a remaining balance', 'danger'),
       };
     }

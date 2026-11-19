@@ -84,8 +84,8 @@ type Upload = {
 
 const uploadStatusLabels: Record<string, string> = {
   PENDING: "Awaiting pharmacy review",
-  AVAILABLE: "Availability confirmed — choose whether to proceed",
-  PARTIALLY_AVAILABLE: "Some medicines unavailable — review pharmacy note",
+  AVAILABLE: "Availability confirmed — final bill in progress",
+  PARTIALLY_AVAILABLE: "Partial availability — final bill in progress",
   UNAVAILABLE: "Medicines unavailable",
   REJECTED: "Upload rejected",
   QUOTE_SENT: "Quotation sent — awaiting your decision",
@@ -255,7 +255,6 @@ export function PrescriptionUploadsPage() {
   const [estimateBusy, setEstimateBusy] = useState(false);
   const [estimateError, setEstimateError] = useState("");
   const [cancelModal, setCancelModal] = useState<{ upload: Upload; reason: string } | null>(null);
-  const [deliveryProceed, setDeliveryProceed] = useState<{ upload: Upload; recipientName: string; address: string; phone: string } | null>(null);
   const [retentionDays, setRetentionDays] = useState(30);
   const [savedRetentionDays, setSavedRetentionDays] = useState(30);
   const [retentionEditing, setRetentionEditing] = useState(false);
@@ -354,30 +353,6 @@ export function PrescriptionUploadsPage() {
     } catch (caught) {
       setError(errorMessage(caught));
     }
-  };
-  const requestOrderProcessing = async (item: Upload, delivery?: { recipientName: string; address: string; phone: string }) => {
-    setBusy(true);
-    setError("");
-    try {
-      await api.post(`/prescription-uploads/${item.id}/proceed`, delivery
-        ? { deliveryRequested: true, ...delivery }
-        : { deliveryRequested: false });
-      setDeliveryProceed(null);
-      await load();
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const submitDeliveryProceed = (event: FormEvent) => {
-    event.preventDefault();
-    if (!deliveryProceed) return;
-    void requestOrderProcessing(deliveryProceed.upload, {
-      recipientName: deliveryProceed.recipientName,
-      address: deliveryProceed.address,
-      phone: deliveryProceed.phone,
-    });
   };
   const saveDeadline = async (item: Upload, value: string) => {
     if (!value) return;
@@ -634,7 +609,7 @@ export function PrescriptionUploadsPage() {
     setReviewForm({
       status:
         item.status === "PENDING"
-          ? "AVAILABLE"
+          ? item.estimatedTotal == null ? "UNAVAILABLE" : "AVAILABLE"
           : ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status)
             ? item.availabilityNotes?.toLowerCase().includes("some")
               ? "PARTIALLY_AVAILABLE"
@@ -819,7 +794,7 @@ export function PrescriptionUploadsPage() {
   calculateEstimateRef.current = calculateEstimate;
 
   useEffect(() => {
-    if (!review?.id || (!review.prepareRequested && !["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(review.status))) return;
+    if (!review?.id || (review.estimatedTotal == null && !["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(review.status))) return;
     const hasItems = estimateForm.items?.some(
       (item: any) => item.productId && Number(item.quantity) > 0,
     );
@@ -831,6 +806,7 @@ export function PrescriptionUploadsPage() {
   }, [
     review?.id,
     review?.status,
+    review?.estimatedTotal,
     review?.prepareRequested,
     estimateForm.items,
     estimateForm.retailItems,
@@ -1081,7 +1057,7 @@ export function PrescriptionUploadsPage() {
                 <strong>
                   {item.prepareRequested
                     ? (item.deliveryRequested ? "Prepare medicines for home delivery" : "Prepare medicines for collection")
-                    : "Check availability, then decide whether to proceed"}
+                    : "Prepare a complete prescription bill for me to review"}
                 </strong>
                 {item.deliveryRequested && <small>{item.deliveryRecipientName} · {item.deliveryAddress} · {item.deliveryPhone}. Track progress under Home deliveries once invoiced.</small>}
               </div>
@@ -1103,17 +1079,13 @@ export function PrescriptionUploadsPage() {
                     : item.status === "PENDING"
                     ? "Waiting for pharmacist review"
                     : item.status === "AVAILABLE"
-                    ? patient && item.prepareRequested
-                      ? "Availability confirmed — pharmacy is preparing your final bill"
-                      : patient
-                        ? "All requested medicines are available — choose whether to proceed"
-                        : "All requested medicines are currently in stock"
+                    ? patient
+                      ? "Availability confirmed — pharmacy is preparing your complete prescription and final bill"
+                      : "All requested medicines are currently in stock"
                     : item.status === "PARTIALLY_AVAILABLE"
-                    ? patient && item.prepareRequested
-                      ? "Availability review complete — pharmacy is preparing your final bill"
-                      : patient
-                        ? "Some medicines are unavailable — review the pharmacy note before deciding"
-                        : "Only some requested medicines are currently in stock"
+                    ? patient
+                      ? "Availability reviewed — pharmacy is finalizing the prescription and bill; see the note for unavailable medicines"
+                      : "Only some requested medicines are currently in stock"
                     : item.status === "UNAVAILABLE"
                     ? "Requested medicines are currently unavailable"
                     : item.status === "QUOTE_SENT"
@@ -1147,28 +1119,14 @@ export function PrescriptionUploadsPage() {
                       : item.prepareRequested
                         ? "Awaiting final bill"
                         : ["AVAILABLE", "PARTIALLY_AVAILABLE"].includes(item.status)
-                          ? "Final bill is issued after you request processing"
+                          ? "Pharmacy is preparing your complete final bill"
                           : "Not available"}
                 </strong>
               </div>
             </div>
-            {patient && !item.prepareRequested && !item.prescription && ["AVAILABLE", "PARTIALLY_AVAILABLE"].includes(item.status) && (
+            {patient && !item.prescription && ["AVAILABLE", "PARTIALLY_AVAILABLE"].includes(item.status) && (
               <div className="alert alert-info small mt-2 mb-0">
-                <strong>Choose what happens next.</strong> The pharmacy will review the actual prescription and issue a final bill. No payment is taken yet.
-                {item.status === "PARTIALLY_AVAILABLE" && <span className="d-block mt-1">Only the available items can be prepared; check the pharmacist’s note above for what is unavailable.</span>}
-                <div className="d-flex flex-wrap gap-2 mt-2">
-                  <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => void requestOrderProcessing(item)}>
-                    <i className="bi bi-bag-check me-1" />Request final bill for collection
-                  </button>
-                  <button type="button" className="btn btn-sm btn-outline-primary" disabled={busy} onClick={() => setDeliveryProceed({
-                    upload: item,
-                    recipientName: item.deliveryRecipientName || item.recipientName || item.patient.fullName,
-                    address: item.deliveryAddress || "",
-                    phone: item.deliveryPhone || "",
-                  })}>
-                    <i className="bi bi-truck me-1" />Request final bill with home delivery
-                  </button>
-                </div>
+                <strong>No further request is needed.</strong> The pharmacist is preparing the complete prescription and final bill. You can acknowledge the invoice and choose payment under Sales &amp; billing when it is issued.
               </div>
             )}
             {patient && !item.prepareRequested && item.estimatedTotal != null && ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status) && (
@@ -1388,13 +1346,22 @@ export function PrescriptionUploadsPage() {
                 <i className="bi bi-eye me-1" />
                 View prescription
               </button>
-              {!patient && !cashier && item.status === "PENDING" && (
+              {!patient && !cashier && item.status === "PENDING" && !item.prescription && (
                 <button
                   className="btn btn-sm btn-primary"
+                  onClick={() => navigate(buildPrescriptionCreateUrl(item))}
+                >
+                  <i className="bi bi-file-medical me-1" />
+                  Review prescription &amp; create final bill
+                </button>
+              )}
+              {!patient && !cashier && item.status === "PENDING" && (
+                <button
+                  className="btn btn-sm btn-outline-secondary"
                   onClick={() => openReview(item)}
                 >
                   <i className="bi bi-clipboard-check me-1" />
-                  Review availability
+                  Mark unavailable / reject
                 </button>
               )}
               {patient && item.status === 'PENDING' && !item.prescription && !item.attachmentRemovedAt && (
@@ -1407,13 +1374,22 @@ export function PrescriptionUploadsPage() {
                   setUploadOpen(true);
                 }}>Edit upload</button>
               )}
-              {!patient && !cashier && !item.prepareRequested && ["AVAILABLE", "PARTIALLY_AVAILABLE", "QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status) && !item.prescription && (
+              {!patient && !cashier && !item.prepareRequested && ["AVAILABLE", "PARTIALLY_AVAILABLE"].includes(item.status) && item.estimatedTotal != null && !item.prescription && (
                 <button
                   className="btn btn-sm btn-outline-success"
                   onClick={() => openReview(item)}
                 >
-                  <i className={`bi bi-${["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status) ? "send" : "clipboard-check"} me-1`} />
-                  {["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(item.status) ? "Review quotation" : "Edit availability review"}
+                  <i className="bi bi-send me-1" />
+                  Review saved quotation
+                </button>
+              )}
+              {!patient && !cashier && ["AVAILABLE", "PARTIALLY_AVAILABLE"].includes(item.status) && !item.prescription && (
+                <button
+                  className="btn btn-sm btn-primary"
+                  onClick={() => navigate(buildPrescriptionCreateUrl(item))}
+                >
+                  <i className="bi bi-file-medical me-1" />
+                  Create final prescription &amp; bill
                 </button>
               )}
               {!patient && !cashier && item.status === "READY_TO_PREPARE" && !item.prescription && (
@@ -1427,15 +1403,6 @@ export function PrescriptionUploadsPage() {
                   Create prescription
                 </button>
               )}
-              {!patient && !cashier && item.prepareRequested && ["AVAILABLE", "PARTIALLY_AVAILABLE"].includes(item.status) && !item.prescription && (
-                  <button
-                    className="btn btn-sm btn-primary"
-                    onClick={() => navigate(buildPrescriptionCreateUrl(item))}
-                  >
-                    <i className="bi bi-file-medical me-1" />
-                    Prepare final prescription &amp; issue invoice
-                  </button>
-                )}
               {!patient && !cashier && item.status === "QUOTE_ACCEPTED" && !item.prescription && (
                   <button
                     className="btn btn-sm btn-outline-primary"
@@ -1475,7 +1442,7 @@ export function PrescriptionUploadsPage() {
               {[{ id: 0, originalName: editingUpload.originalName }, ...(editingUpload.attachments || [])].map(file => <label key={file.id} className="d-block mt-2"><input type="checkbox" disabled={busy} checked={removedAttachments.includes(file.id)} onChange={e => setRemovedAttachments(current => e.target.checked ? [...current, file.id] : current.filter(id => id !== file.id))} /> Remove: {file.originalName}</label>)}
             </div>}
             <div className="alert alert-info small">
-              Upload a clear PDF/image, type the prescription and retail-item request, or both. The pharmacy will review it; the estimate is not a final invoice.
+              Upload a clear PDF/image, type the prescription and retail-item request, or both. The pharmacist will enter the full directions and quantities, then issue one final itemized bill for you to review.
             </div>
             <div className="upload-clinical-disclaimer" role="note">
               <i className="bi bi-shield-exclamation" aria-hidden="true" />
@@ -1676,7 +1643,7 @@ export function PrescriptionUploadsPage() {
                 <span>
                   <strong>✓ Ask the pharmacy to prepare my medicines in advance so I can collect quickly.</strong>
                   <small>
-                    The pharmacy team will prepare, package, and quote this request so you can pay and collect quickly.
+                    The pharmacist will review the prescription, enter its directions and quantities, and prepare one complete final bill. You acknowledge and pay before medicines are prepared for collection.
                   </small>
                 </span>
               </label>
@@ -1704,9 +1671,9 @@ export function PrescriptionUploadsPage() {
                   }
                 />
                 <span>
-                  <strong>Check availability first — I will decide afterwards</strong>
+                  <strong>Send me the complete bill to review first</strong>
                   <small>
-                    The pharmacy will confirm stock. You can then request a final bill for collection or home delivery. No rough estimate or payment is required now.
+                    The pharmacist will fully review the prescription and issue the final itemized bill in one step. You can acknowledge and pay it, or decline it. This is not a rough estimate, and no stock is reserved before payment.
                   </small>
                 </span>
               </label>
@@ -1792,26 +1759,21 @@ export function PrescriptionUploadsPage() {
                   </div>
                 </div>
               )}
-              {review.prepareRequested && (
+              {!review.prescription && review.estimatedTotal == null && !["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(review.status) && (
                 <div className="upload-review-steps-indicator mb-3 p-2 bg-light border rounded d-flex justify-content-around text-center small">
-                  <div className={`step-item fw-bold ${review.status === "PENDING" ? "text-primary" : "text-success"}`}>
-                    <span className={`badge rounded-circle me-1 ${review.status === "PENDING" ? "bg-primary" : "bg-success"}`}>1</span>
-                    Review scan
+                  <div className="step-item fw-bold text-primary">
+                    <span className="badge rounded-circle me-1 bg-primary">1</span>
+                    Review prescription
                   </div>
                   <div className="step-divider text-secondary align-self-center">&rarr;</div>
-                  <div className={`step-item fw-bold ${["AVAILABLE","PARTIALLY_AVAILABLE"].includes(review.status) ? "text-primary" : ["PAYMENT_PENDING","PAYMENT_SUBMITTED","READY_TO_PREPARE"].includes(review.status) ? "text-success" : "text-secondary"}`}>
-                    <span className={`badge rounded-circle me-1 ${["AVAILABLE","PARTIALLY_AVAILABLE"].includes(review.status) ? "bg-primary" : ["PAYMENT_PENDING","PAYMENT_SUBMITTED","READY_TO_PREPARE"].includes(review.status) ? "bg-success" : "bg-secondary"}`}>2</span>
-                    {review.prepareRequested ? "Check stock" : "Confirm availability"}
+                  <div className="step-item fw-bold text-primary">
+                    <span className="badge rounded-circle me-1 bg-primary">2</span>
+                    Enter directions &amp; create final bill
                   </div>
                   <div className="step-divider text-secondary align-self-center">&rarr;</div>
-                  <div className={`step-item fw-bold ${review.prescription?.paymentRequest ? "text-success" : review.status === "QUOTE_ACCEPTED" ? "text-primary" : "text-secondary"}`}>
-                    <span className={`badge rounded-circle me-1 ${review.prescription?.paymentRequest ? "bg-success" : review.status === "QUOTE_ACCEPTED" ? "bg-primary" : "bg-secondary"}`}>3</span>
-                    {review.prepareRequested ? "Issue final bill" : "Patient decides"}
-                  </div>
-                  <div className="step-divider text-secondary align-self-center">&rarr;</div>
-                  <div className={`step-item fw-bold ${["PAID", "FULFILLED"].includes(review.prescription?.paymentRequest?.status || "") ? "text-success" : review.prescription?.paymentRequest ? "text-primary" : "text-secondary"}`}>
-                    <span className={`badge rounded-circle me-1 ${["PAID", "FULFILLED"].includes(review.prescription?.paymentRequest?.status || "") ? "bg-success" : review.prescription?.paymentRequest ? "bg-primary" : "bg-secondary"}`}>4</span>
-                    Customer payment
+                  <div className="step-item fw-bold text-secondary">
+                    <span className="badge rounded-circle me-1 bg-secondary">3</span>
+                    Customer reviews &amp; pays
                   </div>
                 </div>
               )}
@@ -1834,12 +1796,13 @@ export function PrescriptionUploadsPage() {
                   <small>Customer instruction</small>
                   <strong>
                     {review.prepareRequested
-                      ? (review.deliveryRequested ? "Prepare medicines for home delivery after the final bill is accepted and paid" : "Prepare medicines for collection after the final bill is accepted and paid")
-                      : "Check availability; wait for the patient to request processing"}
+                      ? (review.deliveryRequested ? "Prepare the complete prescription and final bill for home delivery" : "Prepare the complete prescription and final bill for collection")
+                      : "Prepare the complete prescription and final bill for the customer to review"}
                   </strong>
+                  <small>Review the source, enter the full directions and quantities, then issue the final itemized bill in one step. No estimate approval is needed.</small>
                 </div>
               </div>
-              {reviewForm.status !== "UNAVAILABLE" && (review.prepareRequested || review.estimatedTotal != null || ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(review.status)) && (
+              {reviewForm.status !== "UNAVAILABLE" && (review.estimatedTotal != null || ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(review.status)) && (
                 <section className="estimate-calculator">
                   <div className="estimate-calculator-heading">
                     <div>
@@ -2302,14 +2265,19 @@ export function PrescriptionUploadsPage() {
                       })
                     }
                   >
-                    <option value="AVAILABLE">
-                      All listed medicines available
-                    </option>
-                    <option value="PARTIALLY_AVAILABLE">
-                      Some medicines available
-                    </option>
-                    <option value="UNAVAILABLE">Medicines unavailable</option>
-                    <option value="REJECTED">Rejected upload</option>
+                    {review.status === "PENDING" && review.estimatedTotal == null ? (
+                      <>
+                        <option value="UNAVAILABLE">Medicines unavailable</option>
+                        <option value="REJECTED">Rejected upload</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="AVAILABLE">All listed medicines available</option>
+                        <option value="PARTIALLY_AVAILABLE">Some medicines available</option>
+                        <option value="UNAVAILABLE">Medicines unavailable</option>
+                        <option value="REJECTED">Rejected upload</option>
+                      </>
+                    )}
                   </select>
                 </div>
                 {!['UNAVAILABLE', 'REJECTED'].includes(reviewForm.status) && (
@@ -2341,7 +2309,11 @@ export function PrescriptionUploadsPage() {
                 )}
                 <div className="full">
                   <label className="form-label">
-                    {review.prepareRequested ? "Availability review notes" : "Availability notes for the patient"}{" "}
+                    {reviewForm.status === "REJECTED"
+                      ? "Rejection reason"
+                      : reviewForm.status === "UNAVAILABLE"
+                        ? "Why the requested items are unavailable"
+                        : review.prepareRequested ? "Availability review notes" : "Availability notes for the patient"}{" "}
                     {reviewForm.status === "AVAILABLE" && "(optional)"}
                   </label>
                   <textarea
@@ -2358,20 +2330,20 @@ export function PrescriptionUploadsPage() {
                       })
                     }
                     placeholder={
-                      reviewForm.status === "AVAILABLE"
-                        ? "Optional note for the patient."
-                        : "Explain which medicines are unavailable, substitutions to discuss, and anything excluded from this review."
+                      reviewForm.status === "REJECTED"
+                        ? "Explain why the uploaded request cannot be processed."
+                        : reviewForm.status === "AVAILABLE"
+                          ? "Optional note for the patient."
+                          : "Explain which medicines are unavailable and any alternative the patient can discuss with the pharmacist."
                     }
                     required={reviewForm.status !== "AVAILABLE"}
                   />
                 </div>
               </div>
               <div className="alert alert-warning small mt-3 mb-0">
-                {review.prepareRequested
-                  ? "This stock and price check is internal. Save the availability review, then create the structured prescription and final itemised invoice. The patient sees and acknowledges that bill before payment."
-                  : review.estimatedTotal != null || ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(review.status)
+                {review.estimatedTotal != null || ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(review.status)
                     ? "This record uses the older quotation flow. Send the estimate only if the customer needs a quote; their approval is required before preparing the final bill."
-                    : "The patient will see the availability result and choose whether to request processing for collection or home delivery. The pharmacy creates the final prescription and bill after that request; no rough amount is sent."}
+                    : "This is an optional availability/rejection review. For a normal upload, use the upload card’s final-prescription action to transcribe the prescription, check stock and issue its complete bill in one step. Do not send a rough estimate."}
               </div>
               {/* Keep the old quote action available only for records that already have a saved estimate. */}
               {["AVAILABLE", "PARTIALLY_AVAILABLE"].includes(review.status) && !review.prepareRequested && !review.prescription && review.estimatedTotal != null && (
@@ -2463,7 +2435,7 @@ export function PrescriptionUploadsPage() {
                   </button>
                   {review.status === "PENDING" && (
                     <button type="submit" className="btn btn-primary" disabled={busy || estimateBusy}>
-                      {busy ? "Saving…" : "Save availability review"}
+                      {busy ? "Saving…" : review.estimatedTotal == null ? "Save review outcome" : "Save availability review"}
                     </button>
                   )}
                 </div>
@@ -2702,63 +2674,6 @@ export function PrescriptionUploadsPage() {
               </div>
             </div>
           </div>
-        </Modal>
-      )}
-
-      {/* Patient: request a final bill and delivery after availability is confirmed */}
-      {deliveryProceed && (
-        <Modal
-          title="Request home delivery"
-          size="md"
-          closable={!busy}
-          onClose={() => { if (!busy) setDeliveryProceed(null); }}
-        >
-          <form onSubmit={submitDeliveryProceed}>
-            <p className="text-secondary">
-              This asks the pharmacy to prepare the final prescription and bill for delivery. You will review and pay the medicine invoice first. The pharmacy confirms and bills the delivery fee separately before dispatch.
-            </p>
-            <label className="form-label" htmlFor="proceed-delivery-recipient">Delivery recipient name</label>
-            <input
-              id="proceed-delivery-recipient"
-              className="form-control"
-              required
-              {...personNameInputProps((recipientName) => setDeliveryProceed((current) => current ? { ...current, recipientName } : current))}
-              value={deliveryProceed.recipientName}
-              disabled={busy}
-            />
-            <label className="form-label mt-3" htmlFor="proceed-delivery-address">Delivery address</label>
-            <textarea
-              id="proceed-delivery-address"
-              className="form-control"
-              required
-              minLength={10}
-              maxLength={500}
-              rows={3}
-              value={deliveryProceed.address}
-              onChange={(event) => setDeliveryProceed((current) => current ? { ...current, address: event.target.value } : current)}
-              disabled={busy}
-              placeholder="House number, street, area, city"
-            />
-            <label className="form-label mt-3" htmlFor="proceed-delivery-phone">Delivery phone number</label>
-            <input
-              id="proceed-delivery-phone"
-              className="form-control"
-              type="tel"
-              required
-              pattern="(0|\+94)[0-9]{9}"
-              title="Use 0701234567 or +94701234567"
-              placeholder="0701234567 or +94701234567"
-              value={deliveryProceed.phone}
-              onChange={(event) => setDeliveryProceed((current) => current ? { ...current, phone: event.target.value } : current)}
-              disabled={busy}
-            />
-            <Alert message={error} />
-            <ModalActions
-              onClose={() => setDeliveryProceed(null)}
-              submitLabel="Request final bill and delivery"
-              busy={busy}
-            />
-          </form>
         </Modal>
       )}
 

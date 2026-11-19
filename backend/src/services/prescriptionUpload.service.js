@@ -395,29 +395,6 @@ export const prescriptionUploadService = {
     if (accepted.count !== 1) throw new AppError(409, 'The quotation has changed. Refresh and review it again.');
     return visibleUpload(await prisma.prescriptionUpload.findUnique({ where: { id }, select: summarySelect }), { id: userId, role: 'PATIENT' });
   },
-  async proceedToOrder(id, data, user) {
-    return serializable(async (tx) => {
-      const upload = await tx.prescriptionUpload.findUnique({ where: { id }, select: {
-        id: true, patientId: true, status: true, prepareRequested: true, prescription: { select: { id: true } },
-      } });
-      if (!upload) throw new AppError(404, 'Uploaded prescription not found.');
-      if (upload.patientId !== user.id) throw new AppError(403, 'This uploaded prescription does not belong to you.');
-      if (!['AVAILABLE', 'PARTIALLY_AVAILABLE'].includes(upload.status)) throw new AppError(409, 'The pharmacy must confirm medicine availability before you can request processing.');
-      if (upload.prepareRequested || upload.prescription) throw new AppError(409, 'This upload is already being processed or has a final invoice.');
-      const updated = await tx.prescriptionUpload.updateMany({
-        where: { id, patientId: user.id, status: upload.status, prepareRequested: false, prescription: { is: null } },
-        data: {
-          prepareRequested: true,
-          deliveryRequested: Boolean(data.deliveryRequested),
-          deliveryRecipientName: data.deliveryRequested ? data.recipientName : null,
-          deliveryAddress: data.deliveryRequested ? data.address : null,
-          deliveryPhone: data.deliveryRequested ? data.phone : null,
-        },
-      });
-      if (updated.count !== 1) throw new AppError(409, 'This request changed while you were choosing. Refresh to see its latest status.');
-      return visibleUpload(await tx.prescriptionUpload.findUnique({ where: { id }, select: summarySelect }), user);
-    });
-  },
   async cancelByPatient(id, reason, user) {
     const upload = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true, patientId: true, status: true, prescription: { select: { id: true } } } });
     if (!upload) throw new AppError(404, 'Uploaded prescription not found.');
