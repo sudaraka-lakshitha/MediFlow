@@ -135,6 +135,8 @@ type Rx = {
     originalName: string;
     mimeType: string;
     status: string;
+    prepareRequested?: boolean;
+    deliveryRequested?: boolean;
   };
   paymentRequest?: any;
   refillsAllowed?: number;
@@ -213,6 +215,19 @@ const emptyForm = () => ({
   items: [line()],
   retailItems: [] as { productId: number; quantity: number }[],
 });
+// A paid order with an active home delivery is dispensed at dispatch, not here.
+const isDeliveryOrder = (rx: any) => Boolean(rx?.paymentRequest?.delivery && rx.paymentRequest.delivery.status !== "CANCELLED");
+// Walk-in partial supply: for each medicine issued in part, why less is issued and
+// whether the rest will be issued later. Returns null if a choice is missing.
+const partialSupplyFor = (dispense: any) => {
+  const short = dispense.items.filter((item: any) => Number(item.quantity || 0) < Number(item.maximum));
+  const choices = short.map((item: any) => ({ prescriptionItemId: item.prescriptionItemId, ...(dispense.partial?.[item.prescriptionItemId] || {}) }));
+  return choices.every((choice: any) => choice.reason && typeof choice.issueLater === "boolean") ? choices : null;
+};
+// Lines with nothing to issue now are left off the bill (walk-in partial supply).
+const billedLines = (items: any[]) => items
+  .filter((item) => Number(item.quantity) > 0)
+  .map((item) => ({ prescriptionItemId: item.prescriptionItemId, quantity: Number(item.quantity) }));
 const money = (value: unknown) =>
   `Rs. ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const prescriberLabel = (
@@ -341,10 +356,9 @@ export function PrescriptionsPage() {
   };
   const [sourceViewerHeight, setSourceViewerHeight] = useState(620);
   const [action, setAction] = useState<{
-    type: "reject" | "dispense" | "history" | "withdraw";
+    type: "reject" | "dispense" | "history" | "withdraw" | "closeBalance";
     rx: Rx;
   } | null>(null);
-  const [declineInvoice, setDeclineInvoice] = useState<{ rx: Rx; reason: string } | null>(null);
   const [requestCancel, setRequestCancel] = useState<{ rx: Rx; reason: string } | null>(null);
   const [confirm, setConfirm] = useState<Rx | null>(null);
   const [refillTarget, setRefillTarget] = useState<Rx | null>(null);
@@ -595,7 +609,7 @@ export function PrescriptionsPage() {
     const saved = action.rx.paymentRequest;
     if (saved && saved.status !== "CANCELLED") {
       const requestedLines = [
-        ...dispense.items.map((item: any) => ({ key: `rx-${item.prescriptionItemId}`, quantity: Number(item.quantity) })),
+        ...dispense.items.filter((item: any) => Number(item.quantity) > 0).map((item: any) => ({ key: `rx-${item.prescriptionItemId}`, quantity: Number(item.quantity) })),
         ...dispense.retailItems.map((item: any) => ({ key: `retail-${item.productId}`, quantity: Number(item.quantity) })),
       ];
       const savedLines = saved.items.map((item: any) => ({ key: item.prescriptionItemId != null ? `rx-${item.prescriptionItemId}` : `retail-${item.productId}`, quantity: Number(item.quantity) }));
@@ -618,7 +632,7 @@ export function PrescriptionsPage() {
         } = dispense;
         const response = await api.post(
           `/prescriptions/${action.rx.id}/dispense-quote`,
-          quoteInput,
+          { ...quoteInput, items: billedLines(dispense.items) },
         );
         if (!cancelled) setQuote(response.data.data);
       } catch (caught) {
@@ -755,23 +769,27 @@ export function PrescriptionsPage() {
     const dose = effectiveDose(item);
     const raw = dose * Number(item.timesPerDay) * Number(item.daysSupply);
     const liquid = isLiquid(product);
+    const doseMissing = !Number.isFinite(dose) || dose <= 0;
     const countable = isCountableUnit(product?.unit);
     const packageUnit = liquid && countable && isLiquidContainerUnit(product?.unit);
     const packVolumeMl = packageUnit ? liquidPackVolumeMl(product) : null;
     const packSizeMissing = liquid && countable && !packVolumeMl;
-    const total = packVolumeMl
-      ? Math.ceil(raw / packVolumeMl)
-      : packSizeMissing
-        ? null
-        : issuableTotal(raw, product?.unit);
+    const total = doseMissing
+      ? null
+      : packVolumeMl
+        ? Math.ceil(raw / packVolumeMl)
+        : packSizeMissing
+          ? null
+          : issuableTotal(raw, product?.unit);
     return {
       product, dose, rawTotal: Number(raw.toFixed(3)), total,
       packVolumeMl, suppliedVolumeMl: packVolumeMl && total != null ? total * packVolumeMl : null,
-      packSizeMissing,
+      packSizeMissing, doseMissing,
     };
   };
   const generatedDirections = (item: Line) => {
     const { product, dose } = calculated(item);
+    if (!Number.isFinite(dose) || dose <= 0) return "";
     const times = Number(item.timesPerDay);
     const days = Number(item.daysSupply);
     const timing: Record<string, string> = {
@@ -804,26 +822,15 @@ export function PrescriptionsPage() {
         concentrationUnit: "mg",
         concentrationVolume: "",
       });
-    if (concentration)
-      return updateLine(index, {
-        productId,
-        liquidDoseMode: "STRENGTH",
-        doseInputAmount: concentration.amount,
-        doseInputUnit: concentration.unit,
-        concentrationAmount: concentration.amount,
-        concentrationUnit: concentration.unit,
-        concentrationVolume: concentration.volume,
-        quantityPerDose: concentration.volume,
-      });
     updateLine(index, {
       productId,
       liquidDoseMode: "VOLUME",
-      doseInputAmount: 1,
+      doseInputAmount: "",
       doseInputUnit: "ml",
-      concentrationAmount: "",
-      concentrationUnit: "mg",
-      concentrationVolume: "",
-      quantityPerDose: 1,
+      concentrationAmount: concentration?.amount ?? "",
+      concentrationUnit: concentration?.unit ?? "mg",
+      concentrationVolume: concentration?.volume ?? "",
+      quantityPerDose: "",
     });
   };
   const payload = () => ({
@@ -902,6 +909,10 @@ export function PrescriptionsPage() {
   ) => {
     if (event) event.preventDefault();
     if (!editor || saveInFlight.current) return;
+    if (form.items.some((item: Line) => !Number.isFinite(effectiveDose(item)) || effectiveDose(item) <= 0)) {
+      setError("Enter the dose for each medicine from the prescription before saving. For liquids, enter mL per dose or use the strength calculator only when the prescription gives a mg, mcg, or g dose.");
+      return;
+    }
     if (form.items.some((item: Line) => calculated(item).packSizeMissing)) {
       setError("A liquid medicine counted by container needs a supported container unit and its volume (for example, a 100 mL bottle). Update the product details before saving.");
       return;
@@ -916,7 +927,7 @@ export function PrescriptionsPage() {
           autoVerify: options?.autoVerify ?? false,
           sendToCashier: options?.sendToCashier ?? false,
         };
-        await api.post("/prescriptions", body, { timeout: 45_000 });
+        await api.post("/prescriptions", body, { timeout: 60_000 });
         closeEditor();
         setError("");
       } else {
@@ -990,7 +1001,7 @@ export function PrescriptionsPage() {
     }
   };
   const openAction = (
-    type: "reject" | "dispense" | "history" | "withdraw",
+    type: "reject" | "dispense" | "history" | "withdraw" | "closeBalance",
     rx: Rx,
   ) => {
     setReason("");
@@ -1017,21 +1028,29 @@ export function PrescriptionsPage() {
       {
       const existingContainerFee = Number(rx.paymentRequest?.containerFee || 0);
       setDispense({
+        // An open bill fixes what is issued now: a paid bill is dispensed exactly as
+        // billed, and an unpaid one is edited from its billed quantities. Without a
+        // bill, start from the full remaining quantity.
         items: rx.items
           .filter(
             (item) =>
               Number(item.dispensedQuantity) + Number(item.cancelledQuantity || 0) < Number(item.prescribedQuantity),
           )
-          .map((item) => ({
-            prescriptionItemId: item.id,
-            name: item.product.genericName,
-            unit: item.product.unit,
-            dosageForm: item.product.dosageForm,
-            quantity:
-              Number((Number(item.prescribedQuantity) - Number(item.dispensedQuantity) - Number(item.cancelledQuantity || 0)).toFixed(3)),
-            maximum:
-              Number((Number(item.prescribedQuantity) - Number(item.dispensedQuantity) - Number(item.cancelledQuantity || 0)).toFixed(3)),
-          })),
+          .map((item) => {
+            const remaining = Number((Number(item.prescribedQuantity) - Number(item.dispensedQuantity) - Number(item.cancelledQuantity || 0)).toFixed(3));
+            const openBill = rx.paymentRequest && !["CANCELLED", "FULFILLED"].includes(rx.paymentRequest.status) ? rx.paymentRequest : null;
+            const billed = openBill?.items?.find((line: any) => line.prescriptionItemId === item.id);
+            return {
+              prescriptionItemId: item.id,
+              name: item.product.genericName,
+              unit: item.product.unit,
+              dosageForm: item.product.dosageForm,
+              quantity: openBill ? Number(billed?.quantity || 0) : remaining,
+              maximum: remaining,
+            };
+          })
+          // A paid bill is dispensed exactly as billed: show only its lines.
+          .filter((item) => !(rx.paymentRequest && !["AWAITING_PAYMENT", "CANCELLED", "FULFILLED"].includes(rx.paymentRequest.status)) || item.quantity > 0),
         // A cancelled bill may refer to prescription items that were deleted and
         // recreated during a later prescription edit. Their foreign keys become
         // null, which makes them indistinguishable from genuine retail lines.
@@ -1069,6 +1088,11 @@ export function PrescriptionsPage() {
         reservationHours: Number(rx.paymentRequest?.reservationDurationHours || operationSettings.cashReservationHours || 24),
         paymentRequestId: rx.paymentRequest?.id || null,
         pickupPin: "",
+        // Reopen an unpaid bill with the partial-supply choices already recorded.
+        partial: Object.fromEntries(
+          (rx.paymentRequest && rx.paymentRequest.status === "AWAITING_PAYMENT" ? rx.paymentRequest.partialSupply || [] : [])
+            .map((line: any) => [line.prescriptionItemId, { reason: line.reason, issueLater: line.issueLater }]),
+        ),
       });
       }
     setAction({ type, rx });
@@ -1130,6 +1154,11 @@ export function PrescriptionsPage() {
     try {
       if (action.type === "reject") {
         await api.post(`/prescriptions/${action.rx.id}/reject`, { reason });
+        closeAction();
+        load();
+      }
+      if (action.type === "closeBalance") {
+        await api.post(`/prescriptions/${action.rx.id}/close-balance`, { reason });
         closeAction();
         load();
       }
@@ -1291,7 +1320,8 @@ export function PrescriptionsPage() {
               
               <div class="patient-box">
                 <div style="font-size: 10px; text-transform: uppercase; color: #555;">Patient</div>
-                <div class="patient-name">${escapeHtml(rx.patient.user.fullName)}</div>
+                <div class="patient-name">${escapeHtml(rx.orderedForSelf === false && rx.recipientName ? rx.recipientName : rx.patient.user.fullName)}</div>
+                ${rx.orderedForSelf === false && rx.recipientName ? `<div style="font-size: 11px;">Ordered by: ${escapeHtml(rx.patient.user.fullName)}</div>` : ""}
                 <div style="font-size: 11px;">No: ${escapeHtml(rx.patient.patientNumber)}</div>
               </div>
               
@@ -1329,14 +1359,17 @@ export function PrescriptionsPage() {
   };
   const sendToCashier = async () => {
     if (!action || action.type !== "dispense") return;
+    const partialSupply = action.rx.sourceUpload ? [] : partialSupplyFor(dispense);
+    if (!partialSupply) {
+      setError("For each medicine issued in part, choose why less is issued and whether the rest will be issued later.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
       await api.post(`/prescriptions/${action.rx.id}/${action.rx.status === "PENDING" ? "send-to-cashier" : "payment-request"}`, {
-        items: dispense.items.map((item: any) => ({
-          prescriptionItemId: item.prescriptionItemId,
-          quantity: Number(item.quantity),
-        })),
+        items: billedLines(dispense.items),
+        partialSupply,
         retailItems: dispense.retailItems.map((item: any) => ({
           productId: Number(item.productId),
           quantity: Number(item.quantity),
@@ -1357,16 +1390,19 @@ export function PrescriptionsPage() {
   };
   const updateCashierBill = async () => {
     if (!action || action.type !== "dispense") return;
+    const partialSupply = action.rx.sourceUpload ? [] : partialSupplyFor(dispense);
+    if (!partialSupply) {
+      setError("For each medicine issued in part, choose why less is issued and whether the rest will be issued later.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
       await api.put(`/prescriptions/${action.rx.id}/payment-request`, {
         revision: action.rx.paymentRequest.revision,
         revisionReason: dispense.revisionReason || null,
-        items: dispense.items.map((item: any) => ({
-          prescriptionItemId: item.prescriptionItemId,
-          quantity: Number(item.quantity),
-        })),
+        items: billedLines(dispense.items),
+        partialSupply,
         retailItems: dispense.retailItems.map((item: any) => ({
           productId: Number(item.productId),
           quantity: Number(item.quantity),
@@ -1436,24 +1472,6 @@ export function PrescriptionsPage() {
       setBusy(false);
     }
   };
-  const submitDeclineInvoice = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!declineInvoice) return;
-    if (declineInvoice.reason.trim().length < 3) return setError("Enter a reason for declining the invoice.");
-    setBusy(true);
-    setError("");
-    try {
-      await api.post(`/payment-requests/${declineInvoice.rx.paymentRequest!.id}/decline`, {
-        reason: declineInvoice.reason.trim(),
-      });
-      setDeclineInvoice(null);
-      load();
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setBusy(false);
-    }
-  };
   const submitRequestCancel = async (event: FormEvent) => {
     event.preventDefault();
     if (!requestCancel?.rx.paymentRequest) return;
@@ -1463,6 +1481,7 @@ export function PrescriptionsPage() {
     try {
       await api.post(`/payment-requests/${requestCancel.rx.paymentRequest.id}/request-cancellation`, {
         reason: requestCancel.reason.trim(),
+        revision: requestCancel.rx.paymentRequest.revision,
       });
       setRequestCancel(null);
       load();
@@ -1473,11 +1492,11 @@ export function PrescriptionsPage() {
     }
   };
   if (loading) return <Loading />;
-  const workflowRx = editor?.rx || (action?.type !== 'history' ? action?.rx : null) || declineInvoice?.rx || requestCancel?.rx || confirm || refillTarget || collectionModal || reverify;
+  const workflowRx = editor?.rx || (action?.type !== 'history' ? action?.rx : null) || requestCancel?.rx || confirm || refillTarget || collectionModal || reverify;
   const workflowResource = workflowRx?.id ? `prescription/${workflowRx.id}` : editor && form.sourceUploadId ? `upload/${form.sourceUploadId}` : null;
 
   return (
-    <WorkflowGuard resource={workflowResource} onCancel={() => { setEditor(null); setAction(null); setDeclineInvoice(null); setRequestCancel(null); setConfirm(null); setRefillTarget(null); setCollectionModal(null); setReverify(null); }}>
+    <WorkflowGuard resource={workflowResource} onCancel={() => { setEditor(null); setAction(null); setRequestCancel(null); setConfirm(null); setRefillTarget(null); setCollectionModal(null); setReverify(null); }}>
       <datalist id="retail-quantity-options">
         <option value="1" />
         <option value="2" />
@@ -1828,42 +1847,31 @@ export function PrescriptionsPage() {
                 <div className="d-flex flex-wrap align-items-center gap-2 prescription-card-status">
                   <small className="text-secondary">Prescription:</small>
                   <Status value={rx.status} />
-                  {!staff && !["DISPENSED", "REJECTED"].includes(rx.status) && (
+                  {!staff && !["DISPENSED", "REJECTED"].includes(rx.status) && !rx.paymentRequest?.customerCancellationReason && (
                     <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => openCollectionModal(rx)}>
                       <i className="bi bi-calendar-event me-1" />
                       Choose pickup time
                     </button>
                   )}
-                  {/* Patient: decline a pending invoice they do not want to pay */}
-                  {!staff && rx.paymentRequest?.status === "AWAITING_PAYMENT" && (
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-outline-danger"
-                      onClick={() => setDeclineInvoice({ rx, reason: "" })}
-                    >
-                      <i className="bi bi-x-circle me-1" />
-                      Decline invoice
-                    </button>
-                  )}
-                  {/* Patient: request cancellation if slip submitted or paid before dispensing */}
+                  {/* Patient cancellation is reviewed by pharmacy staff for every unpaid/paid invoice state. */}
                   {!staff &&
-                    ["SLIP_SUBMITTED", "PAID"].includes(rx.paymentRequest?.status) &&
+                    ["AWAITING_PAYMENT", "SLIP_SUBMITTED", "PAID"].includes(rx.paymentRequest?.status) &&
                     rx.status !== "DISPENSED" &&
-                    !rx.paymentRequest?.cancellationReason?.startsWith("Customer cancellation requested:") && (
+                    !rx.paymentRequest?.customerCancellationReason && (
                       <button
                         type="button"
-                        className="btn btn-sm btn-outline-warning"
+                        className="btn btn-sm btn-outline-danger"
                         onClick={() => setRequestCancel({ rx, reason: "" })}
                       >
-                        <i className="bi bi-arrow-counterclockwise me-1" />
-                        Request order cancellation
+                        <i className="bi bi-x-circle me-1" />
+                        Request cancellation
                       </button>
                     )}
-                  {rx.paymentRequest?.cancellationReason?.startsWith("Customer cancellation requested:") && (
-                    <span className="badge bg-warning text-dark">
-                      <i className="bi bi-clock-history me-1" />
-                      Cancellation requested
-                    </span>
+                  {rx.paymentRequest?.customerCancellationReason && !["CANCELLED", "FULFILLED"].includes(rx.paymentRequest.status) && (
+                    <div className="alert alert-warning small mb-0">
+                      <strong><i className="bi bi-clock-history me-1" />Cancellation request under pharmacy review</strong>
+                      <span className="d-block">Reason: {rx.paymentRequest.customerCancellationReason}</span>
+                    </div>
                   )}
                   {staff && (
                     <div className="d-flex flex-wrap align-items-center gap-2">
@@ -1933,6 +1941,24 @@ export function PrescriptionsPage() {
                             Resend Remainder to Cashier
                           </button>
                         )}
+                      {/* PARTIALLY_DISPENSED with no open bill: close the unsupplied balance */}
+                      {rx.status === "PARTIALLY_DISPENSED" && (!rx.paymentRequest || ["FULFILLED", "CANCELLED"].includes(rx.paymentRequest.status)) && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary"
+                          onClick={() => openAction("closeBalance", rx)}
+                        >
+                          <i className="bi bi-x-circle me-1" />
+                          Close remaining balance
+                        </button>
+                      )}
+                      {["VERIFIED", "PARTIALLY_DISPENSED"].includes(rx.status) &&
+                        rx.paymentRequest?.status === "SLIP_SUBMITTED" && (
+                          <span className="badge bg-info text-dark">
+                            <i className="bi bi-bank me-1" />
+                            Bank slip being checked by the cashier
+                          </span>
+                        )}
                       {/* VERIFIED/PARTIALLY_DISPENSED + AWAITING_PAYMENT: waiting badge */}
                       {["VERIFIED", "PARTIALLY_DISPENSED"].includes(rx.status) &&
                         rx.paymentRequest?.status === "AWAITING_PAYMENT" && (
@@ -1943,7 +1969,14 @@ export function PrescriptionsPage() {
                         )}
                       {/* VERIFIED/PARTIALLY_DISPENSED + PAID: Dispense button */}
                       {["VERIFIED", "PARTIALLY_DISPENSED"].includes(rx.status) &&
-                        rx.paymentRequest?.status === "PAID" && (
+                        rx.paymentRequest?.status === "PAID" && rx.paymentRequest.delivery && rx.paymentRequest.delivery.status !== "CANCELLED" && (
+                          <span className="badge bg-info text-dark">
+                            <i className="bi bi-truck me-1" />
+                            Home delivery: dispense from Home deliveries at dispatch
+                          </span>
+                        )}
+                      {["VERIFIED", "PARTIALLY_DISPENSED"].includes(rx.status) &&
+                        rx.paymentRequest?.status === "PAID" && !(rx.paymentRequest.delivery && rx.paymentRequest.delivery.status !== "CANCELLED") && (
                           <button
                             type="button"
                             className="btn btn-sm btn-success"
@@ -2556,7 +2589,7 @@ export function PrescriptionsPage() {
                         min={liquid ? "0.1" : "0.25"}
                         value={
                           liquid && item.liquidDoseMode === "STRENGTH"
-                            ? auto.dose
+                            ? auto.dose > 0 ? auto.dose : ""
                             : item.quantityPerDose
                         }
                         readOnly={liquid && item.liquidDoseMode === "STRENGTH"}
@@ -2606,7 +2639,7 @@ export function PrescriptionsPage() {
                     <div className="col-md-2">
                       <label className="form-label small">Auto total</label>
                       <div className="form-control bg-light">
-                        {auto.total == null ? "Pack size required" : `${auto.total} ${displayUnit(auto.product?.unit || "unit", Number(auto.total))}`}
+                        {auto.doseMissing ? "Enter dose" : auto.total == null ? "Pack size required" : `${auto.total} ${displayUnit(auto.product?.unit || "unit", Number(auto.total))}`}
                         {auto.packVolumeMl && auto.total != null && (
                           <small className="d-block text-secondary">
                             {auto.rawTotal.toLocaleString()} mL course · {auto.total} × {auto.packVolumeMl} mL = {auto.suppliedVolumeMl?.toLocaleString()} mL supplied
@@ -2621,8 +2654,7 @@ export function PrescriptionsPage() {
                             <div>
                               <strong>Liquid dose calculator</strong>
                               <small>
-                                Enter the prescribed volume directly, or
-                                calculate mL from the medicine concentration. The dose label stays in mL.
+                                Enter the dose written on the prescription. Use the strength calculator only when the prescribed dose is written as a mass.
                               </small>
                             </div>
                             <select
@@ -2636,8 +2668,8 @@ export function PrescriptionsPage() {
                                   mode === "VOLUME"
                                     ? {
                                         liquidDoseMode: mode,
-                                        quantityPerDose: auto.dose || 1,
-                                        doseInputAmount: auto.dose || 1,
+                                        quantityPerDose: auto.dose || "",
+                                        doseInputAmount: auto.dose || "",
                                         doseInputUnit: "ml",
                                       }
                                     : { liquidDoseMode: mode },
@@ -2759,7 +2791,7 @@ export function PrescriptionsPage() {
                                     ? `${cleanNumber(auto.dose)} mL`
                                     : "Enter dose and concentration"}
                                 </strong>
-                                <span>Total: {auto.total} mL</span>
+                                <span>Total course volume: {auto.doseMissing ? "—" : `${cleanNumber(auto.rawTotal)} mL`}</span>
                               </div>
                             </div>
                           ) : (
@@ -3337,6 +3369,47 @@ export function PrescriptionsPage() {
           </form>
         </Modal>
       )}
+      {action?.type === "closeBalance" && (
+        <Modal
+          title={`Close remaining balance · ${action.rx.prescriptionNumber}`}
+          onClose={() => setAction(null)}
+          size="sm"
+        >
+          <form onSubmit={saveAction}>
+            <div className="alert alert-warning">
+              <i className="bi bi-exclamation-triangle me-2" />
+              These quantities will be recorded as not supplied and the prescription will be closed.
+              Supplied medicines, bills and stock do not change. A later supply needs a new prescription.
+              <ul className="mb-0 mt-2">
+                {action.rx.items
+                  .filter((item) => Number(item.prescribedQuantity) - Number(item.dispensedQuantity) - Number(item.cancelledQuantity || 0) > 0)
+                  .map((item) => (
+                    <li key={item.id}>
+                      {item.product.genericName}: {Number((Number(item.prescribedQuantity) - Number(item.dispensedQuantity) - Number(item.cancelledQuantity || 0)).toFixed(3))} {item.product.unit}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+            <label className="form-label" htmlFor="close-balance-reason">Mandatory reason</label>
+            <textarea
+              id="close-balance-reason"
+              className="form-control"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              minLength={3}
+              maxLength={500}
+              placeholder="For example: customer will not return for the remaining tablets"
+              required
+            />
+            <Alert message={error} />
+            <ModalActions
+              onClose={() => setAction(null)}
+              submitLabel="Close remaining balance"
+              busy={busy}
+            />
+          </form>
+        </Modal>
+      )}
       {action?.type === "withdraw" && (
         <Modal
           title={`Withdraw bill · ${action.rx.prescriptionNumber}`}
@@ -3440,7 +3513,9 @@ export function PrescriptionsPage() {
                 <span className="workflow-step">1</span>
                 <div>
                   <strong>Prescription medicines</strong>
-                  <small>Confirm the quantities being issued now.</small>
+                  <small>{action.rx.sourceUpload
+                    ? "An uploaded order is billed in full; quantities follow the prescription."
+                    : "Confirm the quantities being issued now. For a walk-in customer you can issue less (or 0) when stock is short or they want less today; the rest stays pending for a later bill."}</small>
                 </div>
               </div>
               <div className="table-responsive">
@@ -3466,10 +3541,11 @@ export function PrescriptionsPage() {
                             className="form-control"
                             type="number"
                             step={stockQuantityStep(item.unit)}
-                            min={stockQuantityStep(item.unit)}
+                            min={action.rx.sourceUpload ? stockQuantityStep(item.unit) : 0}
                             max={item.maximum}
                             value={item.quantity}
-                            disabled={Boolean(action.rx.paymentRequest) && !["AWAITING_PAYMENT", "CANCELLED"].includes(action.rx.paymentRequest.status)}
+                            aria-label={`Quantity of ${item.name} to issue now`}
+                            disabled={Boolean(action.rx.sourceUpload) || (Boolean(action.rx.paymentRequest) && !["AWAITING_PAYMENT", "CANCELLED"].includes(action.rx.paymentRequest.status))}
                             onChange={(event) => {
                               const items = [...dispense.items];
                               items[index] = {
@@ -3479,6 +3555,44 @@ export function PrescriptionsPage() {
                               setDispense({ ...dispense, items });
                             }}
                           />
+                          {Number(item.quantity) < Number(item.maximum) && (() => {
+                            const shortfall = Number((Number(item.maximum) - Number(item.quantity || 0)).toFixed(3));
+                            const choice = dispense.partial?.[item.prescriptionItemId] || {};
+                            const editable = !action.rx.sourceUpload && (!action.rx.paymentRequest || ["AWAITING_PAYMENT", "CANCELLED", "FULFILLED"].includes(action.rx.paymentRequest.status));
+                            const setChoice = (change: any) => setDispense({ ...dispense, partial: { ...dispense.partial, [item.prescriptionItemId]: { ...choice, ...change } } });
+                            return (
+                              <div className="mt-1">
+                                <small className="d-block text-warning-emphasis">
+                                  {shortfall} {item.unit} not issued now (not charged)
+                                </small>
+                                {editable && (
+                                  <>
+                                    <select
+                                      className="form-select form-select-sm mt-1"
+                                      aria-label={`Why less ${item.name} is issued`}
+                                      value={choice.reason || ""}
+                                      onChange={(event) => setChoice({ reason: event.target.value || undefined })}
+                                    >
+                                      <option value="">Why less?</option>
+                                      <option value="OUT_OF_STOCK">Not enough stock</option>
+                                      <option value="CANNOT_AFFORD">Customer cannot pay for all now</option>
+                                      <option value="CUSTOMER_REQUEST">Customer asked for less</option>
+                                    </select>
+                                    <select
+                                      className="form-select form-select-sm mt-1"
+                                      aria-label={`Will the rest of ${item.name} be issued later`}
+                                      value={choice.issueLater === undefined ? "" : choice.issueLater ? "LATER" : "NOT_NEEDED"}
+                                      onChange={(event) => setChoice({ issueLater: event.target.value === "" ? undefined : event.target.value === "LATER" })}
+                                    >
+                                      <option value="">Issue the rest later?</option>
+                                      <option value="LATER">Yes — keep for Bill Remaining</option>
+                                      <option value="NOT_NEEDED">No — the rest will not be issued</option>
+                                    </select>
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td>
                           {quote
@@ -3833,7 +3947,7 @@ export function PrescriptionsPage() {
                   />
                 </div>
                 <div>
-                  <label className="form-label">Cash stock reservation</label>
+                  <label className="form-label">{action.rx.sourceUpload?.prepareRequested ? "Stock hold" : "Cash stock reservation"}</label>
                   <div className="input-group">
                     <input
                       className="form-control"
@@ -3848,7 +3962,11 @@ export function PrescriptionsPage() {
                     />
                     <span className="input-group-text">hours</span>
                   </div>
-                  <small className="text-secondary">Used only if the customer acknowledges the invoice and chooses cash. The administrator default is {operationSettings.cashReservationHours || 24} hours.</small>
+                  <small className="text-secondary">{action.rx.sourceUpload?.prepareRequested
+                    ? "The customer asked the pharmacy to prepare this order, so its stock is held from the moment the bill is issued, whichever payment method they choose."
+                    : action.rx.sourceUpload
+                      ? "The customer asked to review the bill first, so nothing is held until they pay."
+                      : "Used only if the customer acknowledges the invoice and chooses cash."} The administrator default is {operationSettings.cashReservationHours || 24} hours.</small>
                 </div>
                 <div>
                   <label className="form-label">Note to customer (optional)</label>
@@ -3931,12 +4049,26 @@ export function PrescriptionsPage() {
                   </div>
                   <div className="invoice-payment-grid">
                     <div>
-                      <small>Cashier must collect</small>
+                      <small>
+                        {action.rx.paymentRequest?.status === "PAID"
+                          ? "Cashier received"
+                          : "Cashier must collect"}
+                      </small>
                       <strong>{money(quote.total)}</strong>
                     </div>
                     <div>
                       <small>Next step</small>
-                      <strong>Send cashier request</strong>
+                      <strong>
+                        {action.rx.paymentRequest?.status === "PAID"
+                          ? operationSettings.requirePickupPin ? "Verify PIN and dispense" : "Dispense medicines"
+                          : action.rx.paymentRequest?.status === "FULFILLED"
+                            ? "Create remainder bill"
+                            : action.rx.paymentRequest?.status === "AWAITING_PAYMENT"
+                              ? "Await cashier payment"
+                              : action.rx.paymentRequest?.status === "CANCELLED"
+                                ? "Resend bill for payment"
+                                : "Send cashier request"}
+                      </strong>
                     </div>
                   </div>
                 </div>
@@ -4013,7 +4145,15 @@ export function PrescriptionsPage() {
                   </div>
                 </div>
               )}
-              {action.rx.paymentRequest?.status === "PAID" && (
+              {action.rx.paymentRequest?.status === "PAID" && isDeliveryOrder(action.rx) && (
+                <div className="alert alert-info mt-3">
+                  <strong>Paid home-delivery order.</strong>
+                  <small className="d-block">
+                    No collection PIN is used. Dispense it from Home deliveries when the parcel is handed to the courier.
+                  </small>
+                </div>
+              )}
+              {action.rx.paymentRequest?.status === "PAID" && !isDeliveryOrder(action.rx) && (
                 <div className="alert alert-success mt-3">
                   <strong>Cashier payment confirmed.</strong>
                   <div className="row align-items-end mt-2">
@@ -4065,7 +4205,7 @@ export function PrescriptionsPage() {
                   </div>
                 </div>
               )}
-              {action.rx.paymentRequest?.status === "PAID" && (
+              {action.rx.paymentRequest?.status === "PAID" && !isDeliveryOrder(action.rx) && (
                 <ModalActions
                   onClose={closeAction}
                   submitLabel={
@@ -4371,44 +4511,7 @@ export function PrescriptionsPage() {
           </form>
         </Modal>
       )}
-      {/* ── Patient: decline an invoice they do not want to pay ── */}
-      {declineInvoice && (
-        <Modal
-          title="Decline invoice"
-          onClose={() => setDeclineInvoice(null)}
-          size="sm"
-        >
-          <form onSubmit={submitDeclineInvoice}>
-            <div className="alert alert-warning small">
-              <i className="bi bi-exclamation-triangle me-2" />
-              <strong>Are you sure you want to decline this invoice?</strong>
-              <br />
-              This will cancel the pharmacy bill. If you still need your
-              medicine, contact the pharmacy directly.
-            </div>
-            <label className="form-label">Reason for declining</label>
-            <textarea
-              className="form-control"
-              minLength={3}
-              maxLength={500}
-              value={declineInvoice.reason}
-              onChange={(event) =>
-                setDeclineInvoice({ ...declineInvoice, reason: event.target.value })
-              }
-              placeholder="e.g. I no longer need these medicines, or I found them elsewhere."
-              required
-            />
-            <Alert message={error} />
-            <ModalActions
-              onClose={() => setDeclineInvoice(null)}
-              submitLabel="Decline invoice"
-              busy={busy}
-            />
-          </form>
-        </Modal>
-      )}
-
-      {/* ── Patient: request cancellation/refund for submitted slip or paid order ── */}
+      {/* ── Patient cancellation request for unpaid or paid invoice ── */}
       {requestCancel && (
         <Modal
           title={`Request cancellation — ${requestCancel.rx.prescriptionNumber}`}
@@ -4420,7 +4523,7 @@ export function PrescriptionsPage() {
               <i className="bi bi-exclamation-triangle me-2" />
               <strong>Request cancellation for this order</strong>
               <br />
-              Our cashier team will review your cancellation request and process any refund or payment void before the medicines are prepared.
+              The pharmacy will review your request. Payment and preparation pause while it is reviewed; if you have already paid, staff will handle any applicable refund.
             </div>
             <label className="form-label">Reason for cancellation request (required)</label>
             <textarea

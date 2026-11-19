@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../config/prisma.js';
+import { DEFAULT_TRANSACTION_OPTIONS } from '../utils/serializable.js';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
 import { userRepository } from '../repositories/user.repository.js';
@@ -43,7 +44,7 @@ export const authService = {
       });
       await syncPatientPhoneIdentity(tx, created.id, data.phone);
       return created;
-    });
+    }, DEFAULT_TRANSACTION_OPTIONS);
     return { token: await sign(user), user: safeUser(user) };
   },
 
@@ -153,7 +154,7 @@ export const authService = {
       });
       if (claimed.count !== 1) throw new AppError(400, 'This password reset session has already been used or revoked.');
       await tx.passwordResetOtp.deleteMany({ where: { userId: user.id } });
-    });
+    }, DEFAULT_TRANSACTION_OPTIONS);
     return { message: 'Password reset successfully. You can now sign in.', auditUserId: user.id };
   },
   async updateProfile(userId, data) {
@@ -194,6 +195,6 @@ export const authService = {
       return {
         user: safeUser(refreshed)
       };
-    });
+    }, DEFAULT_TRANSACTION_OPTIONS);
   },
 };

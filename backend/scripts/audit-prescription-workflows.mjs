@@ -164,23 +164,23 @@ await scenario('Prescriber-reference edit preserves previously cancelled medicin
   assert.equal(Number(item.cancelledQuantity),1,`Cancelled quantity reset to ${item.cancelledQuantity}; status ${saved.status}`);
 });
 
-await scenario('Declining a stale displayed invoice must not cancel a newer revision', async ({make,customer}) => {
+await scenario('A stale cancellation request must not modify a newer invoice revision', async ({make,customer}) => {
   const {bill}=await make(true);
-  // The UI's decline payload contains only a reason, so the service has no
-  // displayed revision to compare even after another staff edit completes.
   await prisma.paymentRequest.update({where:{id:bill.id},data:{revision:{increment:1},tax:5,total:{increment:5}}});
-  await assert.rejects(bills.declineByPatient(bill.id,'Decline old displayed total',customer,bill.revision),/just updated/);
+  await assert.rejects(bills.declineByPatient(bill.id,'Decline old displayed total',customer,bill.revision),/invoice changed/);
 });
 await scenario('Removing all invoice items preserves the cancellation response contract', async ({make,staff,pay}) => {
   const {bill}=await make();await pay(bill);
   const result=await bills.partialCancel(bill.id,{revision:bill.revision,itemIds:bill.items.map(i=>i.id),reason:'Audit all-item refund'},staff);
   assert.equal(Number(result.refundAmount),Number(bill.total),'All-item path omits refundAmount used by the partial-cancel controller');
 });
-await scenario('Refunded invoice history includes customer-decline reason after earlier revisions', async ({make,customer,staff,input}) => {
+await scenario('Cancellation request history includes the customer reason after earlier revisions', async ({make,customer,staff,input}) => {
   const record=await make(true);
   await bills.update(record.rx.id,{...record.input,tax:5,revisionReason:'Audit revised tax'},staff.id);
-  const cancelled=await bills.declineByPatient(record.bill.id,'Declined because collection is too late',customer,record.bill.revision+1);
-  assert(cancelled.events.some(e=>e.details?.reason?.includes('collection is too late')),'Customer decline has no event; history component ignores cancellationReason when other events exist');
+  const pending=await bills.declineByPatient(record.bill.id,'Declined because collection is too late',customer,record.bill.revision+1);
+  assert.equal(pending.status,'AWAITING_PAYMENT');
+  assert.equal(pending.customerCancellationReason,'Declined because collection is too late');
+  assert(pending.events.some(e=>e.kind==='CANCELLATION_REQUESTED' && e.details?.reason?.includes('collection is too late')),'Customer cancellation request history is missing its reason.');
 });
 await scenario('Pending customer cancellation requires resolution before collection', async ({make,customer,staff,bank,collect}) => {
   const {rx,bill}=await make(true);const {approved}=await bank(bill);const paid=await approved();

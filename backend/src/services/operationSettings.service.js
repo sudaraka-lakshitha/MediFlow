@@ -1,4 +1,5 @@
 import { prisma } from "../config/prisma.js";
+import { DEFAULT_TRANSACTION_OPTIONS } from "../utils/serializable.js";
 
 const keys = {
   allocationMethod: "stockAllocationMethod",
@@ -119,7 +120,7 @@ export const operationSettingsService = {
         create: { key: keys.cashReservationHours, value: String(data.cashReservationHours) },
         update: { value: String(data.cashReservationHours) },
       }),
-    ]);
+    ], DEFAULT_TRANSACTION_OPTIONS);
     return this.get();
   },
 };

@@ -37,6 +37,7 @@ export const prescriptionController = protectRetryController(protectWorkflowCont
     await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_REJECTED', entityType: 'PRESCRIPTION', entityId: data.id, details: { reason: req.body.reason }, ipAddress: req.ip });
     res.json({ data });
   },
+  closeBalance: async (req, res) => res.json({ data: await prescriptionService.closeBalance(Number(req.params.id), req.body.reason, req.user.id) }),
   dispenseQuote: async (req, res) => res.json({ data: await prescriptionService.quoteDispensing(Number(req.params.id), req.body) }),
   dispense: async (req, res) => {
     const data = await prescriptionService.dispense(Number(req.params.id), req.body, req.user.id);

@@ -3,7 +3,8 @@ import { Prisma } from '@prisma/client';
 import { AppError } from './AppError.js';
 import { withUniqueRetry } from './withUniqueRetry.js';
 import { consumePaymentRequestStock } from './stock.js';
-import { remainingPrescriptionQuantity } from './prescriptionQuantity.js';
+import { cancelPrescriptionQuantity, remainingPrescriptionQuantity } from './prescriptionQuantity.js';
+import { latestPartialDecisions, partialReasonLabels, PARTIAL_SUPPLY_EVENT } from './prescriptionBalance.js';
 import { batchAllocationOrder, operationSettingsService } from '../services/operationSettings.service.js';
 
 // Shared by the pharmacist's manual "verify PIN and dispense" endpoint and the
@@ -73,6 +74,16 @@ export const performPrescriptionDispense = async (tx, { prescriptionId, paymentR
   }
   for (const [prescriptionItemId, quantity] of dispensedQuantities) {
     await tx.prescriptionItem.update({ where: { id: prescriptionItemId }, data: { dispensedQuantity: { increment: quantity } } });
+  }
+  // A walk-in bill may record that the rest of a medicine will not be issued
+  // (for example, the customer wanted less). Close that shortfall now it is
+  // dispensed, so it is not left pending for a later bill.
+  const partialEvents = await tx.paymentRequestEvent?.findMany?.({ where: { paymentRequestId: paidRequest.id, kind: PARTIAL_SUPPLY_EVENT }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { kind: true, details: true } });
+  for (const decision of latestPartialDecisions(partialEvents || []).values()) {
+    if (decision.issueLater !== false) continue;
+    const item = await tx.prescriptionItem.findUnique({ where: { id: Number(decision.prescriptionItemId) } });
+    const remaining = item ? remainingPrescriptionQuantity(item) : null;
+    if (remaining?.greaterThan(0)) await cancelPrescriptionQuantity(tx, { prescriptionItemId: item.id, quantity: remaining }, `Not issued - ${partialReasonLabels[decision.reason] || 'pharmacy decision'}`);
   }
 
   const paidRetailItems = paidRequest.items.filter((item) => item.prescriptionItemId == null);

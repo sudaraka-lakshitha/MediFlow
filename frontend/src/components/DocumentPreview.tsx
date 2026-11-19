@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { deliveryStatusLabel } from '../utils/deliveryStatus';
 import { api, errorMessage } from '../api/client';
 import { useAuth } from '../auth/useAuth';
 import { Modal } from './Modal';
@@ -69,7 +70,7 @@ export function DocumentPreview({ document, onClose }: { document: DocumentTarge
     {slip && (!fullCashierReceipt) && <section className="border rounded p-3 mb-3" aria-label="Collection receipt details">
       <div className="text-secondary small">Customer name</div><strong>{slip.customerName}</strong>
       <div className="text-secondary small mt-2">Reference number</div><div style={{ overflowWrap: 'anywhere' }}>{slip.referenceNumber}</div>
-      {slip.pin ? <><div className="text-secondary small mt-3">Collection PIN</div><strong className="fs-2" style={{ letterSpacing: '.2em' }}>{slip.pin}</strong><p className="small mb-0">Show this PIN only when collecting your order.</p></> : <p className="mt-2 mb-0">{slip.deliveryFee ? 'Delivery service payment confirmed.' : slip.delivery && slip.delivery.status !== 'CANCELLED' ? `Home delivery: ${slip.delivery.status.replaceAll('_', ' ')}. Track your order under Home deliveries.` : slip.status === 'FULFILLED' ? 'Order collected. No PIN is required.' : 'Collect at the pharmacy.'}</p>}
+      {slip.pin ? <><div className="text-secondary small mt-3">Collection PIN</div><strong className="fs-2" style={{ letterSpacing: '.2em' }}>{slip.pin}</strong><p className="small mb-0">Show this PIN only when collecting your order.</p></> : <p className="mt-2 mb-0">{slip.deliveryFee ? 'Delivery service payment confirmed.' : slip.delivery && slip.delivery.status !== 'CANCELLED' ? `Home delivery: ${deliveryStatusLabel(slip.delivery.status).toLowerCase()}. Track your order under Home deliveries.` : slip.status === 'FULFILLED' ? 'Order collected. No PIN is required.' : 'Collect at the pharmacy.'}</p>}
     </section>}
     {!patient && slip?.status === 'PAID' && slip?.pin && <div className="d-flex align-items-center flex-wrap gap-2 mb-3">
       <span className="small text-secondary">Cashier print format:</span>

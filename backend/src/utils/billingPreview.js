@@ -17,5 +17,11 @@ export const billingPreview = (record) => ({
   items: record.items.length === 0 && (record.requestNumber || record.paymentRequest?.requestNumber || '').startsWith('DEL-')
     ? [{ id: 'delivery-service', name: 'Home delivery service', quantity: 1, unitPrice: record.subtotal, lineTotal: record.subtotal }]
     : record.items.map(item=>({ id:item.id, name:`${item.product.genericName}${item.product.strength && item.product.strength !== 'N/A' ? ` ${item.product.strength}` : ''}`, batch:item.batch?.batchNumber, quantity:item.quantity, unitPrice:item.unitPrice, lineTotal:item.lineTotal })),
+  // Prescribed medicines not on this bill: collect later, not charged here.
+  balanceToCollect: record.balanceToCollect || [],
+  // Prescribed medicines the pharmacy recorded as not to be issued at all.
+  notToBeIssued: record.notToBeIssued || [],
+  // Prescribed against bought, per medicine.
+  supplyRows: record.supplyRows || [],
   refunds: (record.refunds || []).map(refund=>({ id:refund.id, amount:refund.amount, reason:refund.reason, status:refund.status, method:refund.method, reference:refund.reference })),
 });

@@ -69,8 +69,8 @@ try {
     if ($env:DATABASE_URL) {
         Stop-Setup 'DATABASE_URL is set in Windows environment variables. Remove that override so Prisma uses the local DATABASE_URL stored in backend/.env.'
     }
-    if ($env:VITE_API_URL -and $env:VITE_API_URL -ne 'http://localhost:5000/api') {
-        Stop-Setup 'VITE_API_URL is set to a non-local API in Windows environment variables. Clear the override or set it to http://localhost:5000/api.'
+    if ($env:VITE_API_URL -and $env:VITE_API_URL -notin @('/api', 'http://localhost:5000/api')) {
+        Stop-Setup 'VITE_API_URL is set to a non-local API in Windows environment variables. Clear the override or set it to /api.'
     }
     if (-not (Test-Path $mysqlExe)) {
         Stop-Setup 'XAMPP MySQL was not found at C:\xampp. Install XAMPP to C:\xampp, then run setup again.'
@@ -172,9 +172,21 @@ SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'mediflow' A
         Write-Host 'Created frontend/.env.'
     }
     $frontendValues = Read-EnvFile $frontendEnv
-    if ($frontendValues['VITE_API_URL'] -and $frontendValues['VITE_API_URL'] -ne 'http://localhost:5000/api') {
-        Stop-Setup 'frontend/.env points to a non-local API. Set VITE_API_URL=http://localhost:5000/api for this local setup.'
+    if ($frontendValues['VITE_API_URL'] -and $frontendValues['VITE_API_URL'] -notin @('/api', 'http://localhost:5000/api')) {
+        Stop-Setup 'frontend/.env points to a non-local API. Set VITE_API_URL=/api for this local and LAN setup.'
     }
+    # A relative API URL uses Vite's same-origin proxy. This works both in the
+    # host browser and on phones/laptops reaching the Vite server over Wi-Fi.
+    $frontendLines = [System.IO.File]::ReadAllLines($frontendEnv)
+    $frontendApiSettingFound = $false
+    $frontendLines = @($frontendLines | ForEach-Object {
+        if ($_ -match '^\s*VITE_API_URL\s*=') {
+            $frontendApiSettingFound = $true
+            'VITE_API_URL=/api'
+        } else { $_ }
+    })
+    if (-not $frontendApiSettingFound) { $frontendLines += 'VITE_API_URL=/api' }
+    Write-EnvFile $frontendEnv $frontendLines
 
     Write-Host ''
     Write-Host 'Installing backend packages...'

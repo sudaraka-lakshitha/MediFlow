@@ -59,7 +59,7 @@ export const partialCancelSchema = z.object({
   reason: z.string().trim().min(3).max(500),
   skipCustomerReconfirmation: z.boolean().optional().default(false),
 });
-export const requestCancellationSchema = z.object({ reason: z.string().trim().min(3).max(500) });
+export const requestCancellationSchema = z.object({ reason: z.string().trim().min(3).max(500), revision: z.coerce.number().int().positive().optional() });
 export const invoiceAcknowledgementSchema = z.object({
   revision: z.coerce.number().int().positive(),
   paymentChoice: z.enum(['CASH', 'BANK_TRANSFER']),
@@ -80,7 +80,7 @@ export const paymentRequestController = protectRetryController(protectWorkflowCo
   collectionSlip: async (req, res) => {
     const data = await paymentRequestService.documentData(Number(req.params.id), req.user, true);
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ data: { customerName: data.patient?.fullName || 'Walk-in customer', referenceNumber: data.requestNumber, pin: data.pickupPin, status: data.status, saleId: data.sale?.id || null, delivery: data.delivery || null, deliveryFee: Boolean(data.deliveryFeeFor) } });
+    res.json({ data: { customerName: data.patient?.fullName || 'Walk-in customer', referenceNumber: data.requestNumber, pin: data.pickupPin, status: data.status, saleId: data.sale?.id || null, delivery: data.delivery || null, deliveryFee: Boolean(data.deliveryFeeFor), balanceCount: data.balanceToCollect?.length || 0 } });
   },
   resolveCancellation: async (req, res) => res.json({ data: await paymentRequestService.resolveCancellation(Number(req.params.id), req.body, req.user) }),
   changePaymentChoice: async (req, res) => res.json({ data: await paymentRequestService.acknowledge(Number(req.params.id), req.body, req.user, true) }),
@@ -204,7 +204,7 @@ export const paymentRequestController = protectRetryController(protectWorkflowCo
   decline: async (req, res) => {
     const data = await paymentRequestService.declineByPatient(Number(req.params.id), req.body.reason, req.user, req.body.revision);
     await recordAudit({
-      userId: req.user.id, action: 'INVOICE_DECLINED_BY_PATIENT', entityType: 'PAYMENT_REQUEST', entityId: data.id,
+      userId: req.user.id, action: 'INVOICE_CANCELLATION_REQUESTED', entityType: 'PAYMENT_REQUEST', entityId: data.id,
       details: { requestNumber: data.requestNumber, reason: req.body.reason }, ipAddress: req.ip,
     });
     res.json({ data });
@@ -229,7 +229,7 @@ export const paymentRequestController = protectRetryController(protectWorkflowCo
   cancellationPreview: async (req, res) => res.json({ data: await paymentRequestService.cancellationPreview(Number(req.params.id), req.body, req.user) }),
   collectionsToday: async (_req, res) => res.json({ data: await paymentRequestService.collectionsToday() }),
   requestCancellation: async (req, res) => {
-    const data = await paymentRequestService.requestCancellation(Number(req.params.id), req.body.reason, req.user);
+    const data = await paymentRequestService.requestCancellation(Number(req.params.id), req.body.reason, req.user, req.body.revision);
     await recordAudit({
       userId: req.user.id,
       action: 'PAYMENT_REQUEST_CANCELLATION_REQUESTED',

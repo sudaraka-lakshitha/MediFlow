@@ -9,7 +9,9 @@ export const usableStockTotal = (batches) => batches.reduce((sum, batch) => sum.
 // Called once, at the moment a bill is paid: locks in which specific
 // batches will cover it (FIFO/FEFO over what isn't already reserved) so the
 // stock can't be sold out from under a paying customer before pickup.
-export const reserveStock = async (tx, paymentRequestId, items, allocationOrder) => {
+// shortage lets callers explain a failed hold in their own context (for
+// example, a hold made when a prepared order is billed rather than at payment).
+export const reserveStock = async (tx, paymentRequestId, items, allocationOrder, shortage = {}) => {
   const now = new Date();
   for (const item of items) {
     const quantity = new Prisma.Decimal(item.quantity);
@@ -29,7 +31,8 @@ export const reserveStock = async (tx, paymentRequestId, items, allocationOrder)
     }
     if (left.greaterThan(0)) {
       const product = await tx.product.findUnique({ where: { id: item.productId }, select: { genericName: true } });
-      throw new AppError(409, `Insufficient usable stock for ${product?.genericName || 'a requested item'} to complete this payment. Ask the pharmacist to update the bill.`);
+      const { purpose = 'to complete this payment', advice = 'Ask the pharmacist to update the bill.' } = shortage;
+      throw new AppError(409, `Insufficient usable stock for ${product?.genericName || 'a requested item'} ${purpose}. ${advice}`);
     }
   }
 };

@@ -5,6 +5,7 @@ import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
 import { stockQuantity } from '../utils/stockQuantity.js';
 import { customerInvoice } from '../utils/customerInvoice.js';
+import { latestPartialDecisions, PARTIAL_SUPPLY_EVENT, supplyBalance, supplyRows } from '../utils/prescriptionBalance.js';
 import { saleFinancials } from '../utils/reportFinancials.js';
 import { assertCouponMatched, calculateDiscounts } from './discount.service.js';
 import { batchAllocationOrder, operationSettingsService } from './operationSettings.service.js';
@@ -32,10 +33,13 @@ export const saleService = {
       // Pharmacy staff share invoice read access, as they do in the sales list.
       // Payment attribution still belongs to the cashier who records each payment.
       where: { id, ...(user.role === 'PATIENT' ? { patientId: user.id } : {}) },
-      include: { refunds: { include: { lines: true } }, patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } }, cashier: { select: { fullName: true } }, paymentRequest: { select: { requestNumber: true } }, items: { include: { product: true, batch: true } }, dispensing: { include: invoiceDispensingInclude } },
+      include: { refunds: { include: { lines: true } }, patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } }, cashier: { select: { fullName: true } }, paymentRequest: { select: { requestNumber: true, events: { where: { kind: PARTIAL_SUPPLY_EVENT }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { kind: true, details: true } } } }, items: { include: { product: true, batch: true } }, dispensing: { include: invoiceDispensingInclude } },
     });
     if (!sale) throw new AppError(404, 'Invoice not found.');
-    return user.role === 'PATIENT' ? customerInvoice(sale) : sale;
+    // A partly supplied prescription: show what can still be collected later.
+    const { later, notIssued } = sale.status === 'VOIDED' ? { later: [], notIssued: [] } : supplyBalance(sale.dispensing?.prescription?.items, null, latestPartialDecisions(sale.paymentRequest?.events));
+    const withBalance = { ...sale, balanceToCollect: later, notToBeIssued: notIssued, supplyRows: sale.status === 'VOIDED' ? [] : supplyRows(sale.paymentRequest?.events) };
+    return user.role === 'PATIENT' ? customerInvoice(withBalance) : withBalance;
   },
   async pay(id, amount, paymentMethod, cashierId, reference) {
     return serializable(async (tx) => {

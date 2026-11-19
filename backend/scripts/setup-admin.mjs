@@ -101,7 +101,7 @@ try {
     }
     const { password: unusedPassword, ...profile } = parsed.data;
     await tx.user.create({ data: { ...profile, passwordHash, mustChangePassword: true } });
-  }, { isolationLevel: 'Serializable' });
+  }, { isolationLevel: 'Serializable', maxWait: 10_000, timeout: 15_000 });
   console.log('Administrator created successfully. Sign in on your Vercel website and change the password when prompted.');
 } catch (error) {
   if (error.code === 'ERR_MODULE_NOT_FOUND') {

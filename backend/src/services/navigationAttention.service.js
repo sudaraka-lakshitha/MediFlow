@@ -15,7 +15,7 @@ export const navigationAttentionService = {
         where: { userId: user.id },
         select: { id: true },
       });
-      const [prescriptions, uploads, quotationsAwaitingDecision, invoicesAwaitingAction, sales] = await Promise.all([
+      const [prescriptions, uploads, quotationsAwaitingDecision, invoicesAwaitingAction, sales, activeDeliveries] = await Promise.all([
         prisma.prescription.count({
           where: {
             patientId: profile?.id || -1,
@@ -34,6 +34,9 @@ export const navigationAttentionService = {
         prisma.sale.count({
           where: { patientId: user.id, status: 'PENDING' },
         }),
+        prisma.deliveryRequest.count({
+          where: { paymentRequest: { patientId: user.id }, status: { notIn: ['DELIVERED', 'CANCELLED'] } },
+        }),
       ]);
       const uploadTotal = uploads + quotationsAwaitingDecision;
       const uploadLabel = quotationsAwaitingDecision
@@ -42,19 +45,23 @@ export const navigationAttentionService = {
       return {
         prescriptions: badge(prescriptions, 'Active prescriptions', 'info'),
         prescriptionUploads: badge(uploadTotal, uploadLabel, quotationsAwaitingDecision ? 'danger' : 'warning'),
-        sales: badge(sales + invoicesAwaitingAction, invoicesAwaitingAction ? 'Final invoice requires payment action' : 'Invoices with a remaining balance', 'danger'),
+        sales: badge(sales + invoicesAwaitingAction, invoicesAwaitingAction ? 'Invoices awaiting payment, including delivery fees' : 'Invoices with a remaining balance', 'danger'),
+        deliveries: badge(activeDeliveries, 'Home deliveries in progress', activeDeliveries ? 'warning' : 'neutral'),
       };
     }
 
     if (user.role === 'CASHIER') {
-      const [awaitingPayment, slipsToReview, pendingPayouts] = await Promise.all([
+      const [awaitingPayment, slipsToReview, pendingPayouts, activeDeliveries] = await Promise.all([
         prisma.paymentRequest.count({ where: { status: { in: ['AWAITING_PAYMENT', 'SLIP_SUBMITTED'] } } }),
         prisma.uploadPaymentSlip.count({ where: { status: 'PENDING' } }),
         prisma.refund.count({ where: { status: 'PENDING' } }),
+        prisma.deliveryRequest.count({ where: { status: { notIn: ['DELIVERED', 'CANCELLED'] } } }),
       ]);
       return {
         cashier: badge(awaitingPayment + pendingPayouts, `${awaitingPayment} payments, ${pendingPayouts} refund payouts awaiting cashier action`, awaitingPayment + pendingPayouts ? 'danger' : 'neutral'),
         prescriptionUploads: badge(slipsToReview, 'Bank transfer receipts awaiting verification', slipsToReview ? 'warning' : 'neutral'),
+        sales: badge(awaitingPayment, 'Invoices awaiting payment, including delivery fees', awaitingPayment ? 'warning' : 'neutral'),
+        deliveries: badge(activeDeliveries, 'Home deliveries in progress', activeDeliveries ? 'warning' : 'neutral'),
       };
     }
 
@@ -69,6 +76,8 @@ export const navigationAttentionService = {
       uploads,
       awaitingPayment,
       pendingSales,
+      salesInvoicesAwaitingAction,
+      activeDeliveries,
       expiredBatches,
       nearExpiryBatches,
       products,
@@ -107,6 +116,8 @@ export const navigationAttentionService = {
         ? prisma.paymentRequest.count({ where: { status: { in: ['AWAITING_PAYMENT', 'SLIP_SUBMITTED'] } } })
         : Promise.resolve(0),
       prisma.sale.count({ where: { status: 'PENDING' } }),
+      prisma.paymentRequest.count({ where: { status: { in: ['AWAITING_PAYMENT', 'SLIP_SUBMITTED'] } } }),
+      prisma.deliveryRequest.count({ where: { status: { notIn: ['DELIVERED', 'CANCELLED'] } } }),
       prisma.inventoryBatch.count({
         where: { expiryDate: { lt: now }, quantityAvailable: { gt: 0 } },
       }),
@@ -169,10 +180,11 @@ export const navigationAttentionService = {
         expiredBatches ? 'danger' : inventoryAttention ? 'warning' : 'neutral',
       ),
       sales: badge(
-        pendingSales,
-        'Invoices with a remaining balance',
-        pendingSales ? 'warning' : 'neutral',
+        pendingSales + salesInvoicesAwaitingAction,
+        'Invoices awaiting payment or sales requiring completion',
+        pendingSales + salesInvoicesAwaitingAction ? 'warning' : 'neutral',
       ),
+      deliveries: badge(activeDeliveries, 'Home deliveries in progress', activeDeliveries ? 'warning' : 'neutral'),
       audit: badge(
         failedAudits,
         'Unread staff or patient errors recorded in the last 24 hours',

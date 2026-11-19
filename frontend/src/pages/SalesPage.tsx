@@ -17,6 +17,7 @@ import { InvoiceChanges } from "../components/InvoiceChanges";
 import { DocumentPreview, type DocumentTarget } from "../components/DocumentPreview";
 import { RefundWorkspace } from "../components/RefundWorkspace";
 import { Link } from 'react-router-dom';
+import { deliveryStatusLabel } from '../utils/deliveryStatus';
 
 const emptyRetail = () => ({
   patientId: "",
@@ -27,13 +28,22 @@ const emptyRetail = () => ({
   items: [{ productId: "", quantity: 1 }],
 });
 const money = (value: unknown) => `Rs. ${Number(value || 0).toFixed(2)}`;
+// Mirrors the server's stock-hold rule for an invoice. Uploaded orders follow
+// the customer's choice: prepared (collection or delivery) orders are held from
+// billing; "send me the bill first" orders hold nothing until payment.
+type HoldRule = "AT_BILLING" | "AFTER_PAYMENT" | "CASH_CHOICE";
+const holdRule = (invoice: any): HoldRule => invoice?.prescription?.sourceUpload
+  ? invoice.prescription.sourceUpload.prepareRequested ? "AT_BILLING" : "AFTER_PAYMENT"
+  : "CASH_CHOICE";
 
 function BankAccountDetails({
   accounts,
   reference,
+  deliveryFee = false,
 }: {
   accounts: any[];
   reference: string;
+  deliveryFee?: boolean;
 }) {
   return (
     <div className="mt-3">
@@ -66,8 +76,9 @@ function BankAccountDetails({
       </div>
       <small className="d-block text-secondary mt-2">
         Use <strong>{reference}</strong> as the transfer reference. Upload the
-        receipt after acknowledging this invoice; stock is reserved only after
-        cashier verification.
+        receipt after acknowledging this invoice; {deliveryFee
+          ? "the delivery fee must be verified before dispatch."
+          : "stock is reserved only after cashier verification."}
       </small>
     </div>
   );
@@ -81,7 +92,7 @@ function PatientPickupPlan({ invoice, onSaved }: { invoice: any; onSaved(): void
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const hasActiveDelivery = invoice.delivery && invoice.delivery.status !== "CANCELLED";
-  const canSetPickup = prescription?.id && ["AWAITING_PAYMENT", "SLIP_SUBMITTED", "PAID"].includes(invoice.status) && !hasActiveDelivery;
+  const canSetPickup = prescription?.id && ["AWAITING_PAYMENT", "SLIP_SUBMITTED", "PAID"].includes(invoice.status) && !hasActiveDelivery && !invoice.customerCancellationReason;
   if (!canSetPickup) return null;
 
   const save = async (event: FormEvent) => {
@@ -153,7 +164,6 @@ export function SalesPage() {
   const [bankAccounts, setBankAccounts] = useState<any[]>([]);
   const [payOnline, setPayOnline] = useState<any>(null);
   const [invoiceAck, setInvoiceAck] = useState<any>(null);
-  const [declineTarget, setDeclineTarget] = useState<any>(null);
   const [cancelRequestTarget, setCancelRequestTarget] = useState<any>(null);
   const load = useCallback(async () => {
     setError("");
@@ -173,7 +183,7 @@ export function SalesPage() {
           requests.push(api.get("/catalog/products").then((result) => setProducts(result.data.data)));
           requests.push(api.get("/patients").then((result) => setPatients(result.data.data)));
         }
-        requests.push(readOrders("/payment-requests").then((result) => setRetailRequests(result.data.data.filter((request: any) => request.type === "RETAIL"))));
+        requests.push(readOrders("/payment-requests").then((result) => setRetailRequests(result.data.data.filter((request: any) => request.type === "RETAIL" && !request.deliveryFeeFor))));
         requests.push(api.get("/settings/operations").then((result) => setOperationSettings(result.data.data)));
       } else {
         requests.push(readOrders("/payment-requests").then((result) => setMyInvoices(result.data.data)));
@@ -219,6 +229,16 @@ export function SalesPage() {
   useEffect(() => {
     load();
   }, [load]);
+  useEffect(() => {
+    if (staff) return;
+    const refreshWhenVisible = () => { if (!document.hidden) void load(); };
+    const timer = window.setInterval(refreshWhenVisible, 10_000);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [staff, load]);
   const retailProducts = useMemo(
     () =>
       products.filter(
@@ -380,24 +400,6 @@ export function SalesPage() {
     }
   };
 
-  const submitDecline = async (event: FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      await api.post(`/payment-requests/${declineTarget.invoice.id}/decline`, {
-        reason: declineTarget.reason,
-        revision: declineTarget.invoice.revision,
-      });
-      setDeclineTarget(null);
-      await load();
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const submitCancelRequest = async (event: FormEvent) => {
     event.preventDefault();
     if (!cancelRequestTarget) return;
@@ -410,6 +412,7 @@ export function SalesPage() {
     try {
       await api.post(`/payment-requests/${cancelRequestTarget.invoice.id}/request-cancellation`, {
         reason: cancelRequestTarget.reason.trim(),
+        revision: cancelRequestTarget.invoice.revision,
       });
       setCancelRequestTarget(null);
       await load();
@@ -488,11 +491,11 @@ export function SalesPage() {
       ),
     });
   if (loading) return <Loading />;
-  const workflowInvoice = payOnline?.invoice || invoiceAck?.invoice || declineTarget?.invoice || cancelRequestTarget?.invoice || handover;
+  const workflowInvoice = payOnline?.invoice || invoiceAck?.invoice || cancelRequestTarget?.invoice || handover;
   const workflowSale = payment || voidTarget;
   return (
     <WorkflowGuard resource={workflowInvoice?.id ? `payment/${workflowInvoice.id}` : workflowSale?.id ? `sale/${workflowSale.id}` : null}
-      onCancel={() => { setPayOnline(null); setInvoiceAck(null); setDeclineTarget(null); setCancelRequestTarget(null); setHandover(null); setPayment(null); setVoidTarget(null); }}>
+      onCancel={() => { setPayOnline(null); setInvoiceAck(null); setCancelRequestTarget(null); setHandover(null); setPayment(null); setVoidTarget(null); }}>
       <div className="page-intro">
         <div>
           <h2>{staff ? "Sales & billing" : "My invoices"}</h2>
@@ -552,8 +555,9 @@ export function SalesPage() {
                       <div>
                         <strong>{invoice.requestNumber}</strong>
                         <small className="d-block text-secondary">
-                          {invoice.prescription?.prescriptionNumber ||
-                            "Pharmacy items"}{" "}
+                          {invoice.deliveryFeeFor
+                            ? `Home delivery fee for ${invoice.deliveryFeeFor.paymentRequest?.requestNumber || "prescription order"}`
+                            : invoice.prescription?.prescriptionNumber || "Pharmacy items"}{" "}
                           · {formatPharmacyDate(invoice.createdAt)}
                         </small>
                       </div>
@@ -565,6 +569,20 @@ export function SalesPage() {
                       </div>
                     </div>
 
+                    {invoice.deliveryFeeFor && (
+                      <div className="alert alert-info small mt-3 mb-0">
+                        <strong>Separate home delivery service fee</strong>
+                        <span className="d-block">This invoice covers delivery only; medicines are billed separately. The pharmacy dispatches the parcel after the delivery fee is paid and verified.</span>
+                        <Link to="/deliveries" className="btn btn-sm btn-outline-primary mt-2">Track home delivery</Link>
+                      </div>
+                    )}
+                    {invoice.deliveryFeeFor && invoice.items.length === 0 && (
+                      <div className="border rounded-3 p-3 mt-2 d-flex justify-content-between gap-3">
+                        <span><i className="bi bi-truck me-2 text-primary" />Home delivery service</span>
+                        <strong>{money(invoice.total)}</strong>
+                      </div>
+                    )}
+
                     <div className="mt-2">
                       {invoice.items.map((item: any) => (
                         <small className="d-block text-secondary" key={item.id}>
@@ -575,6 +593,44 @@ export function SalesPage() {
                       ))}
                     </div>
 
+                    {invoice.supplyRows?.length > 0 && (
+                      <div className="alert alert-warning small mt-3 mb-0">
+                        <strong>Prescribed and bought — medicines not bought now are not charged</strong>
+                <table className="table table-sm small mb-1">
+                  <thead><tr><th>Medicine</th><th>Prescribed</th><th>Earlier</th><th>Bought now</th><th>Not bought</th><th>Rest of it</th></tr></thead>
+                  <tbody>
+                    {invoice.supplyRows.map((row: any) => (
+                      <tr key={row.prescriptionItemId}>
+                        <td>{row.name}</td>
+                        <td>{Number(row.prescribed)} {row.unit}</td>
+                        <td>{Number(row.suppliedBefore) || "—"}</td>
+                        <td>{Number(row.onThisBill)}</td>
+                        <td>{Number(row.notBought) ? <strong>{Number(row.notBought)}</strong> : "—"}</td>
+                        <td>{row.rest ? `${row.rest}${row.reason ? ` (${row.reason})` : ""}` : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                      </div>
+                    )}
+                    {!invoice.supplyRows?.length && invoice.balanceToCollect?.length > 0 && (
+                      <div className="alert alert-warning small mt-3 mb-0">
+                        <strong>Balance to collect later — not charged on this bill</strong>
+                        {invoice.balanceToCollect.map((line: any) => (
+                          <span className="d-block" key={line.prescriptionItemId}>{line.name}: {Number(line.quantity)} {line.unit}{line.reason ? ` (${line.reason})` : ""}</span>
+                        ))}
+                        <span className="d-block mt-1">Come back for these when the pharmacy has stock; they will be billed separately then.</span>
+                      </div>
+                    )}
+                    {!invoice.supplyRows?.length && invoice.notToBeIssued?.length > 0 && (
+                      <div className="alert alert-secondary small mt-3 mb-0">
+                        <strong>Not to be issued — not charged</strong>
+                        {invoice.notToBeIssued.map((line: any) => (
+                          <span className="d-block" key={line.prescriptionItemId}>{line.name}: {Number(line.quantity)} {line.unit}{line.reason ? ` (${line.reason})` : ""}</span>
+                        ))}
+                        <span className="d-block mt-1">These were prescribed but will not be issued later on this prescription.</span>
+                      </div>
+                    )}
                     {invoice.pharmacyNote && (
                       <div className="alert alert-light border small mt-3 mb-0">
                         <strong>Pharmacy note</strong>
@@ -586,7 +642,7 @@ export function SalesPage() {
 
                     <PatientPickupPlan invoice={invoice} onSaved={load} />
 
-                    {invoice.prescription && !invoice.delivery && ["AWAITING_PAYMENT", "SLIP_SUBMITTED", "PAID"].includes(invoice.status) && (
+                    {invoice.prescription && !invoice.delivery && !invoice.customerCancellationReason && ["AWAITING_PAYMENT", "SLIP_SUBMITTED", "PAID"].includes(invoice.status) && (
                       <div className="alert alert-info small mt-3 mb-0">
                         {invoice.status === "PAID" ? <>
                           <strong>Prefer home delivery?</strong> Request it under Home deliveries. The pharmacy will confirm a separate delivery-fee invoice, which must be paid before dispatch.
@@ -600,23 +656,24 @@ export function SalesPage() {
                     )}
                     {invoice.prescription && invoice.delivery && invoice.delivery.status !== "CANCELLED" && ["AWAITING_PAYMENT", "SLIP_SUBMITTED", "PAID"].includes(invoice.status) && (
                       <div className="alert alert-info small mt-3 mb-0">
-                        <strong>Home delivery requested:</strong> {invoice.delivery.status.replaceAll("_", " ").toLowerCase()}. Track the courier and delivery-fee payment under Home deliveries.
+                        <strong>Home delivery requested:</strong> {deliveryStatusLabel(invoice.delivery.status).toLowerCase()}. Track the courier and delivery-fee payment under Home deliveries.
                         <div className="mt-2"><Link to="/deliveries" className="btn btn-sm btn-outline-primary">Track home delivery</Link></div>
                       </div>
                     )}
 
                     {["CANCELLED", "FULFILLED"].includes(invoice.status) ? (
-                      <div className="text-secondary mt-3">{invoice.status === "FULFILLED" ? (invoice.delivery ? `Delivery ${invoice.delivery.status.toLowerCase()}.` : invoice.deliveryFeeFor ? 'Delivery service paid.' : 'Order collected.') : "Invoice closed — no payment is due."}</div>
+                      <div className="text-secondary mt-3">{invoice.status === "FULFILLED" ? (invoice.delivery ? `Delivery: ${deliveryStatusLabel(invoice.delivery.status).toLowerCase()}.` : invoice.deliveryFeeFor ? 'Delivery service paid.' : 'Order collected.') : "Invoice closed — no payment is due."}</div>
                     ) : pendingSlip ? (
                       <div className="alert alert-info mt-3 mb-0">
-                        <strong>Your bank slip is being checked.</strong>
+                        <strong>{invoice.deliveryFeeFor ? "Your delivery-fee transfer is being checked." : "Your bank slip is being checked."}</strong>
                         <small className="d-block">
                           You sent {money(pendingSlip.declaredAmount)} on{" "}
                           {pendingSlip.paidOn
                             ? formatPharmacyDate(pendingSlip.paidOn)
                             : "an unstated date"}
-                          . The pharmacy will confirm it shortly and start
-                          preparing your medicine.
+                          . {invoice.deliveryFeeFor
+                            ? "The cashier must verify it before the pharmacy can dispatch your parcel."
+                            : "The pharmacy will confirm it shortly and start preparing your medicine."}
                         </small>
                         {!invoice.customerCancellationReason ? (
                           <button
@@ -641,10 +698,18 @@ export function SalesPage() {
                       <div className="mt-3">
                         <div className="alert alert-success small mb-2">
                           <i className="bi bi-check-circle-fill me-2" />
-                          {invoice.customerCancellationReason ? "Payment verified. Collection is on hold while your cancellation request is reviewed." : "Payment verified. Your order is being prepared."}
+                          {invoice.customerCancellationReason
+                            ? "Payment verified. Collection is on hold while your cancellation request is reviewed."
+                            : invoice.deliveryFeeFor
+                              ? "Delivery fee paid and verified. The pharmacy can now dispatch when the parcel is ready."
+                              : invoice.delivery && invoice.delivery.status !== "CANCELLED"
+                                ? "Payment verified. This is a home-delivery order, so no collection PIN is needed; track it under Home deliveries."
+                                : "Payment verified. Your order is being prepared."}
                         </div>
-                        <button type="button" className="btn btn-sm btn-outline-primary me-2 mb-2" onClick={() => paymentPdf(invoice, "receipt")}>View collection receipt / PIN</button>
-                        {!invoice.customerCancellationReason ? (
+                        <button type="button" className="btn btn-sm btn-outline-primary me-2 mb-2" onClick={() => paymentPdf(invoice, "receipt")}>{invoice.deliveryFeeFor ? "View delivery-fee receipt" : invoice.delivery && invoice.delivery.status !== "CANCELLED" ? "View payment receipt" : "View collection receipt / PIN"}</button>
+                        {invoice.deliveryFeeFor ? (
+                          <Link to="/deliveries" className="btn btn-sm btn-outline-secondary me-2 mb-2">Track delivery</Link>
+                        ) : !invoice.customerCancellationReason ? (
                           <button
                             type="button"
                             className="btn btn-sm btn-outline-warning"
@@ -663,6 +728,21 @@ export function SalesPage() {
                           </div>
                         )}
                       </div>
+                    ) : invoice.customerCancellationReason ? (
+                      <div className="alert alert-warning mt-3 mb-0">
+                        <strong>Cancellation request submitted.</strong>
+                        <small className="d-block">
+                          The pharmacy is reviewing your request. Payment and preparation are paused until staff resolve it.
+                        </small>
+                        <small className="d-block mt-1">Reason: {invoice.customerCancellationReason}</small>
+                        <button
+                          className="btn btn-outline-secondary mt-2"
+                          onClick={() => paymentPdf(invoice, "handoff")}
+                        >
+                          <i className="bi bi-receipt me-1" />
+                          View invoice
+                        </button>
+                      </div>
                     ) : (
                       <>
                         {lastRejected && (
@@ -678,26 +758,43 @@ export function SalesPage() {
                             <strong>{invoice.acknowledgedRevision ? "The pharmacy updated this invoice." : "Please review the final invoice."}</strong>
                             <small className="d-block mb-2">
                               Confirm revision {invoice.revision} and choose how you intend to pay. Any acknowledgement of an older revision is withdrawn automatically.
+                              {holdRule(invoice) === "AT_BILLING" && (invoice.reservationExpiresAt
+                                ? ` Your medicines are already set aside for this order until ${formatPharmacyDateTime(invoice.reservationExpiresAt)}.`
+                                : " Your earlier stock hold has ended; confirming checks availability and sets the medicines aside again.")}
+                              {holdRule(invoice) === "AFTER_PAYMENT" && " Nothing is set aside before payment, because you asked to review the bill first."}
                             </small>
-                            <button className="btn btn-primary" onClick={() => { setError(""); setInvoiceAck({ invoice, paymentChoice: bankAccounts.length ? "BANK_TRANSFER" : "CASH", customerNote: invoice.customerNote || "", couponCode: invoice.couponCode || "" }); }}>
+                            <button className="btn btn-primary" onClick={() => { setError(""); setInvoiceAck({ invoice, paymentChoice: invoice.deliveryFeeFor || bankAccounts.length ? "BANK_TRANSFER" : "CASH", customerNote: invoice.customerNote || "", couponCode: invoice.couponCode || "" }); }}>
                               Review &amp; choose payment
                             </button>
                           </div>
                         ) : invoice.customerPaymentChoice === "CASH" ? (
                           <div className="alert alert-success mt-3 mb-0">
-                            <strong>{invoice.reservationExpiresAt ? "Cash payment selected — stock reserved temporarily." : "Cash payment selected — stock hold expired."}</strong>
+                            <strong>{invoice.deliveryFeeFor ? "Delivery fees are paid by bank transfer only." : holdRule(invoice) === "AFTER_PAYMENT" ? "Cash payment selected — pay at the pharmacy counter." : invoice.reservationExpiresAt ? "Cash payment selected — stock reserved temporarily." : "Cash payment selected — stock hold expired."}</strong>
                             <small className="d-block">
-                              {invoice.reservationExpiresAt ? `Pay at the pharmacy counter before ${formatPharmacyDateTime(invoice.reservationExpiresAt)}.` : "Renew your reservation to check availability and hold the medicines again."} Expiry releases stock but does not cancel your invoice approval.
+                              {invoice.deliveryFeeFor
+                                ? "Choose Change payment method, select bank transfer, then upload your transfer receipt. Dispatch follows after the cashier verifies it."
+                                : holdRule(invoice) === "AFTER_PAYMENT"
+                                  ? "You asked to review the bill first, so nothing is set aside before payment. The cashier checks stock and records your payment at the counter."
+                                : invoice.reservationExpiresAt
+                                  ? `Pay at the pharmacy counter before ${formatPharmacyDateTime(invoice.reservationExpiresAt)}. Expiry releases stock but does not cancel your invoice approval.`
+                                  : "Renew your reservation to check availability and hold the medicines again. Expiry releases stock but does not cancel your invoice approval."}
                             </small>
                           </div>
                         ) : (
                           <div className="alert alert-info mt-3 mb-0">
-                            <strong>Bank transfer selected.</strong>
-                            <small className="d-block mb-2">Upload proof below. Stock will be reserved only after the cashier verifies the transfer.</small>
+                            <strong>{invoice.deliveryFeeFor ? "Bank transfer selected for the delivery fee." : "Bank transfer selected."}</strong>
+                            <small className="d-block mb-2">{invoice.deliveryFeeFor
+                              ? "Upload proof below. Dispatch remains on hold until the cashier verifies this separate fee payment."
+                              : holdRule(invoice) === "AT_BILLING"
+                                ? invoice.reservationExpiresAt
+                                  ? `Upload proof below before ${formatPharmacyDateTime(invoice.reservationExpiresAt)}. Your medicines stay set aside until then, and while the cashier checks an uploaded receipt.`
+                                  : "Your earlier stock hold has ended. Upload proof below; stock is checked and held again when the cashier verifies the transfer."
+                                : "Upload proof below. Stock will be reserved only after the cashier verifies the transfer."}</small>
                             {bankAccounts.length ? (
                               <BankAccountDetails
                                 accounts={bankAccounts}
                                 reference={invoice.requestNumber}
+                                deliveryFee={Boolean(invoice.deliveryFeeFor)}
                               />
                             ) : (
                               <small className="d-block text-danger mb-2">
@@ -721,20 +818,21 @@ export function SalesPage() {
                               disabled={!bankAccounts.length}
                             >
                               <i className="bi bi-bank me-2" />
-                              Upload bank transfer receipt
+                              {invoice.deliveryFeeFor ? "Upload delivery-fee receipt" : "Upload bank transfer receipt"}
                             </button>
                           </div>
                         )}
                         <div className="d-flex flex-wrap gap-2 mt-3">
-                          <button
+                          {!invoice.deliveryFeeFor && <button
                             className="btn btn-outline-danger"
                             onClick={() => {
                               setError("");
-                              setDeclineTarget({ invoice, reason: "" });
+                              setCancelRequestTarget({ invoice, reason: "" });
                             }}
                           >
-                            Decline this invoice
-                          </button>
+                            <i className="bi bi-x-circle me-1" />
+                            Request cancellation
+                          </button>}
                           <button
                             className="btn btn-outline-secondary"
                             onClick={() => paymentPdf(invoice, "handoff")}
@@ -744,8 +842,8 @@ export function SalesPage() {
                           </button>
                         </div>
                         {invoice.acknowledgedRevision === invoice.revision && (
-                          <button className="btn btn-outline-secondary mt-2" onClick={() => { setError(""); setInvoiceAck({ invoice, changeChoice: true, paymentChoice: invoice.customerPaymentChoice || "CASH", customerNote: invoice.customerNote || "", couponCode: invoice.couponCode || "" }); }}>
-                            Change payment method / renew reservation
+                          <button className="btn btn-outline-secondary mt-2" onClick={() => { setError(""); setInvoiceAck({ invoice, changeChoice: true, paymentChoice: invoice.deliveryFeeFor ? "BANK_TRANSFER" : invoice.customerPaymentChoice || "CASH", customerNote: invoice.customerNote || "", couponCode: invoice.couponCode || "" }); }}>
+                            {holdRule(invoice) === "AFTER_PAYMENT" ? "Change payment method" : "Change payment method / renew reservation"}
                           </button>
                         )}
                         {!bankAccounts.length && invoice.customerPaymentChoice === "BANK_TRANSFER" && invoice.acknowledgedRevision === invoice.revision && (
@@ -1207,18 +1305,21 @@ export function SalesPage() {
       <RefundWorkspace sales={rows} />
       {invoiceAck && (
         <Modal
-          title={`${invoiceAck.changeChoice ? "Payment method & reservation" : "Review final invoice"} — ${invoiceAck.invoice.requestNumber}`}
+          title={`${invoiceAck.changeChoice ? "Payment method & reservation" : invoiceAck.invoice.deliveryFeeFor ? "Review delivery-fee invoice" : "Review final invoice"} — ${invoiceAck.invoice.requestNumber}`}
           onClose={() => setInvoiceAck(null)}
           size="lg"
         >
           <form onSubmit={acknowledgeInvoice}>
             <div className="alert alert-info">
-              <strong>Final total: {money(invoiceAck.invoice.total)}</strong>
+              <strong>{invoiceAck.invoice.deliveryFeeFor ? "Delivery fee total" : "Final total"}: {money(invoiceAck.invoice.total)}</strong>
               <small className="d-block">
-                Invoice revision {invoiceAck.invoice.revision}. Confirm the medicines and total below before selecting payment.
+                {invoiceAck.invoice.deliveryFeeFor
+                  ? `Invoice revision ${invoiceAck.invoice.revision}. This separate invoice is for home delivery only; the medicine bill is separate.`
+                  : `Invoice revision ${invoiceAck.invoice.revision}. Confirm the medicines and total below before selecting payment.`}
               </small>
             </div>
             <div className="border rounded-3 p-3 mb-3">
+              {invoiceAck.invoice.deliveryFeeFor && invoiceAck.invoice.items.length === 0 && <div className="d-flex justify-content-between gap-3 mb-1"><span>Home delivery service</span><strong>{money(invoiceAck.invoice.total)}</strong></div>}
               {invoiceAck.invoice.items.map((item: any) => (
                 <div className="d-flex justify-content-between gap-3 mb-1" key={item.id}>
                   <span>{item.product.genericName} {item.product.strength} × {item.quantity}</span>
@@ -1226,7 +1327,7 @@ export function SalesPage() {
                 </div>
               ))}
               <div className="border-top mt-2 pt-2 small">
-                <div className="d-flex justify-content-between"><span>Subtotal</span><span>{money(invoiceAck.invoice.subtotal)}</span></div>
+                <div className="d-flex justify-content-between"><span>{invoiceAck.invoice.deliveryFeeFor ? "Delivery service fee" : "Subtotal"}</span><span>{money(invoiceAck.invoice.subtotal)}</span></div>
                 {Number(invoiceAck.invoice.discount) > 0 && <div className="d-flex justify-content-between text-success"><span>Discount{invoiceAck.invoice.couponCode ? ` (${invoiceAck.invoice.couponCode})` : ""}</span><span>− {money(invoiceAck.invoice.discount)}</span></div>}
                 {Number(invoiceAck.invoice.containerFee) > 0 && <div className="d-flex justify-content-between"><span>Container fee</span><span>{money(invoiceAck.invoice.containerFee)}</span></div>}
                 {Number(invoiceAck.invoice.tax) > 0 && <div className="d-flex justify-content-between"><span>Tax</span><span>{money(invoiceAck.invoice.tax)}</span></div>}
@@ -1237,7 +1338,7 @@ export function SalesPage() {
                 </div>
               )}
             </div>
-            {!invoiceAck.changeChoice && (
+            {!invoiceAck.changeChoice && !invoiceAck.invoice.deliveryFeeFor && (
               <div className="border rounded-3 p-3 mb-3">
                 <label className="form-label fw-semibold" htmlFor="patient-invoice-coupon">Coupon code (optional)</label>
                 <div className="input-group">
@@ -1273,24 +1374,42 @@ export function SalesPage() {
                     <strong>Bank transfer</strong>
                     <small className="d-block text-secondary mt-1">
                       {bankAccounts.length
-                        ? "Upload a transfer receipt. The cashier must verify it before payment is confirmed and stock is reserved."
+                        ? invoiceAck.invoice.deliveryFeeFor
+                          ? "Upload a transfer receipt. The cashier must verify the delivery fee before the parcel can be dispatched."
+                          : holdRule(invoiceAck.invoice) === "AT_BILLING"
+                            ? "Upload a transfer receipt. Your medicines are already set aside for this order; the cashier verifies the transfer before payment is confirmed."
+                            : "Upload a transfer receipt. The cashier must verify it before payment is confirmed and stock is reserved."
                         : "Temporarily unavailable — no active pharmacy bank account is configured."}
                     </small>
                   </label>
                 </div>
+                {invoiceAck.invoice.deliveryFeeFor ? (
+                <div className="col-md-6">
+                  <div className="d-block border rounded-3 p-3 h-100 bg-light">
+                    <strong>Bank transfer only</strong>
+                    <small className="d-block text-secondary mt-1">Delivery fees cannot be paid in cash or by card. Transfer the fee to a pharmacy account below and upload the receipt.</small>
+                  </div>
+                </div>
+                ) : (
                 <div className="col-md-6">
                   <label className={`d-block border rounded-3 p-3 h-100 ${invoiceAck.paymentChoice === "CASH" ? "border-primary bg-primary-subtle" : ""}`} style={{ cursor: "pointer" }}>
                     <input className="form-check-input me-2" type="radio" name="invoice-payment-choice" checked={invoiceAck.paymentChoice === "CASH"} onChange={() => setInvoiceAck({ ...invoiceAck, paymentChoice: "CASH" })} />
                     <strong>Cash at pharmacy</strong>
-                    <small className="d-block text-secondary mt-1">The medicines are reserved immediately for the pharmacy's configured short period (normally 24 hours). The exact deadline will be shown after confirmation.</small>
+                    <small className="d-block text-secondary mt-1">{holdRule(invoiceAck.invoice) === "AT_BILLING"
+                        ? "Your medicines are already set aside for this order. Pay at the counter before the hold ends; the deadline is shown after confirmation."
+                        : holdRule(invoiceAck.invoice) === "AFTER_PAYMENT"
+                          ? "Pay at the counter. Nothing is set aside before payment, because you asked to review the bill first."
+                          : "The medicines are reserved immediately for the pharmacy's configured short period (normally 24 hours). The exact deadline will be shown after confirmation."}</small>
                   </label>
                 </div>
+                )}
               </div>
               {invoiceAck.paymentChoice === "BANK_TRANSFER" && bankAccounts.length > 0 && (
                 <div className="alert alert-light border mt-3 mb-0">
                   <BankAccountDetails
                     accounts={bankAccounts}
                     reference={invoiceAck.invoice.requestNumber}
+                    deliveryFee={Boolean(invoiceAck.invoice.deliveryFeeFor)}
                   />
                 </div>
               )}
@@ -1436,40 +1555,6 @@ export function SalesPage() {
         </Modal>
       )}
 
-      {declineTarget && (
-        <Modal
-          title={`Decline invoice — ${declineTarget.invoice.requestNumber}`}
-          onClose={() => setDeclineTarget(null)}
-          size="sm"
-        >
-          <form onSubmit={submitDecline}>
-            <div className="alert alert-warning">
-              <strong>This cancels the invoice.</strong>
-              <small className="d-block">
-                Your prescription stays on file, so the pharmacy can quote it
-                again with different quantities if you ask.
-              </small>
-            </div>
-            <label className="form-label">Why are you declining it?</label>
-            <textarea
-              className="form-control"
-              value={declineTarget.reason}
-              onChange={(event) =>
-                setDeclineTarget({ ...declineTarget, reason: event.target.value })
-              }
-              placeholder="For example: more than I expected, I would like a smaller quantity."
-              required
-            />
-            <Alert message={error} />
-            <ModalActions
-              onClose={() => setDeclineTarget(null)}
-              submitLabel="Decline invoice"
-              busy={busy || declineTarget.reason.trim().length < 3}
-            />
-          </form>
-        </Modal>
-      )}
-
       {cancelRequestTarget && (
         <Modal
           title={`Request cancellation — ${cancelRequestTarget.invoice.requestNumber}`}
@@ -1481,7 +1566,7 @@ export function SalesPage() {
               <i className="bi bi-exclamation-triangle me-2" />
               <strong>Request cancellation for this bill</strong>
               <br />
-              Our cashier team will review your cancellation request and process any refund before your medicines are prepared.
+              The pharmacy will review your request. Payment and preparation pause while it is reviewed; if you have already paid, staff will handle any applicable refund.
             </div>
             <label className="form-label">Reason for cancellation request (required)</label>
             <textarea

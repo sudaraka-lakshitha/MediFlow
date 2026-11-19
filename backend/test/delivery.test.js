@@ -1,10 +1,10 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const { tx, dispense } = vi.hoisted(() => {
   const model = () => ({ findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), count: vi.fn() });
-  return { tx: { paymentRequest: model(), deliveryRequest: model(), systemSetting: model(), refund: model(), sale: model(), paymentRequestEvent: model() }, dispense: vi.fn() };
+  return { tx: { paymentRequest: model(), deliveryRequest: model(), systemSetting: model(), refund: model(), sale: model(), paymentRequestEvent: model(), bankAccount: { ...model(), findFirst: vi.fn() } }, dispense: vi.fn() };
 });
 vi.mock('../src/config/prisma.js', () => ({ prisma: tx }));
-vi.mock('../src/utils/serializable.js', () => ({ serializable: fn => fn(tx) }));
+vi.mock('../src/utils/serializable.js', () => ({ serializable: fn => fn(tx), stockFulfillmentTransactionOptions: {} }));
 vi.mock('../src/utils/prescriptionDispense.js', () => ({ performPrescriptionDispense: dispense }));
 vi.mock('../src/services/paymentRequest.service.js', () => ({ paymentRequestService: { cancel: vi.fn() } }));
 import { deliveryService } from '../src/services/delivery.service.js';
@@ -13,7 +13,7 @@ const staff = { id: 8, role: 'PHARMACIST' };
 const dispatchInput = { action: 'DISPATCH', trackingReference: 'Courier 123', courierService: 'Test Courier' };
 const bill = { id: 1, patientId: 7, prescriptionId: 3, status: 'PAID', amountPaid: 100, refundedAmount: 0, total: 100, revision: 1 };
 const fee = { id: 2, patientId: 7, status: 'PAID', subtotal: 50, total: 50, amountPaid: 50, refundedAmount: 0, cashierId: 8, paymentMethod: 'BANK_TRANSFER' };
-beforeEach(() => { vi.resetAllMocks(); tx.refund.count.mockResolvedValue(0); tx.paymentRequest.findUnique.mockResolvedValue(bill); });
+beforeEach(() => { vi.resetAllMocks(); tx.refund.count.mockResolvedValue(0); tx.paymentRequest.findUnique.mockResolvedValue(bill); tx.bankAccount.findFirst.mockResolvedValue({ id: 1 }); });
 it('limits patient delivery listing to their own invoices', async () => {
   tx.deliveryRequest.findMany.mockResolvedValue([]);
   await deliveryService.list(user);
@@ -68,6 +68,19 @@ it('creates a first delivery when no previous request exists', async () => {
   await deliveryService.request(1, { recipientName: 'Patient', address: 'Delivery address', phone: '0701234567' }, user);
   expect(tx.deliveryRequest.create).toHaveBeenCalled();
   expect(tx.deliveryRequest.update).not.toHaveBeenCalled();
+  // Delivery orders do not use a collection PIN; the one from payment is withdrawn.
+  expect(tx.paymentRequest.update).toHaveBeenCalledWith({ where: { id: 1 }, data: { pickupPinHash: null, pickupPinEncrypted: null, pinAttempts: 0 } });
+});
+it('issues a collection PIN when staff cancel a paid delivery for counter collection', async () => {
+  tx.deliveryRequest.findUnique.mockResolvedValue({ id: 4, status: 'AWAITING_FEE', paymentRequest: { ...bill, pickupPinHash: null }, feePaymentRequest: null });
+  await deliveryService.act(1, { action: 'CANCEL' }, staff);
+  expect(tx.deliveryRequest.update).toHaveBeenCalledWith({ where: { id: 4 }, data: { status: 'CANCELLED' } });
+  expect(tx.paymentRequest.update).toHaveBeenCalledWith({ where: { id: 1 }, data: expect.objectContaining({ pickupPinHash: expect.any(String), pickupPinEncrypted: expect.any(String), pinAttempts: 0 }) });
+});
+it('issues no PIN when an unpaid delivery is cancelled', async () => {
+  tx.deliveryRequest.findUnique.mockResolvedValue({ id: 4, status: 'REQUESTED', paymentRequest: { ...bill, status: 'AWAITING_PAYMENT', pickupPinHash: null }, feePaymentRequest: null });
+  await deliveryService.act(1, { action: 'CANCEL' }, staff);
+  expect(tx.paymentRequest.update).not.toHaveBeenCalled();
 });
 it('requires an admin-configured fee', async () => {
   tx.deliveryRequest.findUnique.mockResolvedValue({ status: 'REQUESTED', paymentRequest: bill });
@@ -105,6 +118,32 @@ it('creates one separately payable delivery invoice', async () => {
   await deliveryService.act(1, { action: 'CONFIRM' }, staff);
   expect(tx.paymentRequest.create.mock.calls[0][0].data).toMatchObject({ patientId: 7, subtotal: 250, total: 250 });
   expect(tx.deliveryRequest.update.mock.calls[0][0].data).toEqual({ feePaymentRequestId: 2, status: 'AWAITING_FEE' });
+});
+it.each(['AWAITING_PAYMENT', 'SLIP_SUBMITTED'])('issues the delivery fee before a %s medicine bill is paid', async status => {
+  tx.deliveryRequest.findUnique.mockResolvedValue({ id: 4, status: 'REQUESTED', paymentRequest: { ...bill, status, amountPaid: 0 } });
+  tx.systemSetting.findUnique.mockResolvedValue({ value: '250' });
+  tx.paymentRequest.create.mockResolvedValue({ id: 2 });
+  await deliveryService.act(1, { action: 'CONFIRM' }, staff);
+  expect(tx.deliveryRequest.update.mock.calls[0][0].data).toEqual({ feePaymentRequestId: 2, status: 'AWAITING_FEE' });
+});
+it.each([['CANCELLED', null], ['FULFILLED', null], ['AWAITING_PAYMENT', 'Customer asked to cancel']])('does not issue a delivery fee for a %s medicine bill (cancellation: %s)', async (status, customerCancellationReason) => {
+  tx.deliveryRequest.findUnique.mockResolvedValue({ id: 4, status: 'REQUESTED', paymentRequest: { ...bill, status, customerCancellationReason } });
+  tx.systemSetting.findUnique.mockResolvedValue({ value: '250' });
+  await expect(deliveryService.act(1, { action: 'CONFIRM' }, staff)).rejects.toMatchObject({ statusCode: 409 });
+  expect(tx.paymentRequest.create).not.toHaveBeenCalled();
+});
+it('does not issue a delivery fee that nobody could pay by bank transfer', async () => {
+  tx.deliveryRequest.findUnique.mockResolvedValue({ id: 4, status: 'REQUESTED', paymentRequest: bill });
+  tx.systemSetting.findUnique.mockResolvedValue({ value: '250' });
+  tx.bankAccount.findFirst.mockResolvedValue(null);
+  await expect(deliveryService.act(1, { action: 'CONFIRM' }, staff)).rejects.toThrow('bank transfer');
+  expect(tx.paymentRequest.create).not.toHaveBeenCalled();
+});
+it('still requires a fully paid medicine bill when it is marked paid', async () => {
+  tx.deliveryRequest.findUnique.mockResolvedValue({ id: 4, status: 'REQUESTED', paymentRequest: { ...bill, amountPaid: 100, refundedAmount: 40 } });
+  tx.systemSetting.findUnique.mockResolvedValue({ value: '250' });
+  await expect(deliveryService.act(1, { action: 'CONFIRM' }, staff)).rejects.toMatchObject({ statusCode: 409 });
+  expect(tx.paymentRequest.create).not.toHaveBeenCalled();
 });
 it.each(['REQUESTED', 'AWAITING_FEE'])('reissues a cancelled fee while preserving its history (%s)', async status => {
   tx.deliveryRequest.findUnique.mockResolvedValue({ id: 4, status, paymentRequest: bill, feePaymentRequestId: 2, feePaymentRequest: { ...fee, status: 'CANCELLED' } });

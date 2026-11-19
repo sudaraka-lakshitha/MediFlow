@@ -3,7 +3,7 @@ import { personNameSchema } from './personName.js';
 
 export const deliveryFilterSchema = z.object({
   search: z.string().trim().max(190).optional(),
-  queue: z.enum(['ALL', 'ATTENTION', 'READY', 'REQUESTED', 'AWAITING_FEE', 'DISPATCHED', 'DELIVERY_FAILED', 'RETURNING', 'DELIVERED', 'RETURNED', 'RESHIP_REQUESTED', 'RESHIP_READY', 'CANCELLED']).default('ALL'),
+  queue: z.enum(['ALL', 'ATTENTION', 'AWAITING_PAYMENT', 'READY', 'REQUESTED', 'AWAITING_FEE', 'DISPATCHED', 'DELIVERY_FAILED', 'RETURNING', 'DELIVERED', 'RETURNED', 'RESHIP_REQUESTED', 'RESHIP_READY', 'CANCELLED']).default('ALL'),
   courier: z.string().trim().max(120).optional(),
   dateField: z.enum(['createdAt', 'dispatchedAt', 'deliveredAt']).default('createdAt'),
   from: z.iso.datetime().optional(),

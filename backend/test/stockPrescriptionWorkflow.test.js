@@ -176,19 +176,21 @@ describe('payment choice changes do not imply fresh invoice approval', () => {
   });
   it('retains original acknowledgement when changing to bank transfer', async () => {
     await paymentRequestService.acknowledge(9, { revision: 3, paymentChoice: 'BANK_TRANSFER' }, { id: 2 }, true);
-    expect(tx.paymentRequest.update.mock.calls[0][0].data).toMatchObject({ customerAcknowledgedAt: approvedAt, acknowledgedRevision: 3, customerPaymentChoice: 'BANK_TRANSFER', reservationExpiresAt: null });
+    expect(tx.paymentRequest.updateMany.mock.calls[0][0].data).toMatchObject({ customerAcknowledgedAt: approvedAt, acknowledgedRevision: 3, customerPaymentChoice: 'BANK_TRANSFER', reservationExpiresAt: null });
     expect(tx.paymentRequestEvent.create.mock.calls[0][0].data.kind).toBe('PAYMENT_CHOICE_CHANGED');
   });
   it('checks stock before renewing an expired cash hold', async () => {
+    const items = [{ id: 1, productId: 2, quantity: d(1) }];
+    tx.paymentRequest.findUnique.mockResolvedValue({ id: 9, patientId: 2, status: 'AWAITING_PAYMENT', revision: 3, acknowledgedRevision: 3, customerAcknowledgedAt: approvedAt, customerPaymentChoice: 'CASH', items });
     await paymentRequestService.acknowledge(9, { revision: 3, paymentChoice: 'CASH' }, { id: 2 }, true);
-    expect(reserve).toHaveBeenCalledWith(tx, 9, [], []);
-    expect(tx.paymentRequest.update.mock.calls[0][0].data.customerAcknowledgedAt).toEqual(approvedAt);
+    expect(reserve).toHaveBeenCalledWith(tx, 9, items, []);
+    expect(tx.paymentRequest.updateMany.mock.calls[0][0].data.customerAcknowledgedAt).toEqual(approvedAt);
   });
   it('does not continually extend a still-active hold', async () => {
     const deadline = new Date(Date.now() + 3600000);
-    tx.paymentRequest.findUnique.mockResolvedValue({ id: 9, patientId: 2, status: 'AWAITING_PAYMENT', revision: 3, acknowledgedRevision: 3, customerPaymentChoice: 'CASH', customerAcknowledgedAt: approvedAt, reservationExpiresAt: deadline, items: [] });
+    tx.paymentRequest.findUnique.mockResolvedValue({ id: 9, patientId: 2, status: 'AWAITING_PAYMENT', revision: 3, acknowledgedRevision: 3, customerPaymentChoice: 'CASH', customerAcknowledgedAt: approvedAt, reservationExpiresAt: deadline, items: [{ id: 1, productId: 2, quantity: d(1) }] });
     await paymentRequestService.acknowledge(9, { revision: 3, paymentChoice: 'CASH' }, { id: 2 }, true);
-    expect(tx.paymentRequest.update.mock.calls[0][0].data.reservationExpiresAt).toBe(deadline);
+    expect(tx.paymentRequest.updateMany.mock.calls[0][0].data.reservationExpiresAt).toBe(deadline);
   });
   it.each(['PAID', 'SLIP_SUBMITTED', 'CANCELLED', 'FULFILLED'])('blocks changes to %s invoices', async (status) => {
     tx.paymentRequest.findUnique.mockResolvedValue({ patientId: 2, status });
@@ -393,10 +395,8 @@ describe('atomic prescription and bill creation', () => {
     }, 5);
 
     expect(tx.prescriptionUpload.updateMany.mock.calls[0][0].where).toMatchObject({ id: 10, status: 'PENDING' });
-    expect(tx.prescriptionUpload.updateMany.mock.calls[1][0]).toMatchObject({
-      where: { id: 10, status: 'PENDING', prescription: { is: { id: 7 } } },
-      data: { status: 'PAYMENT_PENDING' },
-    });
+    // The upload moves to PAYMENT_PENDING inside paymentRequestService.create.
+    expect(tx.prescriptionUpload.updateMany).toHaveBeenCalledTimes(1);
     expect(tx.prescription.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ sourceUploadId: 10, status: 'VERIFIED' }) }));
     expect(createBill).toHaveBeenCalledWith(7, expect.objectContaining({ items: [{ prescriptionItemId: 70, quantity: 1 }] }), 5, tx);
   });
@@ -418,7 +418,7 @@ describe('atomic prescription and bill creation', () => {
     }, 5);
 
     expect(tx.prescriptionUpload.updateMany.mock.calls[0][0].where).toMatchObject({ id: 11, status: 'QUOTE_SENT' });
-    expect(tx.prescriptionUpload.updateMany.mock.calls[1][0].data).toEqual({ status: 'PAYMENT_PENDING' });
+    expect(tx.prescriptionUpload.updateMany).toHaveBeenCalledTimes(1);
     expect(createBill).toHaveBeenCalledWith(8, expect.any(Object), 5, tx);
   });
   it('creates a prepared upload invoice without a separate rough-quote acknowledgement', async () => {
@@ -487,7 +487,7 @@ describe('billing adjustments preserve money and history', () => {
   it('stores customer requests separately from prior cancellation history', async () => {
     tx.paymentRequest.findUnique.mockResolvedValue({ ...bill(), patientId: 2 });
     await paymentRequestService.requestCancellation(9, 'Please cancel', { id: 2, role: 'PATIENT' });
-    expect(tx.paymentRequest.update.mock.calls[0][0].data).toEqual({ customerCancellationReason: 'Please cancel' });
+    expect(tx.paymentRequest.updateMany.mock.calls[0][0].data).toEqual({ customerCancellationReason: 'Please cancel' });
     expect(tx.paymentRequestEvent.create.mock.calls[0][0].data.kind).toBe('CANCELLATION_REQUESTED');
   });
   it('calculates collections from dated money movements rather than current bill status', async () => {

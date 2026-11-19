@@ -1057,7 +1057,7 @@ export function PrescriptionUploadsPage() {
                 <strong>
                   {item.prepareRequested
                     ? (item.deliveryRequested ? "Prepare medicines for home delivery" : "Prepare medicines for collection")
-                    : "Prepare a complete prescription bill for me to review"}
+                    : "Send me the complete bill to review first"}
                 </strong>
                 {item.deliveryRequested && <small>{item.deliveryRecipientName} · {item.deliveryAddress} · {item.deliveryPhone}. Track progress under Home deliveries once invoiced.</small>}
               </div>
@@ -1612,13 +1612,13 @@ export function PrescriptionUploadsPage() {
                 <span>
                   <strong>✓ Ask the pharmacy to prepare my medicines in advance so I can collect quickly.</strong>
                   <small>
-                    The pharmacist will review the prescription, enter its directions and quantities, and prepare one complete final bill. You acknowledge and pay before medicines are prepared for collection.
+                    The pharmacist will review the prescription, enter its directions and quantities, and issue one complete final bill. Your medicines are set aside as soon as the bill is issued and held for a limited time while you acknowledge and pay online or at the counter.
                   </small>
                 </span>
               </label>
               <label className={`preparation-choice ${uploadForm.deliveryRequested ? 'selected' : ''}`}>
                 <input type="radio" name="prepareRequested" checked={Boolean(uploadForm.deliveryRequested)} onChange={() => setUploadForm({ ...uploadForm, prepareRequested: true, deliveryRequested: true })} />
-                <span><strong>Prepare my medicines for home delivery</strong><small>Medicines and the separate delivery fee must be paid and verified before dispatch. Track the courier, tracking number and dispatch date under Home deliveries.</small></span>
+                <span><strong>Prepare my medicines for home delivery</strong><small>The pharmacist issues the complete medicine bill with a separate delivery-fee bill and sets your medicines aside for a limited time. The delivery fee can be paid by bank transfer only, and no collection PIN is needed. Both bills must be paid and verified before dispatch. Track the courier, tracking number and dispatch date under Home deliveries.</small></span>
               </label>
               {uploadForm.deliveryRequested && <div className="my-3">
                 <label className="form-label" htmlFor="upload-delivery-name">Delivery recipient name</label>
@@ -1768,7 +1768,9 @@ export function PrescriptionUploadsPage() {
                       ? (review.deliveryRequested ? "Prepare the complete prescription and final bill for home delivery" : "Prepare the complete prescription and final bill for collection")
                       : "Prepare the complete prescription and final bill for the customer to review"}
                   </strong>
-                  <small>Review the source, enter the full directions and quantities, then issue the final itemized bill in one step. No estimate approval is needed.</small>
+                  <small>Review the source, enter the full directions and quantities, then issue the final itemized bill in one step. No estimate approval is needed. {review.prepareRequested
+                    ? "Stock is set aside for the customer as soon as the bill is issued."
+                    : "Nothing is set aside until the customer pays."}{review.deliveryRequested ? " The delivery-fee bill is issued with the medicine bill." : ""}</small>
                 </div>
               </div>
               {reviewForm.status !== "UNAVAILABLE" && ["QUOTE_SENT", "QUOTE_ACCEPTED"].includes(review.status) && (

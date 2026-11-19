@@ -5,7 +5,7 @@ import { AppError } from './AppError.js';
 export const operationContext = new AsyncLocalStorage();
 export const protectRetryController = handlers => Object.fromEntries(Object.entries(handlers).map(([name, handler]) => [name, async (req, res, next) => {
   const path = decodeURIComponent((req.originalUrl || '').split('?')[0]).replace(/\/+$/, '').toLowerCase();
-  const protectedWrite = req.method === 'POST' && /^\/api\/(?:sales\/(?:retail|\d+\/pay)|inventory\/batches(?:\/\d+\/(?:adjust|dispose-expired))?|payment-requests\/retail|prescriptions(?:\/\d+\/refill)?)$/.test(path);
+  const protectedWrite = req.method === 'POST' && /^\/api\/(?:sales\/(?:retail|\d+\/pay)|inventory\/batches(?:\/\d+\/(?:adjust|dispose-expired))?|payment-requests\/(?:retail|\d+\/(?:pay|fulfill-retail))|prescriptions(?:\/\d+\/(?:refill|dispense|payment-request))?)$/.test(path);
   if (!protectedWrite) return handler(req, res, next);
   const key = req.get('Idempotency-Key');
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(key || '')) throw new AppError(400, 'Refresh the application before submitting this operation (a retry key is required).');

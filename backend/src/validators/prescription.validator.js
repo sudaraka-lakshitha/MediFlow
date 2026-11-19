@@ -68,6 +68,12 @@ const dispensingBase = {
   containerFee: z.coerce.number().nonnegative().max(100_000_000).default(0),
   tax: z.coerce.number().nonnegative().default(0),
   reservationHours: z.coerce.number().int().min(1).max(168).optional().nullable(),
+  // Walk-in partial supply: why less is issued, and whether the rest is issued later.
+  partialSupply: z.array(z.object({
+    prescriptionItemId: z.coerce.number().int().positive(),
+    reason: z.enum(['OUT_OF_STOCK', 'CANNOT_AFFORD', 'CUSTOMER_REQUEST']),
+    issueLater: z.boolean(),
+  })).max(100).default([]),
 };
 const uniqueItems = (data) => new Set(data.items.map((itemValue) => itemValue.prescriptionItemId)).size === data.items.length;
 const hasItems = (data) => data.items.length + data.retailItems.length > 0;

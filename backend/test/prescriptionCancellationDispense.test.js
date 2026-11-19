@@ -57,3 +57,33 @@ describe('dispensing after partial cancellation', () => {
     expect(tx.paymentRequest.updateMany).not.toHaveBeenCalled();
   });
 });
+
+describe('dispensing a walk-in bill issued in part', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    consumePaymentRequestStock.mockResolvedValue([{ paymentRequestItemId: 11, productId: 1, batchId: 4, quantity: d(3), quantityBefore: d(10), quantityAfter: d(7), unitCost: d(5) }]);
+  });
+  const partialTransaction = (issueLater) => {
+    const tx = transaction();
+    tx.prescription.findUnique.mockResolvedValue({ status: 'VERIFIED', patient: { userId: 2 }, items: [{ id: 8, prescribedQuantity: d(10), dispensedQuantity: d(0), cancelledQuantity: d(0), product: { genericName: 'Medicine' } }] });
+    tx.paymentRequestEvent = { findMany: vi.fn().mockResolvedValue([{ kind: 'PARTIAL_SUPPLY_RECORDED', details: { lines: [{ prescriptionItemId: 8, shortQuantity: '7', reason: 'CUSTOMER_REQUEST', issueLater }] } }]) };
+    tx.prescriptionItem.findUnique = vi.fn().mockResolvedValue({ id: 8, prescribedQuantity: d(10), dispensedQuantity: d(3), cancelledQuantity: d(0), notes: null });
+    tx.prescriptionItem.updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    return tx;
+  };
+  it('closes the rest when the customer does not want it', async () => {
+    const tx = partialTransaction(false);
+    tx.prescriptionItem.findMany.mockResolvedValue([{ prescribedQuantity: d(10), dispensedQuantity: d(3), cancelledQuantity: d(7) }]);
+    const result = await performPrescriptionDispense(tx, { prescriptionId: 1, paymentRequestId: 9, performedById: 3 });
+    expect(tx.prescriptionItem.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: 8 }), data: expect.objectContaining({ cancelledQuantity: { increment: d(7) } }) }));
+    expect(tx.prescriptionItem.updateMany.mock.calls[0][0].data.notes).toContain('Not issued - customer asked for less');
+    expect(result.prescriptionStatus).toBe('DISPENSED');
+  });
+  it('keeps the rest pending when it will be issued later', async () => {
+    const tx = partialTransaction(true);
+    tx.prescriptionItem.findMany.mockResolvedValue([{ prescribedQuantity: d(10), dispensedQuantity: d(3), cancelledQuantity: d(0) }]);
+    const result = await performPrescriptionDispense(tx, { prescriptionId: 1, paymentRequestId: 9, performedById: 3 });
+    expect(tx.prescriptionItem.updateMany).not.toHaveBeenCalled();
+    expect(result.prescriptionStatus).toBe('PARTIALLY_DISPENSED');
+  });
+});

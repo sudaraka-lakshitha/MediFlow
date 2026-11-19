@@ -19,6 +19,8 @@ prescriptionRoutes.patch('/:id/pickup-details', authorize('PATIENT'), validate({
 prescriptionRoutes.delete('/:id', authorize('ADMIN', 'PHARMACIST'), validate({ params:idParams }), asyncHandler(prescriptionController.remove));
 prescriptionRoutes.post('/:id/verify', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams }), asyncHandler(prescriptionController.verify));
 prescriptionRoutes.post('/:id/reject', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: rejectSchema }), asyncHandler(prescriptionController.reject));
+// Close the unsupplied balance of a partly dispensed prescription (reason required).
+prescriptionRoutes.post('/:id/close-balance', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: rejectSchema }), asyncHandler(prescriptionController.closeBalance));
 prescriptionRoutes.post('/:id/dispense-quote', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: dispenseQuoteSchema }), asyncHandler(prescriptionController.dispenseQuote));
 prescriptionRoutes.post('/:id/payment-request', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: paymentRequestSchema }), asyncHandler(paymentRequestController.create));
 prescriptionRoutes.put('/:id/payment-request', authorize('ADMIN', 'PHARMACIST'), validate({ params: idParams, body: paymentRequestSchema }), asyncHandler(paymentRequestController.update));

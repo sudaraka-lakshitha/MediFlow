@@ -14,10 +14,10 @@ import { operationSettingsService } from './operationSettings.service.js';
 import { ageOnDate } from '../utils/age.js';
 import { findAgeUnsuitable } from '../utils/ageSuitability.js';
 import { withUniqueRetry } from '../utils/withUniqueRetry.js';
-import { serializable } from '../utils/serializable.js';
+import { DEFAULT_TRANSACTION_OPTIONS, serializable, stockFulfillmentTransactionOptions } from '../utils/serializable.js';
 import { usableStockTotal } from '../utils/stock.js';
 import { performPrescriptionDispense } from '../utils/prescriptionDispense.js';
-import { remainingPrescriptionQuantity } from '../utils/prescriptionQuantity.js';
+import { cancelPrescriptionQuantity, remainingPrescriptionQuantity } from '../utils/prescriptionQuantity.js';
 import { prescriptionMaterialChanged, prescriptionSnapshot } from '../utils/prescriptionRevision.js';
 import { planPrescriptionItems } from '../utils/preservePrescriptionItems.js';
 const isLiquidProduct = (product) =>
@@ -193,7 +193,8 @@ export const prescriptionService = {
       const { reserveStock } = await import('../utils/stock.js');
       const { batchAllocationOrder } = await import('./operationSettings.service.js');
       {
-        const pin = generatePickupPin();
+        // Home-delivery orders leave by courier and get no collection PIN.
+        const pin = await tx.deliveryRequest?.findUnique({ where: { paymentRequestId: createdReq.id }, select: { id: true } }) ? null : generatePickupPin();
         await tx.paymentRequest.update({
           where: { id: createdReq.id },
           data: {
@@ -203,15 +204,17 @@ export const prescriptionService = {
             paymentReference: verifiedSlip?.reference || `Upload #${sourceUpload.id} verified slip`,
             cashierId: verifiedSlip?.reviewedById || userId,
             paidAt: verifiedSlip?.reviewedAt || new Date(),
-            pickupPinHash: hashPickupPin(createdReq.id, pin),
-            pickupPinEncrypted: encryptPickupPin(pin),
+            pickupPinHash: pin ? hashPickupPin(createdReq.id, pin) : null,
+            pickupPinEncrypted: pin ? encryptPickupPin(pin) : null,
+            reservationExpiresAt: null,
           },
         });
         await tx.paymentRequestEvent.create({ data: { paymentRequestId: createdReq.id, kind: 'PAYMENT_RECEIVED', amount: paidTotal, revision: createdReq.revision, actorId: verifiedSlip.reviewedById || userId, createdAt: verifiedSlip.reviewedAt || new Date(), details: { source: 'verified_upload_transfer', slipId: verifiedSlip.id } } });
         const opSettings = await operationSettingsService.get(tx);
         const allocationOrder = batchAllocationOrder(opSettings.allocationMethod);
         const prItems = await tx.paymentRequestItem.findMany({ where: { paymentRequestId: createdReq.id } });
-        await reserveStock(tx, createdReq.id, prItems, allocationOrder);
+        // A prepared order may already hold its stock from billing; never hold it twice.
+        if (!(await tx.stockReservation.count({ where: { paymentRequestId: createdReq.id } }))) await reserveStock(tx, createdReq.id, prItems, allocationOrder);
       }
     } else if (data.sendToCashier) {
       const { paymentRequestService } = await import('./paymentRequest.service.js');
@@ -335,7 +338,7 @@ export const prescriptionService = {
         createdBy: { select: { id: true, fullName: true, role: true } },
         verifiedBy: { select: { id: true, fullName: true, role: true } },
         dispensings: { include: { sale: true, pharmacist: { select: { id: true, fullName: true, role: true } }, items: { include: { prescriptionItem: { include: { product: true } } } } }, orderBy: { dispensedAt: 'desc' } },
-        sourceUpload: { select: { id: true, originalName: true, mimeType: true, status: true } },
+        sourceUpload: { select: { id: true, originalName: true, mimeType: true, status: true, prepareRequested: true, deliveryRequested: true } },
         paymentRequest: { include: { cashier: { select: { id: true, fullName: true } }, items: { include: { product: true } }, sale: { select: { id: true, invoiceNumber: true } } } },
       },
     });
@@ -472,6 +475,27 @@ export const prescriptionService = {
       });
     });
   },
+  // A partly supplied walk-in prescription whose customer will not return for
+  // the rest: record the remaining quantities as not supplied and close it.
+  // Supplied quantities, bills and stock are unchanged.
+  async closeBalance(id, reason, userId) {
+    return serializable(async (tx) => {
+      const current = await tx.prescription.findUnique({ where: { id }, include: { items: { include: { product: { select: { genericName: true } } } }, paymentRequest: { select: { status: true } } } });
+      if (!current) throw new AppError(404, 'Prescription not found.');
+      if (current.status !== 'PARTIALLY_DISPENSED') throw new AppError(409, 'Only a partially dispensed prescription has a remaining balance to close.');
+      if (current.paymentRequest && !['CANCELLED', 'FULFILLED'].includes(current.paymentRequest.status)) {
+        throw new AppError(409, 'This prescription has an active bill for its remaining medicines. Cancel that bill before closing the balance.');
+      }
+      const open = current.items.filter((item) => remainingPrescriptionQuantity(item).greaterThan(0));
+      if (!open.length) throw new AppError(409, 'Nothing remains to close. Refresh to see the latest status.');
+      const closed = open.map((item) => ({ prescriptionItemId: item.id, medicine: item.product.genericName, quantity: remainingPrescriptionQuantity(item).toString() }));
+      for (const line of closed) await cancelPrescriptionQuantity(tx, line, `Balance not supplied - ${reason}`);
+      const claimed = await tx.prescription.updateMany({ where: { id, status: 'PARTIALLY_DISPENSED' }, data: { status: 'DISPENSED' } });
+      if (claimed.count !== 1) throw new AppError(409, 'This prescription was just updated by another staff member. Refresh and try again.');
+      await tx.auditLog.create({ data: { userId, action: 'PRESCRIPTION_BALANCE_CLOSED', entityType: 'PRESCRIPTION', entityId: id, details: { reason, closed } } });
+      return prescriptionRepository.findById(id, tx);
+    });
+  },
   async reject(id, reason, userId) {
     return prisma.$transaction(async (tx) => {
       const current = await tx.prescription.findUnique({ where: { id }, select: { paymentRequest: { select: { id: true, status: true } } } });
@@ -498,7 +522,7 @@ export const prescriptionService = {
         });
       }
       return tx.prescription.findUnique({ where: { id } });
-    });
+    }, DEFAULT_TRANSACTION_OPTIONS);
   },
 
   async quoteDispensing(prescriptionId, input, db = prisma) {
@@ -604,6 +628,6 @@ export const prescriptionService = {
     if (paidPrescriptionItems.length !== input.items.length || input.items.some((item) => Number(item.quantity) !== Number(paidItems.get(item.prescriptionItemId)))) {
       throw new AppError(409, 'Dispensing quantities must exactly match the paid cashier request.');
     }
-    return serializable((tx) => performPrescriptionDispense(tx, { prescriptionId, paymentRequestId: paidRequest.id, performedById: pharmacistId, notes: input.notes, expectedPickupPinHash: pinRequired ? paidRequest.pickupPinHash : undefined }));
+    return serializable((tx) => performPrescriptionDispense(tx, { prescriptionId, paymentRequestId: paidRequest.id, performedById: pharmacistId, notes: input.notes, expectedPickupPinHash: pinRequired ? paidRequest.pickupPinHash : undefined }), 3, stockFulfillmentTransactionOptions);
   },
 };

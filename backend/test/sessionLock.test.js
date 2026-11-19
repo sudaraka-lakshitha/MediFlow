@@ -37,7 +37,7 @@ describe('server-enforced session lock', () => {
     expect(result).toMatchObject({ idleMinutes: 15, locked: false, expiresAt: session.expiresAt.getTime() });
     expect(prisma.user.update).toHaveBeenCalledWith({ where: { id: 1 }, data: { sessionIdleMinutes: 15 } });
     expect(prisma.authSession.updateMany.mock.invocationCallOrder[0]).toBeLessThan(prisma.user.update.mock.invocationCallOrder[0]);
-    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: 'Serializable' });
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ isolationLevel: 'Serializable' }));
   });
   it('does not change preferences when the session has expired, locked, or been revoked', async () => {
     prisma.authSession.updateMany.mockResolvedValue({ count: 0 });

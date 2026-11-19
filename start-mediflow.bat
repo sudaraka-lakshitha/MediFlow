@@ -11,7 +11,7 @@ set "LAN_IP=not-detected"
 echo.
 echo  ================================================
 echo          MediFlow - Pharmacy System
-echo          Local app + shared Aiven database
+echo          Local app + configured database
 echo  ================================================
 echo.
 

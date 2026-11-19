@@ -5,7 +5,7 @@ import { stockQuantity } from '../utils/stockQuantity.js';
 import { operationSettingsService } from './operationSettings.service.js';
 import { lowStockState } from '../utils/lowStock.js';
 import { usableStockTotal } from '../utils/stock.js';
-import { serializable } from '../utils/serializable.js';
+import { DEFAULT_TRANSACTION_OPTIONS, serializable } from '../utils/serializable.js';
 import { historySearch } from '../utils/historySearch.js';
 
 export const inventoryService = {
@@ -71,7 +71,7 @@ export const inventoryService = {
         create: { productId, stockLevel, acknowledgedById: userId, acknowledgedAt: now },
         include: { acknowledgedBy: { select: { id: true, fullName: true } } },
       });
-    });
+    }, DEFAULT_TRANSACTION_OPTIONS);
   },
   async clearLowStockAcknowledgement(productId) {
     const result = await prisma.lowStockAcknowledgement.deleteMany({ where: { productId } });
@@ -99,7 +99,7 @@ export const inventoryService = {
     const batch = await tx.inventoryBatch.update({ where: { id }, data: { supplierId: data.supplierId, batchNumber: data.batchNumber, purchasePrice: data.purchasePrice, expiryDate: data.expiryDate }, include: { product: true, supplier: true } });
     await tx.lowStockAcknowledgement.deleteMany({ where: { productId: batch.productId } });
     return batch;
-  }),
+  }, DEFAULT_TRANSACTION_OPTIONS),
   async setRestriction(id, data) {
     const batch = await prisma.inventoryBatch.findUnique({ where: { id } });
     if (!batch) throw new AppError(404, 'Inventory batch not found.');
@@ -192,6 +192,6 @@ export const inventoryService = {
       }
       await tx.stockMovement.deleteMany({ where: { batchId } });
       return tx.inventoryBatch.delete({ where: { id: batchId } });
-    });
+    }, DEFAULT_TRANSACTION_OPTIONS);
   },
 };

@@ -21,12 +21,14 @@ import { verifyPickupPin } from '../utils/pickupPin.js';
 import { batchAllocationOrder, operationSettingsService } from './operationSettings.service.js';
 import { billCancellationPolicy } from '../utils/billCancellation.js';
 import { withUniqueRetry } from '../utils/withUniqueRetry.js';
-import { serializable } from '../utils/serializable.js';
+import { attachmentTransactionOptions, DEFAULT_TRANSACTION_OPTIONS, serializable, stockFulfillmentTransactionOptions } from '../utils/serializable.js';
 import { assertRetailAgeSuitability } from '../utils/ageSuitability.js';
 import { consumePaymentRequestStock, releaseReservations, reserveStock, usableStockTotal } from '../utils/stock.js';
 import { performPrescriptionDispense } from '../utils/prescriptionDispense.js';
 import { cancelPrescriptionQuantity, remainingPrescriptionQuantity } from '../utils/prescriptionQuantity.js';
 import { directionSelect } from '../utils/patientMedicineInstructions.js';
+import { issueDeliveryFeeInvoice } from '../utils/deliveryFee.js';
+import { balanceItemSelect, latestPartialDecisions, medicineName, PARTIAL_SUPPLY_EVENT, supplyBalance, supplyRows } from '../utils/prescriptionBalance.js';
 
 // The slip blob itself is deliberately left out - it is fetched through its own endpoint
 // so bill listings stay small.
@@ -40,47 +42,136 @@ const slipSelect = {
 
 const include = {
   delivery: { select: { status: true, trackingReference: true, dispatchedAt: true, feePaymentRequest: { select: { status: true, refunds: { select: { id: true } } } } } },
-  deliveryFeeFor: { select: { paymentRequestId: true, status: true } },
+  deliveryFeeFor: { select: { paymentRequestId: true, status: true, paymentRequest: { select: { requestNumber: true } } } },
   refunds: { include: { lines: true }, orderBy: { createdAt: 'asc' } },
   events: { orderBy: { createdAt: 'asc' } },
   patient: { select: { id: true, fullName: true, email: true, phone: true } },
   pharmacist: { select: { id: true, fullName: true } },
   cashier: { select: { id: true, fullName: true } },
   cancelledBy: { select: { id: true, fullName: true } },
-  prescription: { select: { id: true, prescriptionNumber: true, status: true, sourceUploadId: true, isOnline: true, plannedPickupAt: true, pickupNote: true, createdBy: { select: { fullName: true } }, verifiedBy: { select: { fullName: true } } } },
+  prescription: { select: { id: true, prescriptionNumber: true, status: true, sourceUploadId: true, isOnline: true, plannedPickupAt: true, pickupNote: true, sourceUpload: { select: { prepareRequested: true, deliveryRequested: true } }, items: { select: balanceItemSelect }, createdBy: { select: { fullName: true } }, verifiedBy: { select: { fullName: true } } } },
   items: { include: { prescriptionItem: { select: directionSelect }, product: { select: { id: true, genericName: true, strength: true, unit: true, productType: true, prescriptionRequired: true, storageInstructions: true } } } },
   slips: { select: slipSelect, orderBy: { createdAt: 'desc' } },
   sale: { select: { id: true, invoiceNumber: true } },
 };
 
 const canView = (record, user) => user.role !== 'PATIENT' || record.patientId === user.id;
-const safeRecord = ({ pickupPinHash, pickupPinEncrypted, ...record }) => record;
+// Attach what the customer can still collect later (not charged on this bill).
+const withBalance = (record) => {
+  if (!record?.prescription?.items) return record;
+  const { later, notIssued } = supplyBalance(record.prescription.items, record);
+  return { ...record, balanceToCollect: later, notToBeIssued: notIssued, supplyRows: supplyRows(record.events) };
+};
+const safeRecord = ({ pickupPinHash, pickupPinEncrypted, ...record }) => withBalance(record);
+
+// Which stock-hold rule applies to a bill. An uploaded order follows the
+// customer's choice on the upload form:
+// - AT_BILLING: "prepare in advance" or "home delivery" - stock is held as soon
+//   as the final bill is issued, whichever payment method is chosen.
+// - AFTER_PAYMENT: "send me the complete bill first" - nothing is held until
+//   the bill is paid.
+// Other bills (walk-in prescriptions, retail requests) keep the cash-choice hold.
+export const stockHoldPolicy = (bill) => {
+  const upload = bill?.prescription?.sourceUpload;
+  if (!upload) return 'CASH_CHOICE';
+  return upload.prepareRequested ? 'AT_BILLING' : 'AFTER_PAYMENT';
+};
+const billingHoldShortage = {
+  purpose: 'to hold this prepared order',
+  advice: 'The customer asked the pharmacy to prepare it, so its stock is held when the bill is issued. Reduce the quantity, record the shortage, or receive more stock first.',
+};
+// Delivery fees are paid by bank transfer only: customers transfer the fee
+// and upload the receipt, and the cashier verifies it. No cash or card.
+const isDeliveryFeeBill = async (tx, id) => Boolean(await tx.deliveryRequest?.findUnique({ where: { feePaymentRequestId: id }, select: { id: true } }));
+// A walk-in (counter) prescription may be supplied in part when stock is short or
+// the customer wants less now: the rest stays pending for a later bill or can be
+// closed as not supplied. An uploaded order is always billed in full, because the
+// customer reviews and pays one complete final bill.
+// Returns, for a walk-in bill, one recorded decision per medicine issued in part:
+// why less is issued and whether the rest will be issued later.
+const assertBilledQuantities = (prescription, remainingItems, quantities, decisions = []) => {
+  if (prescription.sourceUploadId) {
+    if (remainingItems.some((item) => Number(remainingPrescriptionQuantity(item)) !== Number(quantities.get(item.id) || 0))) {
+      throw new AppError(409, 'Every remaining prescribed item must be included in the cashier request.');
+    }
+    return [];
+  }
+  if (remainingItems.length && !remainingItems.some((item) => Number(quantities.get(item.id) || 0) > 0)) {
+    throw new AppError(409, 'Issue at least one prescribed medicine on this bill. To stop supplying the rest, close the remaining balance instead.');
+  }
+  const byItem = new Map(decisions.map((decision) => [Number(decision.prescriptionItemId), decision]));
+  // Snapshot every prescribed medicine (prescribed, supplied earlier, on this
+  // bill, not bought now) so the bill can show prescribed against bought.
+  const lines = [];
+  let partial = false;
+  for (const item of prescription.items) {
+    const remaining = remainingPrescriptionQuantity(item);
+    const billed = new Prisma.Decimal(quantities.get(item.id) || 0);
+    const short = Prisma.Decimal.max(0, remaining.sub(billed));
+    const line = {
+      prescriptionItemId: item.id, name: item.product ? medicineName(item.product) : undefined, unit: item.product?.unit,
+      prescribedQuantity: new Prisma.Decimal(item.prescribedQuantity).toString(), suppliedBeforeQuantity: new Prisma.Decimal(item.dispensedQuantity).toString(),
+      closedBeforeQuantity: new Prisma.Decimal(item.cancelledQuantity ?? 0).toString(), billedQuantity: billed.toString(), shortQuantity: short.toString(),
+    };
+    if (short.greaterThan(0)) {
+      const decision = byItem.get(item.id);
+      if (!decision) throw new AppError(400, 'For every medicine issued in part, record why less is issued (not enough stock, the customer cannot pay for all of it now, or asked for less) and whether the rest will be issued later.');
+      Object.assign(line, { reason: decision.reason, issueLater: decision.issueLater });
+    }
+    if (short.greaterThan(0) || new Prisma.Decimal(item.dispensedQuantity).greaterThan(0) || new Prisma.Decimal(item.cancelledQuantity ?? 0).greaterThan(0)) partial = true;
+    lines.push(line);
+  }
+  return partial ? lines : [];
+};
+const samePartialLines = (a, b) => {
+  const key = (lines) => JSON.stringify([...lines].map(({ prescriptionItemId, shortQuantity, reason, issueLater }) => ({ prescriptionItemId: Number(prescriptionItemId), shortQuantity: String(shortQuantity), reason, issueLater })).sort((x, y) => x.prescriptionItemId - y.prescriptionItemId));
+  return key(a) === key(b);
+};
+// True for a medicine bill with an active (not cancelled) home delivery, or
+// for a delivery-fee bill. Neither is collected at the counter.
+export const isHomeDeliveryBill = async (tx, id) => {
+  const [medicineDelivery, feeFor] = await Promise.all([
+    tx.deliveryRequest?.findUnique({ where: { paymentRequestId: id }, select: { status: true } }),
+    tx.deliveryRequest?.findUnique({ where: { feePaymentRequestId: id }, select: { id: true } }),
+  ]);
+  return Boolean(feeFor) || Boolean(medicineDelivery && medicineDelivery.status !== 'CANCELLED');
+};
+// Holds a prepared order's stock and returns when the hold ends.
+const holdStockForPreparedOrder = async (tx, paymentRequestId, items, reservationHours) => {
+  const settings = await operationSettingsService.get(tx);
+  const hours = reservationHours || settings.cashReservationHours || 24;
+  await reserveStock(tx, paymentRequestId, items, batchAllocationOrder(settings.allocationMethod), billingHoldShortage);
+  return new Date(Date.now() + hours * 60 * 60 * 1000);
+};
 const visibleDirections = (record, user) => user.role === 'PATIENT' && !['PAID', 'FULFILLED'].includes(record.status)
   ? { ...record, items: record.items?.map(item => ({ ...item, prescriptionItem: null, dosageInstructions: null, specialInstructions: null })) }
   : record;
 
 // Both ways of paying a bill - cash at the counter, or a verified bank transfer - have to
-// end in exactly the same state: a PIN issued and the stock held in reserve. Keeping that
-// in one place stops the two routes drifting apart.
-const settleAsPaid = async (tx, { id, fromStatus, paymentMethod, paymentReference, cashierId, amountPaid, splitDetails = null, ledgerBill = null, transferId = null }) => {
+// end in exactly the same state: a PIN issued (for counter collection) and the stock held
+// in reserve. Keeping that in one place stops the two routes drifting apart.
+const settleAsPaid = async (tx, { id, fromStatus, paymentMethod, paymentReference, cashierId, amountPaid, splitDetails = null, ledgerBill = null, transferId = null, customerPaymentChoice = null }) => {
   if (transferId && ledgerBill) paymentReference = (await allocateVerifiedTransfer(tx, transferId, ledgerBill, cashierId)).reference;
   else if (paymentMethod === 'BANK_TRANSFER') paymentReference = await assertUnusedBankReference(tx, paymentReference);
   if (splitDetails?.isSplit && splitDetails.nonCashMethod === 'BANK_TRANSFER' && Number(splitDetails.nonCashAmount) > 0) {
     splitDetails = { ...splitDetails, nonCashReference: await assertUnusedBankReference(tx, splitDetails.nonCashReference) };
   }
-  const pin = generatePickupPin();
+  // A home-delivery order (or its delivery-fee bill) leaves by courier, so it
+  // gets no collection PIN. If the delivery is later cancelled for counter
+  // collection, the delivery workflow issues a PIN then.
+  const pin = await isHomeDeliveryBill(tx, id) ? null : generatePickupPin();
   const claimed = await tx.paymentRequest.updateMany({
-    where: { id, status: fromStatus },
+    where: { id, status: fromStatus, customerCancellationReason: null },
     data: {
       amountPaid, paymentMethod, paymentReference: paymentReference || null, cashierId,
       paidAt: new Date(), status: 'PAID', reservationExpiresAt: null,
-      pickupPinHash: hashPickupPin(id, pin), pickupPinEncrypted: encryptPickupPin(pin), pinAttempts: 0,
+      pickupPinHash: pin ? hashPickupPin(id, pin) : null, pickupPinEncrypted: pin ? encryptPickupPin(pin) : null, pinAttempts: 0,
     },
   });
   if (claimed.count !== 1) throw new AppError(409, 'This bill was just processed by another staff member. Refresh to see its latest status.');
 
   const settled = await tx.paymentRequest.findUnique({ where: { id }, select: { revision: true } });
-  await tx.paymentRequestEvent.create({ data: { paymentRequestId: id, kind: 'PAYMENT_RECEIVED', amount: amountPaid, revision: settled.revision, actorId: cashierId, details: { paymentMethod, paymentReference: paymentReference || null, splitDetails } } });
+  await tx.paymentRequestEvent.create({ data: { paymentRequestId: id, kind: 'PAYMENT_RECEIVED', amount: amountPaid, revision: settled.revision, actorId: cashierId, details: { paymentMethod, paymentReference: paymentReference || null, splitDetails, customerPaymentChoice, paymentMethodChangedAtCounter: Boolean(customerPaymentChoice && (splitDetails?.isSplit || customerPaymentChoice !== paymentMethod)) } } });
   const operationSettings = await operationSettingsService.get(tx);
   const allocationOrder = batchAllocationOrder(operationSettings.allocationMethod);
   const items = await tx.paymentRequestItem.findMany({ where: { paymentRequestId: id } });
@@ -127,6 +218,7 @@ export const paymentRequestService = {
   async resetPickupPin(id, reason, user) {
     if (user.role !== 'ADMIN') throw new AppError(403, 'Only an administrator can reissue a collection PIN.');
     return serializable(async (tx) => {
+      if (await isHomeDeliveryBill(tx, id)) throw new AppError(409, 'Home-delivery orders do not use a collection PIN. Cancel the delivery first if the customer will collect at the pharmacy.');
       const pin = generatePickupPin();
       const claimed = await tx.paymentRequest.updateMany({
         where: { id, status: 'PAID' },
@@ -149,13 +241,13 @@ export const paymentRequestService = {
   async get(id, user) {
     const record = await prisma.paymentRequest.findUnique({ where: { id }, include });
     if (!record || !canView(record, user)) throw new AppError(404, 'Payment request not found.');
-    return visibleDirections(record, user);
+    return withBalance(visibleDirections(record, user));
   },
   async create(prescriptionId, input, pharmacistId, tx = null) {
     if (!tx) return serializable((transaction) => this.create(prescriptionId, input, pharmacistId, transaction));
     const prescription = await tx.prescription.findUnique({
       where: { id: prescriptionId },
-      include: { patient: true, items: true, paymentRequest: true },
+      include: { patient: true, items: { include: { product: { select: { genericName: true, strength: true, unit: true } } } }, paymentRequest: true },
     });
     if (!prescription) throw new AppError(404, 'Prescription not found.');
     if (prescription.paymentRequest && await tx.deliveryRequest?.findUnique({ where: { paymentRequestId: prescription.paymentRequest.id } })) throw new AppError(409, 'This invoice is linked to delivery history and cannot be replaced. Record a new prescription for any further supply.');
@@ -166,8 +258,7 @@ export const paymentRequestService = {
     const quantities = new Map(input.items.map((item) => [Number(item.prescriptionItemId), Number(item.quantity)]));
     // Previously supplied or cancelled quantities must not be billed again.
     const remainingItems = prescription.items.filter((item) => remainingPrescriptionQuantity(item).greaterThan(0));
-    const incomplete = remainingItems.some((item) => Number(remainingPrescriptionQuantity(item)) !== Number(quantities.get(item.id) || 0));
-    if (incomplete) throw new AppError(409, 'Every remaining prescribed item must be included in the cashier request.');
+    const partialLines = assertBilledQuantities(prescription, remainingItems, quantities, input.partialSupply);
     const quote = await prescriptionService.quoteDispensing(prescriptionId, { ...input, amountPaid: 0, paymentMethod: 'CASH' }, tx);
 
     // Keep previous bills and their slips/history immutable. A resend gets a
@@ -188,25 +279,38 @@ export const paymentRequestService = {
       },
       include,
     }));
+    if (partialLines.length) await tx.paymentRequestEvent.create({ data: { paymentRequestId: created.id, kind: PARTIAL_SUPPLY_EVENT, revision: created.revision, actorId: pharmacistId, details: { lines: partialLines } } });
     if (created.prescription?.sourceUploadId) {
-      const upload = await tx.prescriptionUpload.findUnique({ where: { id: created.prescription.sourceUploadId }, select: { deliveryRequested: true, deliveryAddress: true, deliveryPhone: true, deliveryRecipientName: true } });
+      const upload = await tx.prescriptionUpload.findUnique({ where: { id: created.prescription.sourceUploadId }, select: { prepareRequested: true, deliveryRequested: true, deliveryAddress: true, deliveryPhone: true, deliveryRecipientName: true } });
       if (upload?.deliveryRequested) {
-        await tx.deliveryRequest.create({ data: { paymentRequestId: created.id, recipientName: upload.deliveryRecipientName || created.prescription?.recipientName || null, address: upload.deliveryAddress, phone: upload.deliveryPhone } });
+        const delivery = await tx.deliveryRequest.create({ data: { paymentRequestId: created.id, recipientName: upload.deliveryRecipientName || prescription.recipientName || null, address: upload.deliveryAddress, phone: upload.deliveryPhone } });
         await tx.paymentRequestEvent.create({ data: { paymentRequestId: created.id, revision: created.revision, actorId: pharmacistId, kind: 'DELIVERY_REQUESTED', details: { sourceUploadId: created.prescription.sourceUploadId } } });
+        // Issue the delivery-fee bill with the medicine bill so the customer sees
+        // the full cost at once. Without a configured fee, staff confirm it later.
+        await issueDeliveryFeeInvoice(tx, { delivery, bill: created, actorId: pharmacistId, automatic: true });
+      }
+      if (upload?.prepareRequested) {
+        const items = await tx.paymentRequestItem.findMany({ where: { paymentRequestId: created.id } });
+        if (items.length) {
+          const reservationExpiresAt = await holdStockForPreparedOrder(tx, created.id, items, input.reservationHours);
+          await tx.paymentRequest.update({ where: { id: created.id }, data: { reservationExpiresAt } });
+        }
       }
       await tx.prescriptionUpload.update({ where: { id: created.prescription.sourceUploadId }, data: { status: 'PAYMENT_PENDING' } });
+      return tx.paymentRequest.findUnique({ where: { id: created.id }, include });
     }
     return created;
   },
   async update(prescriptionId, input, actorId) {
     return serializable(async (tx) => {
-      const prescription = await tx.prescription.findUnique({ where: { id: prescriptionId }, include: { items: true, paymentRequest: { include: { items: { include: { product: true } } } } } });
+      const prescription = await tx.prescription.findUnique({ where: { id: prescriptionId }, include: { items: { include: { product: { select: { genericName: true, strength: true, unit: true } } } }, sourceUpload: { select: { prepareRequested: true } }, paymentRequest: { include: { items: { include: { product: true } }, events: { where: { kind: PARTIAL_SUPPLY_EVENT }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { kind: true, details: true } } } } } });
       if (!prescription) throw new AppError(404, 'Prescription not found.');
       const existing = prescription.paymentRequest;
       if (!existing || existing.status !== 'AWAITING_PAYMENT') throw new AppError(409, 'Only an unpaid invoice without a pending bank slip can be edited.');
       if (input.revision !== existing.revision) throw new AppError(409, 'This invoice changed. Refresh before editing.');
       const quantities = new Map(input.items.map((item) => [Number(item.prescriptionItemId), Number(item.quantity)]));
-      if (prescription.items.some((item) => Number(remainingPrescriptionQuantity(item)) !== Number(quantities.get(item.id) || 0))) throw new AppError(409, 'Include every remaining prescribed item.');
+      const partialLines = assertBilledQuantities(prescription, prescription.items.filter((item) => remainingPrescriptionQuantity(item).greaterThan(0)), quantities, input.partialSupply);
+      const partialChanged = !samePartialLines(partialLines, [...latestPartialDecisions(existing.events).values()]);
       // Keep the agreed prices/discounts on metadata-only saves, even if a coupon
       // expired or the catalogue changed since this invoice was issued.
       const submitted = { ...existing, tax: input.tax, containerFee: input.containerFee, couponCode: input.couponCode,
@@ -220,7 +324,7 @@ export const paymentRequestService = {
       const pharmacyNote = input.notes === undefined ? existing.pharmacyNote : input.notes || null;
       const hours = input.reservationHours === undefined ? existing.reservationDurationHours : input.reservationHours || null;
       const metadataChanged = pharmacyNote !== existing.pharmacyNote || hours !== existing.reservationDurationHours;
-      if (!material && !metadataChanged) return safeRecord(await tx.paymentRequest.findUnique({ where: { id: existing.id }, include }));
+      if (!material && !metadataChanged && !partialChanged) return safeRecord(await tx.paymentRequest.findUnique({ where: { id: existing.id }, include }));
       if (material && !input.revisionReason?.trim()) throw new AppError(400, 'Explain what changed so the customer can review the revised invoice.');
       let reservationExpiresAt = existing.reservationExpiresAt;
       if (!material && existing.reservationExpiresAt && hours !== existing.reservationDurationHours) {
@@ -238,12 +342,19 @@ export const paymentRequestService = {
           customerPaymentChoice: null, reservationExpiresAt: null, paymentMethod: null });
         await tx.paymentRequestItem.deleteMany({ where: { paymentRequestId: existing.id } });
         await tx.paymentRequestItem.createMany({ data: quote.lines.map((line) => ({ paymentRequestId: existing.id, prescriptionItemId: line.prescriptionItemId, productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice, lineTotal: line.lineTotal, dosageInstructions: line.dosageInstructions ?? null, specialInstructions: line.specialInstructions ?? null })) });
+        // A prepared order keeps its stock held through a revision: hold the
+        // revised quantities again instead of leaving the order unreserved.
+        if (stockHoldPolicy({ prescription }) === 'AT_BILLING') {
+          const revisedItems = await tx.paymentRequestItem.findMany({ where: { paymentRequestId: existing.id } });
+          if (revisedItems.length) fields.reservationExpiresAt = await holdStockForPreparedOrder(tx, existing.id, revisedItems, hours);
+        }
       } else if (reservationExpiresAt !== existing.reservationExpiresAt) {
         fields.reservationExpiresAt = reservationExpiresAt;
       }
       await tx.paymentRequest.update({ where: { id: existing.id }, data: fields });
       await tx.paymentRequestEvent.create({ data: { paymentRequestId: existing.id, kind: material ? 'INVOICE_REVISED' : 'INVOICE_NOTE_UPDATED', revision: existing.revision + (material ? 1 : 0), actorId,
         details: { reason: input.revisionReason || 'Non-financial invoice details updated', previous: invoiceSnapshot(existing), current: invoiceSnapshot({ ...quote, couponCode: input.couponCode }), previousNote: existing.pharmacyNote, currentNote: pharmacyNote, previousCustomerAcknowledgement: existing.acknowledgedRevision, previousCustomerAcknowledgedAt: existing.customerAcknowledgedAt?.toISOString() || null, confirmationRetained: !material && existing.acknowledgedRevision === existing.revision, reconfirmationRequired: material } } });
+      if (partialChanged) await tx.paymentRequestEvent.create({ data: { paymentRequestId: existing.id, kind: PARTIAL_SUPPLY_EVENT, revision: existing.revision + (material ? 1 : 0), actorId, details: { lines: partialLines } } });
       return safeRecord(await tx.paymentRequest.findUnique({ where: { id: existing.id }, include }));
     });
   },
@@ -432,16 +543,29 @@ export const paymentRequestService = {
       const updated = await tx.paymentRequest.findUnique({ where: { id }, include });
       return safeRecord({ ...updated, refundAmount: Number(refundDiff) });
   },
-  async requestCancellation(id, reason, user) {
-    return serializable(async (tx) => {
+  async requestCancellation(id, reason, user, revision = undefined, transaction = null) {
+    const operation = async (tx) => {
       const current = await tx.paymentRequest.findUnique({ where: { id } });
       if (!current) throw new AppError(404, 'Payment request not found.');
       if (user.role === 'PATIENT' && current.patientId !== user.id) throw new AppError(403, 'This bill does not belong to you.');
-      if (['CANCELLED', 'FULFILLED'].includes(current.status)) throw new AppError(409, 'This invoice can no longer be cancelled.');
-      await tx.paymentRequest.update({ where: { id }, data: { customerCancellationReason: reason } });
-      await tx.paymentRequestEvent.create({ data: { paymentRequestId: id, kind: 'CANCELLATION_REQUESTED', revision: current.revision, actorId: user.id, details: { reason } } });
+      if (!['AWAITING_PAYMENT', 'SLIP_SUBMITTED', 'PAID'].includes(current.status)) throw new AppError(409, 'This invoice can no longer accept a cancellation request.');
+      if (current.customerCancellationReason) throw new AppError(409, 'A cancellation request is already waiting for pharmacy review.');
+      if (revision !== undefined && current.revision !== revision) throw new AppError(409, 'The invoice changed. Refresh before requesting cancellation.');
+
+      const isUnpaid = current.status === 'AWAITING_PAYMENT';
+      const claimed = await tx.paymentRequest.updateMany({
+        where: { id, status: current.status, revision: current.revision, customerCancellationReason: null },
+        data: {
+          customerCancellationReason: reason,
+          ...(isUnpaid ? { acknowledgedRevision: null, customerAcknowledgedAt: null, customerPaymentChoice: null, reservationExpiresAt: null } : {}),
+        },
+      });
+      if (claimed.count !== 1) throw new AppError(409, 'This invoice was just updated. Refresh to see its latest status.');
+      if (isUnpaid) await releaseReservations(tx, id);
+      await tx.paymentRequestEvent.create({ data: { paymentRequestId: id, kind: 'CANCELLATION_REQUESTED', revision: current.revision, actorId: user.id, details: { reason, paymentStatus: current.status, reservationReleased: isUnpaid } } });
       return safeRecord(await tx.paymentRequest.findUnique({ where: { id }, include }));
-    });
+    };
+    return transaction ? operation(transaction) : serializable(operation);
   },
   async resolveCancellation(id, { reason, revision, requestReason }, user) {
     if (!['ADMIN', 'PHARMACIST', 'CASHIER'].includes(user.role)) throw new AppError(403, 'Only pharmacy staff can resolve a cancellation request.');
@@ -529,17 +653,16 @@ export const paymentRequestService = {
       if ((current.prescription?.isOnline || current.prescription?.sourceUploadId) && current.acknowledgedRevision !== current.revision) {
         throw new AppError(409, 'The customer must acknowledge the latest invoice before payment is accepted.');
       }
-      if (current.customerPaymentChoice === 'BANK_TRANSFER') {
-        throw new AppError(409, 'The customer selected bank transfer. Verify their uploaded bank slip instead of taking a separate cashier payment.');
-      }
-      if ((current.prescription?.isOnline || current.prescription?.sourceUploadId) && current.customerPaymentChoice === 'CASH' && paymentMethod !== 'CASH') {
-        throw new AppError(409, 'The customer acknowledged this online invoice as a cash payment. Edit the invoice and obtain a new acknowledgement before using another payment method.');
-      }
-
+      if (paymentMethod !== 'BANK_TRANSFER' && await isDeliveryFeeBill(tx, id)) throw new AppError(409, 'Delivery fees can only be paid by bank transfer. Verify the customer\'s uploaded transfer receipt, or record the bank transfer reference.');
       validatePaymentAmounts(current.total, paymentMethod, extraDetails);
+      if (extraDetails.confirmHandover === true) {
+        const delivery = await tx.deliveryRequest?.findUnique({ where: { paymentRequestId: id }, select: { status: true } });
+        if (delivery && delivery.status !== 'CANCELLED') throw new AppError(409, 'This is a home-delivery order. Record the payment without handing over medicines; the pharmacy dispenses it when the parcel is dispatched.');
+      }
       const { pin, operationSettings } = await settleAsPaid(tx, {
         id, fromStatus: 'AWAITING_PAYMENT', paymentMethod, paymentReference, cashierId, amountPaid: current.total,
         splitDetails: extraDetails.splitDetails || null,
+        customerPaymentChoice: current.customerPaymentChoice,
       });
 
       let dispensed = null;
@@ -558,34 +681,52 @@ export const paymentRequestService = {
         changeAmount: extraDetails.changeAmount ?? null,
         splitDetails: extraDetails.splitDetails ?? null,
       };
-    });
+    }, 3, stockFulfillmentTransactionOptions);
   },
 
   async acknowledge(id, input, user, changeChoice = false) {
     return serializable(async (tx) => {
       const request = await tx.paymentRequest.findUnique({
         where: { id },
-        include: { items: true, prescription: { select: { sourceUploadId: true, isOnline: true } } },
+        include: { items: true, prescription: { select: { sourceUploadId: true, isOnline: true, sourceUpload: { select: { prepareRequested: true } } } } },
       });
       if (!request) throw new AppError(404, 'Invoice not found.');
       if (request.patientId !== user.id) throw new AppError(403, 'This invoice does not belong to you.');
       if (request.status !== 'AWAITING_PAYMENT') throw new AppError(409, 'Only an invoice awaiting payment can be acknowledged.');
+      if (request.customerCancellationReason) throw new AppError(409, 'Resolve the cancellation request with the pharmacy before acknowledging or paying this invoice.');
       if (input.revision !== request.revision) throw new AppError(409, 'The pharmacy updated this invoice. Refresh and acknowledge the latest revision.');
       if (changeChoice && request.acknowledgedRevision !== request.revision) throw new AppError(409, 'Review and acknowledge the latest invoice before changing payment method.');
+      if (input.paymentChoice !== 'BANK_TRANSFER' && await isDeliveryFeeBill(tx, id)) throw new AppError(409, 'Delivery fees can only be paid by bank transfer. Choose bank transfer and upload your transfer receipt.');
       const retainAcknowledgement = request.acknowledgedRevision === request.revision;
-      const activeCashHold = request.customerPaymentChoice === 'CASH' && request.reservationExpiresAt && request.reservationExpiresAt > new Date();
+      const holdPolicy = stockHoldPolicy(request);
+      const activeHold = Boolean(request.reservationExpiresAt && request.reservationExpiresAt > new Date());
+      const activeCashHold = request.customerPaymentChoice === 'CASH' && activeHold;
 
-      await releaseReservations(tx, id);
       let reservationExpiresAt = null;
-      if (input.paymentChoice === 'CASH') {
-        const settings = await operationSettingsService.get(tx);
-        const hours = request.reservationDurationHours || settings.cashReservationHours;
-        reservationExpiresAt = activeCashHold ? request.reservationExpiresAt : new Date(Date.now() + hours * 60 * 60 * 1000);
-        await reserveStock(tx, id, request.items, batchAllocationOrder(settings.allocationMethod));
+      if (holdPolicy === 'AT_BILLING') {
+        // A prepared order keeps the stock held at billing, whichever payment
+        // method is chosen. Hold it again only if the earlier hold has expired.
+        if (activeHold) reservationExpiresAt = request.reservationExpiresAt;
+        else {
+          await releaseReservations(tx, id);
+          if (request.items.length) reservationExpiresAt = await holdStockForPreparedOrder(tx, id, request.items, request.reservationDurationHours);
+        }
+      } else {
+        // "Send me the bill first" orders hold nothing until payment; other
+        // bills drop any earlier hold and take a new one below for cash.
+        await releaseReservations(tx, id);
+      }
+      if (holdPolicy === 'CASH_CHOICE' && input.paymentChoice === 'CASH') {
+        if (request.items.length) {
+          const settings = await operationSettingsService.get(tx);
+          const hours = request.reservationDurationHours || settings.cashReservationHours;
+          reservationExpiresAt = activeCashHold ? request.reservationExpiresAt : new Date(Date.now() + hours * 60 * 60 * 1000);
+          await reserveStock(tx, id, request.items, batchAllocationOrder(settings.allocationMethod));
+        }
       }
 
-      const updated = await tx.paymentRequest.update({
-        where: { id },
+      const claimed = await tx.paymentRequest.updateMany({
+        where: { id, patientId: user.id, status: 'AWAITING_PAYMENT', revision: request.revision, customerCancellationReason: null },
         data: {
           acknowledgedRevision: request.revision,
           customerAcknowledgedAt: retainAcknowledgement ? request.customerAcknowledgedAt : new Date(),
@@ -593,8 +734,9 @@ export const paymentRequestService = {
           customerNote: input.customerNote === undefined ? request.customerNote : input.customerNote || null,
           reservationExpiresAt,
         },
-        include,
       });
+      if (claimed.count !== 1) throw new AppError(409, 'This invoice changed or a cancellation request was submitted. Refresh before continuing.');
+      const updated = await tx.paymentRequest.findUnique({ where: { id }, include });
       await tx.paymentRequestEvent.create({ data: {
         paymentRequestId: id, kind: retainAcknowledgement ? 'PAYMENT_CHOICE_CHANGED' : 'CUSTOMER_ACKNOWLEDGED',
         revision: request.revision, actorId: user.id,
@@ -606,7 +748,7 @@ export const paymentRequestService = {
 
   // ---------------------------------------------------------------- online bank transfer
   async submitSlip(id, input, user) {
-    const record = await prisma.paymentRequest.findUnique({ where: { id }, select: { id: true, patientId: true, status: true, total: true, revision: true, acknowledgedRevision: true, customerPaymentChoice: true } });
+    const record = await prisma.paymentRequest.findUnique({ where: { id }, select: { id: true, patientId: true, status: true, total: true, revision: true, acknowledgedRevision: true, customerPaymentChoice: true, customerCancellationReason: true } });
     if (!record) throw new AppError(404, 'Invoice not found.');
     if (user.role === 'PATIENT' && record.patientId !== user.id) throw new AppError(403, 'This invoice does not belong to you.');
     if (record.status === 'SLIP_SUBMITTED') throw new AppError(409, 'A slip for this invoice is already waiting to be checked.');
@@ -615,6 +757,7 @@ export const paymentRequestService = {
         ? 'This invoice has been cancelled, so it can no longer be paid.'
         : 'This invoice has already been paid.');
     }
+    if (record.customerCancellationReason) throw new AppError(409, 'Resolve the cancellation request with the pharmacy before uploading a payment receipt.');
     if (record.acknowledgedRevision !== record.revision || record.customerPaymentChoice !== 'BANK_TRANSFER') {
       throw new AppError(409, 'Acknowledge the latest invoice and select bank transfer before uploading a receipt.');
     }
@@ -624,7 +767,7 @@ export const paymentRequestService = {
     }
 
     return prisma.$transaction(async (tx) => {
-      const claimed = await tx.paymentRequest.updateMany({ where: { id, status: 'AWAITING_PAYMENT', revision: record.revision, acknowledgedRevision: record.revision, customerPaymentChoice: 'BANK_TRANSFER', patientId: record.patientId }, data: { status: 'SLIP_SUBMITTED' } });
+      const claimed = await tx.paymentRequest.updateMany({ where: { id, status: 'AWAITING_PAYMENT', revision: record.revision, acknowledgedRevision: record.revision, customerPaymentChoice: 'BANK_TRANSFER', customerCancellationReason: null, patientId: record.patientId }, data: { status: 'SLIP_SUBMITTED' } });
       if (claimed.count !== 1) throw new AppError(409, 'This invoice was just updated. Refresh to see its latest status.');
       await tx.paymentSlip.create({
         data: {
@@ -637,7 +780,7 @@ export const paymentRequestService = {
       });
       const data = await tx.paymentRequest.findUnique({ where: { id }, include });
       return safeRecord(data);
-    });
+    }, attachmentTransactionOptions);
   },
 
   async reviewSlip(id, slipId, decision, user) {
@@ -678,8 +821,8 @@ export const paymentRequestService = {
     return slip;
   },
 
-  // A customer who is not happy with what they have been quoted can turn the invoice down
-  // instead of leaving it sitting in the cashier's queue.
+  // Keep the older decline endpoint safe for clients that have not refreshed yet:
+  // declining now creates a staff-reviewed cancellation request instead of cancelling immediately.
   async declineByPatient(id, reason, user, revision) {
     const record = await prisma.paymentRequest.findUnique({ where: { id }, select: { id: true, patientId: true, status: true } });
     if (!record) throw new AppError(404, 'Invoice not found.');
@@ -689,19 +832,7 @@ export const paymentRequestService = {
         ? 'You have already sent a payment slip for this invoice. Ask the pharmacy to cancel it instead.'
         : 'This invoice can no longer be declined.');
     }
-    return prisma.$transaction(async (tx) => {
-      const claimed = await tx.paymentRequest.updateMany({
-        where: { id, status: 'AWAITING_PAYMENT', revision: revision ?? -1 },
-        data: { status: 'CANCELLED', cancellationReason: `Declined by the customer: ${reason}`, cancelledById: user.id, cancelledAt: new Date() },
-      });
-      if (claimed.count !== 1) throw new AppError(409, 'This invoice was just updated. Refresh to see its latest status.');
-      await releaseReservations(tx, id);
-      await tx.paymentRequestEvent.create({ data: { paymentRequestId: id, kind: 'CANCELLED', revision, actorId: user.id, details: { reason: `Declined by the customer: ${reason}` } } });
-      const cancelled = await tx.paymentRequest.findUnique({ where: { id }, include: { delivery: true, deliveryFeeFor: true } });
-      await synchronizeDeliveryCancellation(tx, cancelled, user, `Declined by the customer: ${reason}`, this.cancel.bind(this));
-      const data = await tx.paymentRequest.findUnique({ where: { id }, include });
-      return safeRecord(data);
-    });
+    return this.requestCancellation(id, reason, user, revision);
   },
   async documentData(id, user, requirePaid = false) {
     const record = await this.get(id, user);
@@ -751,6 +882,6 @@ export const paymentRequestService = {
         items: { create: saleItems },
       } }));
       return sale;
-    });
+    }, 3, stockFulfillmentTransactionOptions);
   },
 };

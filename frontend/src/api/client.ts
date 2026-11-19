@@ -14,7 +14,17 @@ const defaultApiUrl = '/api';
 export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || defaultApiUrl, timeout: 30000 });
 let redirectingToLogin = false;
 api.interceptors.request.use(async (config) => {
-  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(config.method?.toUpperCase() || '') && /^\/(prescriptions|prescription-uploads|payment-requests|sales)(?:\/|$)/.test(config.url || '')) {
+  const method = config.method?.toUpperCase() || '';
+  const path = (config.url || '').split('?')[0];
+  // Large file writes and cashier/dispensing transactions may need more than
+  // the ordinary API window when the hosted MySQL connection is slow. Database
+  // transactions remain separately bounded; this only prevents Axios from
+  // abandoning a request before those limits are reached.
+  if (['POST', 'PUT', 'PATCH'].includes(method)
+    && /^\/(?:prescription-uploads(?:\/|$)|prescriptions(?:\/\d+\/(?:dispense|payment-request))?$|payment-requests\/\d+\/(?:pay|fulfill-retail|slip|delivery))/.test(path)) {
+    config.timeout = Math.max(config.timeout || 0, 60_000);
+  }
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && /^\/(prescriptions|prescription-uploads|payment-requests|sales)(?:\/|$)/.test(path)) {
     if (!(await waitForWorkflow())) throw new axios.CanceledError('Editing access unavailable. Close this form and refresh.');
   }
   if (redirectingToLogin) throw new axios.CanceledError('Session ended; returning to login.');
@@ -76,6 +86,13 @@ api.interceptors.response.use((response) => {
 });
 
 export const errorMessage = (error: unknown) => {
-  if (axios.isAxiosError(error)) return error.response?.data?.message || error.message;
+  if (axios.isAxiosError(error)) {
+    const message = error.response?.data?.message || error.message;
+    const requestId = error.response?.data?.requestId;
+    if (requestId && message.includes('contact the pharmacy with this request reference')) {
+      return `${message} Reference: ${requestId}`;
+    }
+    return message;
+  }
   return error instanceof Error ? error.message : 'Something went wrong.';
 };

@@ -1,7 +1,8 @@
+import { balanceItemSelect } from './prescriptionBalance.js';
 // Display recorded directions only. Never infer dosing from price, quantity or product name.
 export const directionSelect = { id: true, dosageInstructions: true, specialInstructions: true };
 export const invoiceDispensingInclude = {
-  prescription: { select: { prescriptionNumber: true, createdBy: { select: { fullName: true } }, verifiedBy: { select: { fullName: true } } } },
+  prescription: { select: { prescriptionNumber: true, items: { select: balanceItemSelect }, createdBy: { select: { fullName: true } }, verifiedBy: { select: { fullName: true } } } },
   items: { include: { prescriptionItem: { select: { ...directionSelect, product: { select: { genericName: true, strength: true, unit: true, storageInstructions: true } } } } } },
 };
 export const patientMedicineInstructions = record => {

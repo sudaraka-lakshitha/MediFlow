@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import bcrypt from 'bcrypt';
 import { prisma } from '../config/prisma.js';
+import { DEFAULT_TRANSACTION_OPTIONS } from '../utils/serializable.js';
 import { AppError } from '../utils/AppError.js';
 import { normalizePatientPhone, syncPatientPhoneIdentity } from '../utils/patientPhoneIdentity.js';
 import { patientDirections } from '../utils/patientDirections.js';
@@ -43,15 +44,16 @@ export const patientService = {
       const existing = await prisma.user.findFirst({ where: { role: 'PATIENT', OR: [{ phone: data.phone }, { patientPhoneIdentity: { is: { phone: normalizePatientPhone(data.phone) } } }] }, select: { fullName: true, patientProfile: { select: { id: true, patientNumber: true } } } });
       if (existing) throw new AppError(409, `A patient with this phone number already exists: ${existing.fullName} (${existing.patientProfile?.patientNumber || 'no patient number'}). Search for them instead of creating a duplicate.`);
     }
+    const onlineAccess = data.onlineAccess !== false;
+    const generatedPassword = onlineAccess ? (data.password || temporaryPassword()) : temporaryPassword();
+    const email = onlineAccess ? data.email.toLowerCase() : walkInEmail();
+    const passwordHash = await bcrypt.hash(generatedPassword, 12);
     return prisma.$transaction(async (tx) => {
-      const onlineAccess = data.onlineAccess !== false;
-      const generatedPassword = onlineAccess ? (data.password || temporaryPassword()) : temporaryPassword();
-      const email = onlineAccess ? data.email.toLowerCase() : walkInEmail();
-      const user = await tx.user.create({ data: { email, fullName:data.fullName, phone:data.phone||null, passwordHash:await bcrypt.hash(generatedPassword,12), active:onlineAccess, mustChangePassword:onlineAccess, role:'PATIENT' } });
+      const user = await tx.user.create({ data: { email, fullName:data.fullName, phone:data.phone||null, passwordHash, active:onlineAccess, mustChangePassword:onlineAccess, role:'PATIENT' } });
       const patient = await tx.patientProfile.create({ data: { userId:user.id, patientNumber:`PAT-${crypto.randomUUID().slice(0,8).toUpperCase()}`, dateOfBirth:data.dateOfBirth, address:data.address, allergies:data.allergies, chronicConditions:data.chronicConditions||null, registrationSource:staff.role, registeredById:staff.id }, include });
       await syncPatientPhoneIdentity(tx, user.id, data.phone);
       return { ...patient, onlineAccess, temporaryPassword: onlineAccess ? generatedPassword : undefined };
-    });
+    }, DEFAULT_TRANSACTION_OPTIONS);
   },
   update(id,data) {
     return prisma.$transaction(async (tx) => {
@@ -64,7 +66,7 @@ export const patientService = {
       } else await tx.user.update({where:{id:profile.userId},data:userData});
       if (data.phone !== undefined) await syncPatientPhoneIdentity(tx, profile.userId, data.phone);
       return tx.patientProfile.update({where:{id},data:{dateOfBirth:data.dateOfBirth,address:data.address,allergies:data.allergies,chronicConditions:data.chronicConditions === undefined ? undefined : data.chronicConditions || null},include});
-    });
+    }, DEFAULT_TRANSACTION_OPTIONS);
   },
   async resetPassword(id,password) {
     const profile=await prisma.patientProfile.findUniqueOrThrow({where:{id}});

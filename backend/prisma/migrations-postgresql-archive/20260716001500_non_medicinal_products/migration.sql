@@ -1,4 +1,0 @@
-CREATE TYPE "ProductType" AS ENUM ('MEDICINE', 'NON_MEDICINAL');
-
-ALTER TABLE "products"
-ADD COLUMN "product_type" "ProductType" NOT NULL DEFAULT 'MEDICINE';

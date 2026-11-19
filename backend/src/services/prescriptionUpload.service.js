@@ -1,4 +1,4 @@
-import { serializable } from '../utils/serializable.js';
+import { attachmentTransactionOptions, serializable } from '../utils/serializable.js';
 import { historySearch } from '../utils/historySearch.js';
 import crypto from 'node:crypto';
 import { invoiceMaterialChanged } from '../utils/invoiceRevision.js';
@@ -209,7 +209,7 @@ export const prescriptionUploadService = {
     if (removed.size) await tx.prescriptionUploadAttachment.deleteMany({ where: { uploadId: id, id: { in: [...removed].filter(value => value !== 0) } } });
     if (additions.length) await tx.prescriptionUploadAttachment.createMany({ data: additions.map(file => ({ ...file, uploadId: id })) });
     return visibleUpload(await tx.prescriptionUpload.findUnique({ where: { id }, select: summarySelect }), user);
-    });
+    }, 3, attachmentTransactionOptions);
   },
   async review(id, data, userId) {
     const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true, status: true, attachmentRemovedAt: true } });

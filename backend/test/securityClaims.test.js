@@ -52,7 +52,7 @@ describe('last administrator transaction boundary', () => {
     const operation = action === 'update' ? userService.update(1, { role: 'CASHIER' }) : action === 'setActive' ? userService.setActive(1, false) : userService.remove(1);
     await expect(operation).rejects.toThrow('At least one active administrator');
     expect(db.user.update).not.toHaveBeenCalled();
-    expect(db.$transaction.mock.calls[0][1]).toEqual({ isolationLevel: 'Serializable' });
+    expect(db.$transaction.mock.calls[0][1]).toMatchObject({ isolationLevel: 'Serializable' });
   });
   it('rechecks the last-admin invariant after a concurrent-write retry', async () => {
     db.user.count.mockResolvedValueOnce(2).mockResolvedValueOnce(1);

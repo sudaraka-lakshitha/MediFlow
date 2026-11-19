@@ -83,6 +83,7 @@ const actionLabels: Record<string, string> = {
   PRESCRIPTION_DELETED: "Deleted a pending prescription",
   PRESCRIPTION_VERIFIED: "Verified a prescription",
   PRESCRIPTION_REJECTED: "Rejected a prescription",
+  PRESCRIPTION_BALANCE_CLOSED: "Closed the unsupplied balance of a prescription",
   PRESCRIPTION_DISPENSED: "Dispensed a prescription",
   PRESCRIPTION_VIEWED: "Reviewed a prescription",
   PRESCRIPTION_RECORDS_VIEWED: "Reviewed prescription records",

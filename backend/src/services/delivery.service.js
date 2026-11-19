@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { prisma } from '../config/prisma.js';
-import { serializable } from '../utils/serializable.js';
+import { serializable, stockFulfillmentTransactionOptions } from '../utils/serializable.js';
 import { AppError } from '../utils/AppError.js';
 import { performPrescriptionDispense } from '../utils/prescriptionDispense.js';
 import { paymentRequestService } from './paymentRequest.service.js';
@@ -8,6 +8,15 @@ import { validateDeliveryAction } from '../utils/deliveryAction.js';
 import { billCancellationPolicy } from '../utils/billCancellation.js';
 import { assertParcelReshippable, parcelContents, reshipmentSaleSelect } from '../utils/reshipment.js';
 import { deliveryQueuePage } from '../utils/deliveryQueue.js';
+import { issueDeliveryFeeInvoice } from '../utils/deliveryFee.js';
+import { encryptPickupPin, generatePickupPin, hashPickupPin } from '../utils/pickupPin.js';
+
+// The delivery fee can be issued while the medicine bill is still being paid,
+// so the customer sees both bills together. A paid medicine bill must still be
+// fully paid, and a bill under cancellation review cannot receive a fee.
+const medicineBillAcceptsDeliveryFee = (bill) => !bill.customerCancellationReason && (
+  ['AWAITING_PAYMENT', 'SLIP_SUBMITTED'].includes(bill.status)
+  || (bill.status === 'PAID' && Number(bill.amountPaid) - Number(bill.refundedAmount) >= Number(bill.total)));
 
 const feeSelect = { id: true, requestNumber: true, status: true, total: true, amountPaid: true, paidAt: true, refundedAmount: true, customerCancellationReason: true, refunds: { where: { status: { in: ['PENDING', 'AWAITING_APPROVAL'] } }, select: { id: true } } };
 const include = { feePaymentRequest: { select: feeSelect }, paymentRequest: { select: { ...feeSelect, patientId: true, prescriptionId: true, patient: { select: { fullName: true } }, events: { where: { kind: { in: ['DELIVERY_RETURNED', 'DELIVERY_RESHIP', 'DELIVERY_DISPATCH', 'DELIVERY_DELIVERED', 'DELIVERY_DELIVERY_FAILED', 'DELIVERY_RETURNING', 'DELIVERY_RETRY_DELIVERY', 'DELIVERY_CORRECT_DELIVERED'] } }, orderBy: { createdAt: 'asc' }, select: { kind: true, createdAt: true, details: true } } } } };
@@ -24,7 +33,7 @@ export const deliveryService = {
       ...(courier ? { courierService: courier } : {}),
       ...((from || to) ? { [dateField]: { ...(from ? { gte: new Date(from) } : {}), ...(to ? { lt: new Date(to) } : {}) } } : {}),
       ...(search ? { OR: [{ recipientName: { contains: search } }, { courierService: { contains: search } }, { trackingReference: { contains: search } }, { paymentRequest: { requestNumber: { contains: search } } }, { paymentRequest: { patient: { fullName: { contains: search } } } }] } : {}) };
-    const calculatedQueue = ['READY', 'ATTENTION'].includes(queue);
+    const calculatedQueue = ['READY', 'ATTENTION', 'AWAITING_PAYMENT'].includes(queue);
     if (calculatedQueue) where.id = { in: (await deliveryQueuePage(prisma, user, { page, pageSize, queue, search, courier, dateField, from, to })).map(row => row.id) };
     else if (queue !== 'ALL') where.status = queue;
     const records = await prisma.deliveryRequest.findMany({ where, include: { ...include, paymentRequest: { select: { ...include.paymentRequest.select, sale: { select: reshipmentSaleSelect } } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: calculatedQueue ? 0 : (page - 1) * pageSize, take: pageSize });
@@ -53,8 +62,51 @@ export const deliveryService = {
       const delivery = previous
         ? await tx.deliveryRequest.update({ where: { id: previous.id }, data: { ...details, status: 'REQUESTED' }, include })
         : await tx.deliveryRequest.create({ data: { paymentRequestId: id, ...details }, include });
+      // Home-delivery orders do not use a collection PIN; withdraw the one issued
+      // at payment. Cancelling the delivery later issues a fresh one.
+      await tx.paymentRequest.update({ where: { id }, data: { pickupPinHash: null, pickupPinEncrypted: null, pinAttempts: 0 } });
       await tx.paymentRequestEvent.create({ data: { paymentRequestId: id, revision: bill.revision, actorId: user.id, kind: previous ? 'DELIVERY_REQUESTED_AGAIN' : 'DELIVERY_REQUESTED', details: { deliveryId: delivery.id, ...details, ...(previous ? { previousFeeInvoiceId: previous.feePaymentRequestId || null, previousRecipientName: previous.recipientName, previousAddress: previous.address, previousPhone: previous.phone, previousStatus: previous.status } : {}) } } });
       return delivery;
+    });
+  },
+  cancelByPatient(id, { scope = 'DELIVERY_ONLY', reason } = {}, user) {
+    return serializable(async tx => {
+      const delivery = await tx.deliveryRequest.findFirst({
+        where: { paymentRequestId: id, paymentRequest: { patientId: user.id } },
+        include: { paymentRequest: true, feePaymentRequest: true },
+      });
+      if (!delivery) throw new AppError(404, 'Delivery request not found.');
+      if (!['REQUESTED', 'AWAITING_FEE'].includes(delivery.status) || delivery.dispatchedAt) throw new AppError(409, 'This delivery can no longer be cancelled here. Contact the pharmacy for assistance.');
+      if (delivery.paymentRequest.status !== 'AWAITING_PAYMENT') {
+        throw new AppError(409, 'Self-service cancellation is only available before payment or transfer-slip submission. Contact the pharmacy to review this order.');
+      }
+
+      const fee = delivery.feePaymentRequest;
+      if (fee && !['AWAITING_PAYMENT', 'CANCELLED'].includes(fee.status)) throw new AppError(409, 'The delivery fee has been submitted or paid. Contact the pharmacy for help cancelling it.');
+      if (fee?.customerCancellationReason) throw new AppError(409, 'The delivery-fee invoice already has a cancellation request under review.');
+      if (!['DELIVERY_ONLY', 'ENTIRE_ORDER'].includes(scope)) throw new AppError(400, 'Choose whether to cancel delivery only or request cancellation of the entire order.');
+
+      if (scope === 'ENTIRE_ORDER') {
+        if (!reason?.trim() || reason.trim().length < 3) throw new AppError(400, 'Give a reason for requesting cancellation of the entire order.');
+        await paymentRequestService.requestCancellation(id, reason.trim(), user, delivery.paymentRequest.revision, tx);
+      }
+
+      const changed = await tx.deliveryRequest.updateMany({
+        where: { id: delivery.id, status: delivery.status, updatedAt: delivery.updatedAt },
+        data: { status: 'CANCELLED' },
+      });
+      if (changed.count !== 1) throw new AppError(409, 'Delivery details changed. Refresh and review the latest status.');
+      if (fee?.status === 'AWAITING_PAYMENT') {
+        await paymentRequestService.cancel(fee.id, 'Home delivery cancelled before delivery-fee payment.', user, tx);
+      }
+      await tx.paymentRequestEvent.create({ data: {
+        paymentRequestId: id,
+        revision: delivery.paymentRequest.revision,
+        actorId: user.id,
+        kind: 'DELIVERY_CANCELLED_BY_PATIENT',
+        details: { scope, previousStatus: delivery.status, reason: scope === 'ENTIRE_ORDER' ? reason.trim() : null, deliveryFeeInvoiceId: fee?.id || null },
+      } });
+      return tx.deliveryRequest.findUnique({ where: { paymentRequestId: id }, include });
     });
   },
   async requestReshipment(id, user, withdraw = false, transaction = null) {
@@ -118,21 +170,19 @@ export const deliveryService = {
         if (!['REQUESTED', 'AWAITING_FEE'].includes(delivery.status)) throw new AppError(409, 'Only an undispatched delivery can be cancelled.');
         if (delivery.feePaymentRequest && delivery.feePaymentRequest.status !== 'CANCELLED') await paymentRequestService.cancel(delivery.feePaymentRequest.id, 'Home delivery cancelled; collect medicines at the pharmacy.', user, tx);
         await tx.deliveryRequest.update({ where: { id: delivery.id }, data: { status: 'CANCELLED' } });
+        // The paid medicines are now collected at the counter, so they need the
+        // collection PIN a delivery order did not have. It appears on the
+        // customer's collection receipt.
+        if (bill.status === 'PAID' && !bill.pickupPinHash) {
+          const pin = generatePickupPin();
+          await tx.paymentRequest.update({ where: { id }, data: { pickupPinHash: hashPickupPin(id, pin), pickupPinEncrypted: encryptPickupPin(pin), pinAttempts: 0, pinVerifiedAt: null } });
+        }
       } else if (input.action === 'CONFIRM') {
         const canConfirm = delivery.status === 'REQUESTED' || (delivery.status === 'AWAITING_FEE' && delivery.feePaymentRequest?.status === 'CANCELLED');
-        if (!canConfirm || bill.status !== 'PAID' || bill.customerCancellationReason || Number(bill.amountPaid) - Number(bill.refundedAmount) < Number(bill.total)) throw new AppError(409, 'Refresh: this delivery is no longer awaiting confirmation or medicines are not fully paid.');
+        if (!canConfirm || !medicineBillAcceptsDeliveryFee(bill)) throw new AppError(409, 'Refresh: this delivery is no longer awaiting confirmation, or its medicine bill is cancelled or under cancellation review.');
         if (delivery.feePaymentRequest && delivery.feePaymentRequest.status !== 'CANCELLED') throw new AppError(409, 'An active delivery-fee invoice already exists. Resolve it before issuing another.');
         if (delivery.feePaymentRequestId && await tx.refund.count({ where: { paymentRequestId: delivery.feePaymentRequestId, status: 'PENDING' } })) throw new AppError(409, 'Settle the previous delivery-fee refund before issuing a replacement invoice.');
-        const setting = await tx.systemSetting.findUnique({ where: { key: 'standardDeliveryFee' } });
-        const fee = Number(setting?.value);
-        if (!setting || !Number.isFinite(fee) || fee <= 0 || fee > 1000000) throw new AppError(409, 'Ask the administrator to configure a standard delivery fee first.');
-        const feeBill = await tx.paymentRequest.create({ data: {
-          type: 'RETAIL', requestNumber: `DEL-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
-          patientId: bill.patientId, pharmacistId: user.id, subtotal: fee, total: fee,
-          pharmacyNote: `Home delivery service for ${bill.requestNumber}. Pay before dispatch. This invoice contains no medicines.`,
-        } });
-        await tx.deliveryRequest.update({ where: { id: delivery.id }, data: { feePaymentRequestId: feeBill.id, status: 'AWAITING_FEE' } });
-        await tx.paymentRequestEvent.create({ data: { paymentRequestId: id, revision: bill.revision, actorId: user.id, kind: 'DELIVERY_FEE_ISSUED', details: { previousFeeInvoiceId: delivery.feePaymentRequestId || null, feeInvoiceId: feeBill.id, fee: String(fee) } } });
+        await issueDeliveryFeeInvoice(tx, { delivery, bill: { ...bill, id }, actorId: user.id });
       } else if (input.action === 'DISPATCH') {
         const fee = delivery.feePaymentRequest;
         if (delivery.status !== 'AWAITING_FEE' || !fee || !['PAID', 'FULFILLED'].includes(fee.status) || Number(fee.amountPaid) - Number(fee.refundedAmount) < Number(fee.total) || fee.customerCancellationReason || bill.status !== 'PAID' || bill.customerCancellationReason || Number(bill.amountPaid) - Number(bill.refundedAmount) < Number(bill.total)) throw new AppError(409, 'Both medicine and delivery invoices must be fully paid and verified before dispatch.');
@@ -159,6 +209,10 @@ export const deliveryService = {
       await tx.paymentRequestEvent.create({ data: { paymentRequestId: id, revision: bill.revision, actorId: user.id, kind: `DELIVERY_${input.action}`, details: { ...input, ...(manifest ? { items: manifest } : {}), shipmentAttempt: (delivery.shipmentAttempt || 1) + (input.action === 'RESHIP' ? 1 : 0), previousStatus: delivery.status, previousDeliveredAt: delivery.deliveredAt?.toISOString() || null, previousDispatchedAt: delivery.dispatchedAt?.toISOString() || null, previousReturnedAt: delivery.returnedAt?.toISOString() || null, previousRecipientName: delivery.recipientName, previousAddress: delivery.address, previousPhone: delivery.phone, previousTrackingReference: delivery.trackingReference || null, previousCourierService: delivery.courierService || null } } });
       return tx.deliveryRequest.findUnique({ where: { paymentRequestId: id }, include });
     };
-    return transaction ? operation(transaction) : serializable(operation);
+    return transaction ? operation(transaction) : serializable(
+      operation,
+      3,
+      input.action === 'DISPATCH' ? stockFulfillmentTransactionOptions : {},
+    );
   },
 };

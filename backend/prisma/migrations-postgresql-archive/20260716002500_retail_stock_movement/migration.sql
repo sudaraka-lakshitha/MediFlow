@@ -1,1 +1,0 @@
-ALTER TYPE "StockMovementType" ADD VALUE 'RETAIL_SALE';

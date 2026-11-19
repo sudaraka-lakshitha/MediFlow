@@ -115,6 +115,34 @@ export const createInvoicePdf = (sale) => new Promise((resolve, reject) => {
   });
   doc.y = summaryY + summaryHeight + 8;
 
+  // Medicines prescribed but not supplied on this invoice: collected later on a
+  // new bill, or recorded as not to be issued. Each shows its reason.
+  const balanceBox = (title, intro, lines, fill, stroke, titleColour, textColour) => {
+    if (!lines?.length) return;
+    const text = `${intro}\n${lines.map((line) => `${line.name}: ${line.quantity} ${line.unit}${line.reason ? ` (${line.reason})` : ''}`).join('\n')}`;
+    doc.font('Helvetica').fontSize(8);
+    const height = doc.heightOfString(text, { width: width - 20 }) + 30;
+    ensure(height + 6, title);
+    const y = doc.y + 4;
+    doc.roundedRect(left, y, width, height, 6).fillAndStroke(fill, stroke);
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(titleColour).text(title.toUpperCase(), left + 10, y + 8, { width: width - 20 });
+    doc.font('Helvetica').fontSize(8).fillColor(textColour).text(text, left + 10, y + 23, { width: width - 20 });
+    doc.y = y + height + 6;
+  };
+  if (details.supplyRows?.length) {
+    ensure(60, 'Prescribed and bought');
+    doc.moveDown(0.4).font('Helvetica-Bold').fontSize(10).fillColor('#174a45').text('Prescribed and bought', left, doc.y, { width });
+    doc.font('Helvetica').fontSize(8).fillColor('#64748b').text('Medicines not bought now were not charged on this invoice.', { width });
+    for (const row of details.supplyRows) {
+      const text = `${row.name}: prescribed ${Number(row.prescribed)} ${row.unit}${Number(row.suppliedBefore) ? `, ${Number(row.suppliedBefore)} supplied earlier` : ''}, bought ${Number(row.onThisBill)} on this invoice${Number(row.notBought) ? `, ${Number(row.notBought)} not bought - ${row.rest}${row.reason ? ` (${row.reason})` : ''}` : ''}.`;
+      doc.font('Helvetica').fontSize(8);
+      ensure(doc.heightOfString(text, { width }) + 4, 'Prescribed and bought continued');
+      doc.fillColor(Number(row.notBought) ? '#5b4a1e' : '#334155').text(text, left, doc.y + 2, { width });
+    }
+    doc.moveDown(0.4);
+  } else balanceBox('Balance to collect later', 'Not supplied or charged on this invoice. Bring this invoice back to collect them: the pharmacy issues a separate bill when stock is available.', details.balanceToCollect, '#fff8e6', '#e2b34a', '#8a5a0e', '#5b4a1e');
+  if (!details.supplyRows?.length) balanceBox('Not to be issued', 'Prescribed but not supplied and not charged. The pharmacy will not issue these later on this prescription.', details.notToBeIssued, '#f3f4f6', '#9ca3af', '#374151', '#4b5563');
+
   const sectionHeading = (title) => {
     ensure(34, `${title} continued`);
     doc.moveDown(0.6).font('Helvetica-Bold').fontSize(11).fillColor('#174a45').text(title, left, doc.y, { width });

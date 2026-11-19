@@ -3,6 +3,9 @@ import { patientMedicineInstructions } from './patientMedicineInstructions.js';
 const pick = (record, keys) => Object.fromEntries(keys.filter((key) => record[key] !== undefined).map((key) => [key, record[key]]));
 export const customerInvoice = (sale) => ({
   medicineInstructions: patientMedicineInstructions(sale),
+  balanceToCollect: sale.balanceToCollect || [],
+  notToBeIssued: sale.notToBeIssued || [],
+  supplyRows: sale.supplyRows || [],
   preparedBy: sale.dispensing?.prescription?.createdBy?.fullName || null,
   verifiedBy: sale.dispensing?.prescription?.verifiedBy?.fullName || null,
   ...pick(sale, ['id', 'invoiceNumber', 'dispensingId', 'paymentRequestId', 'createdAt', 'status', 'subtotal', 'discount', 'containerFee', 'tax', 'total', 'amountPaid', 'paymentMethod']),

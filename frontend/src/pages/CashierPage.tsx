@@ -23,6 +23,8 @@ import { Alert, Empty, Loading, Metric, Status } from "../components/Ui";
 
 const money = (value: unknown) => `Rs. ${Number(value || 0).toFixed(2)}`;
 const cancellationKey = (value: any) => `${value.id}:${value.selectedItemIds.join(',')}:${JSON.stringify(value.quantities || {})}`;
+// Home-delivery orders and delivery-fee bills leave by courier: no collection PIN.
+const isHomeDelivery = (bill: any) => Boolean(bill?.deliveryFeeFor) || Boolean(bill?.delivery && bill.delivery.status !== "CANCELLED");
 const emptyRetail = () => ({
   patientId: "",
   couponCode: "",
@@ -145,7 +147,7 @@ export function CashierPage() {
       rows.filter(
         (row) =>
           (!status || row.status === status) &&
-          `${row.requestNumber} ${row.prescription?.prescriptionNumber || "retail goods"} ${row.patient?.fullName || "walk-in"} ${row.patient?.phone || ""}`
+          `${row.requestNumber} ${row.deliveryFeeFor ? `home delivery fee ${row.deliveryFeeFor.paymentRequest?.requestNumber || ""}` : row.prescription?.prescriptionNumber || "retail goods"} ${row.patient?.fullName || "walk-in"} ${row.patient?.phone || ""}`
             .toLowerCase()
             .includes(search.toLowerCase()),
       ),
@@ -153,8 +155,14 @@ export function CashierPage() {
   );
   const openPayment = (row: any) => {
     const total = Number(row.total);
-    setPayment({ ...row, paymentMethod: "CASH", paymentReference: "", tenderedAmount: String(total), splitCashAmount: "", splitNonCashMethod: "CARD", splitNonCashAmount: "", splitNonCashReference: "", splitCashTendered: "" });
+    // Delivery fees are paid by bank transfer only.
+    setPayment({ ...row, paymentMethod: row.deliveryFeeFor ? "BANK_TRANSFER" : "CASH", paymentReference: "", tenderedAmount: String(total), splitCashAmount: "", splitNonCashMethod: "CARD", splitNonCashAmount: "", splitNonCashReference: "", splitCashTendered: "" });
   };
+  const canDirectlyCancelPaidBill = (row: any) => isAdmin || (
+    (user?.role === "CASHIER" || (user?.role === "PHARMACIST" && user.cashierAccess))
+    && Boolean(row.paidAt)
+    && formatPharmacyDate(row.paidAt) === formatPharmacyDate(new Date())
+  );
   const openPdf = async (row: any, kind: "handoff" | "receipt") => {
     setDocumentPreview({ id: row.id, kind, name: row.requestNumber });
   };
@@ -327,6 +335,37 @@ export function CashierPage() {
         type: "success",
       });
       setTimeout(() => setToast(null), 5000);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const sendCancellationForAdminApproval = async () => {
+    if (!cancellationOverride || busy) return;
+    const reason = String(cancellationOverride.customerCancellationReason || "").trim();
+    if (cancellationOverride.status !== "PAID" || reason.length < 3) {
+      setError("Only a paid, uncollected bill with a valid customer cancellation request can be sent for refund approval.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const payload = { revision: cancellationOverride.revision, reason };
+      const preview = await api.post(`/payment-requests/${cancellationOverride.id}/refund-approval/preview`, payload);
+      await api.post(`/payment-requests/${cancellationOverride.id}/refund-approval`, {
+        ...payload,
+        hash: preview.data.data.hash,
+      });
+      const requestNumber = cancellationOverride.requestNumber;
+      setCancellationOverride(null);
+      await load();
+      setToast({
+        title: "Cancellation sent for review",
+        message: `${requestNumber} is now in the administrator refund-approval queue. The patient cancellation reason was included; payment is not paid out until a cashier records it.`,
+        type: "success",
+      });
+      setTimeout(() => setToast(null), 6000);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -573,7 +612,11 @@ export function CashierPage() {
                   </td>
                   <td>{row.pharmacist.fullName}</td>
                   <td>
-                    {row.items.map((item: any) => (
+                    {row.deliveryFeeFor ? (
+                      <small className="d-block">
+                        Home delivery service fee for {row.deliveryFeeFor.paymentRequest?.requestNumber || "prescription order"}
+                      </small>
+                    ) : row.items.map((item: any) => (
                       <small className="d-block" key={item.id}>
                         {item.product.genericName} {item.product.strength} ×{" "}
                         {item.quantity}
@@ -590,8 +633,10 @@ export function CashierPage() {
                         {row.acknowledgedRevision !== row.revision
                           ? `Waiting for customer acknowledgement of revision ${row.revision}`
                           : row.customerPaymentChoice === "CASH"
-                            ? `Cash selected · reserved until ${row.reservationExpiresAt ? formatPharmacyDateTime(row.reservationExpiresAt) : "deadline unavailable"}`
-                            : "Bank transfer selected · waiting for receipt"}
+                            ? `Customer selected cash · reserved until ${row.reservationExpiresAt ? formatPharmacyDateTime(row.reservationExpiresAt) : "deadline unavailable"}`
+                            : row.customerPaymentChoice === "BANK_TRANSFER"
+                              ? "Customer selected bank transfer · counter payment can be recorded if they pay here"
+                              : "Waiting for the customer to choose a payment method"}
                       </small>
                     )}
                   </td>
@@ -605,7 +650,7 @@ export function CashierPage() {
                       >
                         <i className="bi bi-file-earmark-text" />
                       </button>
-                      {row.status === "AWAITING_PAYMENT" && (!(row.prescription?.isOnline || row.prescription?.sourceUploadId) || (row.acknowledgedRevision === row.revision && row.customerPaymentChoice === "CASH")) && (
+                      {row.status === "AWAITING_PAYMENT" && (!(row.prescription?.isOnline || row.prescription?.sourceUploadId) || row.acknowledgedRevision === row.revision) && (
                         <button
                           className={`btn btn-sm ${row.customerCancellationReason ? "btn-warning" : "btn-primary"}`}
                           onClick={() => {
@@ -696,7 +741,7 @@ export function CashierPage() {
                             Refund / Cancel payment
                           </button>
                         )}
-                      {isAdmin && row.status === "PAID" && (
+                      {isAdmin && row.status === "PAID" && !isHomeDelivery(row) && (
                         <button className="btn btn-sm btn-outline-secondary" onClick={() => setPinReset({ ...row, reason: "" })}>Reissue collection PIN</button>
                       )}
                     </div>
@@ -729,7 +774,7 @@ export function CashierPage() {
       )}
       {payment && (
         <Modal
-          title={`Receive payment — ${payment.requestNumber}`}
+          title={`${payment.deliveryFeeFor ? "Receive home delivery fee" : "Receive payment"} — ${payment.requestNumber}`}
           onClose={() => setPayment(null)}
           size="md"
         >
@@ -751,17 +796,62 @@ export function CashierPage() {
               <strong>Amount due: {money(payment.total)}</strong>
               <br />
               <small>
-                Confirm the customer has paid the full amount.{" "}
-                {operationSettings.requirePickupPin
+                {payment.deliveryFeeFor
+                  ? `Confirm the customer has paid the separate delivery service fee for ${payment.deliveryFeeFor.paymentRequest?.requestNumber || "this prescription order"}. Dispatch stays on hold until the payment is recorded and the pharmacy is ready.`
+                  : <>Confirm the customer has paid the full amount. {isHomeDelivery(payment)
+                    ? "This is a home-delivery order, so no collection PIN is issued."
+                    : operationSettings.requirePickupPin
                     ? "A one-time dispensing PIN will be generated on the receipt."
-                    : "PIN verification is turned off, so the pharmacist can dispense straight after payment."}
+                    : "PIN verification is turned off, so the pharmacist can dispense straight after payment."}</>}
               </small>
             </div>
-            {operationSettings.cashierCanDispenseAtPayment && payment.prescription && (
+            {operationSettings.cashierCanDispenseAtPayment && payment.prescription && payment.delivery && payment.delivery.status !== "CANCELLED" && (
+              <div className="alert alert-info small mb-3">
+                Home-delivery order: record the payment only. The pharmacy dispenses these medicines when the parcel is dispatched.
+              </div>
+            )}
+            {operationSettings.cashierCanDispenseAtPayment && payment.prescription && (!payment.delivery || payment.delivery.status === "CANCELLED") && (
               <label className="form-check mb-3">
                 <input className="form-check-input" type="checkbox" checked={payment.confirmHandover === true} onChange={(event) => setPayment({ ...payment, confirmHandover: event.target.checked })} />
                 <span className="form-check-label">I am physically handing these medicines to the customer now. Record collection with this payment.</span>
               </label>
+            )}
+            {payment.supplyRows?.length > 0 && (
+              <div className="alert alert-warning small mb-3">
+                <strong>Prescribed and bought — charge only what is on this bill</strong>
+                <table className="table table-sm small mb-1">
+                  <thead><tr><th>Medicine</th><th>Prescribed</th><th>Earlier</th><th>Bought now</th><th>Not bought</th><th>Rest of it</th></tr></thead>
+                  <tbody>
+                    {payment.supplyRows.map((row: any) => (
+                      <tr key={row.prescriptionItemId}>
+                        <td>{row.name}</td>
+                        <td>{Number(row.prescribed)} {row.unit}</td>
+                        <td>{Number(row.suppliedBefore) || "—"}</td>
+                        <td>{Number(row.onThisBill)}</td>
+                        <td>{Number(row.notBought) ? <strong>{Number(row.notBought)}</strong> : "—"}</td>
+                        <td>{row.rest ? `${row.rest}${row.reason ? ` (${row.reason})` : ""}` : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {!payment.supplyRows?.length && payment.balanceToCollect?.length > 0 && (
+              <div className="alert alert-warning small mb-3">
+                <strong>Not on this bill — the customer collects these later:</strong>
+                {payment.balanceToCollect.map((line: any) => (
+                  <span className="d-block" key={line.prescriptionItemId}>{line.name}: {Number(line.quantity)} {line.unit}{line.reason ? ` (${line.reason})` : ""}</span>
+                ))}
+                <span className="d-block mt-1">Do not charge for them now. They are billed separately when stock is available.</span>
+              </div>
+            )}
+            {!payment.supplyRows?.length && payment.notToBeIssued?.length > 0 && (
+              <div className="alert alert-secondary small mb-3">
+                <strong>Not to be issued (not charged):</strong>
+                {payment.notToBeIssued.map((line: any) => (
+                  <span className="d-block" key={line.prescriptionItemId}>{line.name}: {Number(line.quantity)} {line.unit}{line.reason ? ` (${line.reason})` : ""}</span>
+                ))}
+              </div>
             )}
             {payment.items?.length > 0 && (
               <div className="cashier-payment-items">
@@ -778,8 +868,8 @@ export function CashierPage() {
               </div>
             )}
             <div className="cashier-payment-breakdown">
-              <span>
-                Medicine subtotal <strong>{money(payment.subtotal)}</strong>
+                <span>
+                {payment.deliveryFeeFor ? "Delivery service fee" : "Medicine subtotal"} <strong>{money(payment.subtotal)}</strong>
               </span>
               <span className="text-success">
                 Discount <strong>− {money(payment.discount)}</strong>
@@ -794,13 +884,16 @@ export function CashierPage() {
             </div>
 
             <label className="form-label fw-semibold">Payment Method</label>
+            {payment.deliveryFeeFor && (
+              <small className="d-block text-secondary mb-2">Delivery fees are paid by bank transfer only. Prefer verifying the customer's uploaded receipt; record a reference here only for a transfer you have checked against the bank.</small>
+            )}
             <div className="d-grid gap-2 d-sm-flex mb-3">
               {[
                 { id: "CASH", label: "Cash", icon: "cash-stack" },
                 { id: "CARD", label: "Card", icon: "credit-card" },
                 { id: "BANK_TRANSFER", label: "Bank Transfer", icon: "bank" },
                 { id: "SPLIT", label: "Split (Cash + Card/Bank)", icon: "pie-chart" },
-              ].filter((method) => !(payment.prescription?.isOnline || payment.prescription?.sourceUploadId) || payment.customerPaymentChoice !== "CASH" || method.id === "CASH").map((m) => (
+              ].filter((m) => !payment.deliveryFeeFor || m.id === "BANK_TRANSFER").map((m) => (
                 <button
                   key={m.id}
                   type="button"
@@ -1310,12 +1403,13 @@ export function CashierPage() {
                         <label className="form-label small fw-semibold">
                           {payment.splitNonCashMethod === "CARD"
                             ? "Card Slip / Approval Ref (optional)"
-                            : "Bank Transfer Ref (optional)"}
+                            : "Bank Transfer Ref (required)"}
                         </label>
                         <input
                           type="text"
                           className="form-control"
                           maxLength={60}
+                          required={payment.splitNonCashMethod === "BANK_TRANSFER" && Number(payment.splitNonCashAmount || 0) > 0}
                           placeholder={
                             payment.splitNonCashMethod === "CARD"
                               ? "e.g. POS Transaction / Approval #4829"
@@ -1436,7 +1530,7 @@ export function CashierPage() {
             {payment.paymentMethod === "BANK_TRANSFER" && (
               <div className="card p-3 bg-light border mb-3">
                 <label className="form-label">
-                  <i className="bi bi-bank me-1" /> Bank Transfer Reference Number <span className="text-secondary fw-normal">(optional)</span>
+                  <i className="bi bi-bank me-1" /> Bank Transfer Reference Number <span className="text-secondary fw-normal">(required)</span>
                 </label>
                 <input
                   className="form-control"
@@ -1446,6 +1540,7 @@ export function CashierPage() {
                   }
                   maxLength={120}
                   placeholder="e.g. Online transfer reference or deposit slip #"
+                  required
                 />
               </div>
             )}
@@ -2132,6 +2227,12 @@ export function CashierPage() {
               {paid.dispensed.invoiceNumber} — hand the items over to the
               customer now.
             </div>
+          ) : isHomeDelivery(paid.data) && !paid.pickupPin ? (
+            <p className="text-secondary small mt-2">
+              Home-delivery order: no collection PIN is needed. The pharmacy
+              dispatches the parcel once the medicine bill and the delivery fee
+              are both paid.
+            </p>
           ) : operationSettings.requirePickupPin ? (
             <>
               <label className="form-label">Dispensing verification PIN</label>
@@ -2159,7 +2260,7 @@ export function CashierPage() {
               onClick={() => openPdf(paid.data, "receipt")}
             >
               <i className="bi bi-printer me-2" />
-              {operationSettings.requirePickupPin && !paid.dispensed
+              {operationSettings.requirePickupPin && !paid.dispensed && paid.pickupPin
                 ? "Print physical receipt with PIN"
                 : "Print physical receipt"}
             </button>
@@ -2189,10 +2290,14 @@ export function CashierPage() {
       {cancellationOverride && (
         <Modal title="Customer requested cancellation" onClose={() => setCancellationOverride(null)} size="sm">
           <div className="alert alert-warning"><i className="bi bi-exclamation-triangle" aria-hidden="true" /><div><strong>Do not collect payment unless the customer has changed their mind.</strong><div className="small mt-1">Reason: {cancellationOverride.customerCancellationReason}</div></div></div>
-          <p className="text-secondary small">Confirm only when the customer is present and explicitly wishes to continue with this bill.</p>
+          <p className="text-secondary small">Choose how to handle this request. Cancelling a paid bill creates a refund obligation; a cashier must separately record the payout.</p>
+          {['AWAITING_PAYMENT', 'SLIP_SUBMITTED'].includes(cancellationOverride.status) && <button type="button" className="btn btn-outline-danger w-100 mb-2" disabled={busy} onClick={() => { setError(''); setCancelBill({ ...cancellationOverride, reason: cancellationOverride.customerCancellationReason || '' }); setCancellationOverride(null); }}>Cancel unpaid bill</button>}
+          {cancellationOverride.status === 'PAID' && canDirectlyCancelPaidBill(cancellationOverride) && <button type="button" className="btn btn-outline-danger w-100 mb-2" disabled={busy} onClick={() => { setError(''); setRevoke({ ...cancellationOverride, reason: cancellationOverride.customerCancellationReason || '' }); setCancellationOverride(null); }}>Refund and cancel bill</button>}
+          {cancellationOverride.status === 'PAID' && !canDirectlyCancelPaidBill(cancellationOverride) && <button type="button" className="btn btn-outline-primary w-100 mb-3" disabled={busy} onClick={() => void sendCancellationForAdminApproval()}>Send cancellation to administrator for refund approval</button>}
+          <p className="text-secondary small">Continue only when the customer confirms they want to keep the order.</p>
           <label className="form-label" htmlFor="cancellation-resolution">Reason for continuing (record the customer's agreement)</label><textarea id="cancellation-resolution" className="form-control" maxLength={500} value={cancellationOverride.resolutionReason} onChange={(event) => setCancellationOverride({ ...cancellationOverride, resolutionReason: event.target.value })} />
           <Alert message={error} />
-          <div className="modal-actions"><button type="button" className="btn btn-light" onClick={() => setCancellationOverride(null)}>Keep cancellation request</button><button type="button" className="btn btn-warning" disabled={busy || cancellationOverride.resolutionReason.trim().length < 3} onClick={async () => { setBusy(true); try { await api.post(`/payment-requests/${cancellationOverride.id}/resolve-cancellation`, { revision: cancellationOverride.revision, requestReason: cancellationOverride.customerCancellationReason, reason: cancellationOverride.resolutionReason }); setCancellationOverride(null); await load(); } catch (caught) { setError(errorMessage(caught)); } finally { setBusy(false); } }}>Resolve and allow order to continue</button></div>
+          <div className="modal-actions"><button type="button" className="btn btn-light" disabled={busy} onClick={() => setCancellationOverride(null)}>Leave request pending</button><button type="button" className="btn btn-warning" disabled={busy || cancellationOverride.resolutionReason.trim().length < 3} onClick={async () => { setBusy(true); setError(''); try { await api.post(`/payment-requests/${cancellationOverride.id}/resolve-cancellation`, { revision: cancellationOverride.revision, requestReason: cancellationOverride.customerCancellationReason, reason: cancellationOverride.resolutionReason }); setCancellationOverride(null); await load(); } catch (caught) { setError(errorMessage(caught)); } finally { setBusy(false); } }}>Resolve and allow order to continue</button></div>
         </Modal>
       )}
       {documentPreview && <DocumentPreview document={documentPreview} onClose={() => setDocumentPreview(null)} />}

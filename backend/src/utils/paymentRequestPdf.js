@@ -1,6 +1,7 @@
 import PDFDocument from 'pdfkit';
 import { createCollectionSlipPdf } from './collectionSlipPdf.js';
 import { formatPharmacyTimestamp } from './pharmacyTime.js';
+import { deliveryStatusLabel } from './deliveryStatus.js';
 
 const money = (value) => `Rs. ${Number(value || 0).toFixed(2)}`;
 const productName = (product) => `${product.genericName}${product.strength && product.strength !== 'N/A' ? ` ${product.strength}` : ''}`;
@@ -32,12 +33,13 @@ const drawHeader = (doc, request, receipt) => {
 
   const banner = statusBanners[request.status] || statusBanners.AWAITING_PAYMENT;
   doc.roundedRect(left, 108, contentWidth, 24, 5).fillAndStroke(banner.bg, banner.border);
-  doc.font('Helvetica-Bold').fontSize(10).fillColor(banner.fg).text(request.delivery ? `DELIVERY ${request.delivery.status}` : request.deliveryFeeFor && ['PAID', 'FULFILLED'].includes(request.status) ? 'DELIVERY FEE PAID' : banner.label, left, 114, { width: contentWidth, align: 'center' });
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(banner.fg).text(request.delivery ? `DELIVERY: ${deliveryStatusLabel(request.delivery.status).toUpperCase()}` : request.deliveryFeeFor && ['PAID', 'FULFILLED'].includes(request.status) ? 'DELIVERY FEE PAID' : banner.label, left, 114, { width: contentWidth, align: 'center' });
 
   const isSplit = request.paymentMethod === 'OTHER' && request.paymentReference?.startsWith('Split:');
   const details = [
     ['Customer', request.patient?.fullName || 'Walk-in customer'],
     [retail ? 'Sale type' : 'Prescription', request.deliveryFeeFor ? 'Home delivery service' : retail ? 'Retail goods' : request.prescription?.prescriptionNumber],
+    ...(request.deliveryFeeFor?.paymentRequest?.requestNumber ? [['Related medicine order', request.deliveryFeeFor.paymentRequest.requestNumber]] : []),
     ['Prepared by', request.pharmacist.fullName],
     ...(request.cashier ? [['Payment received by', request.cashier.fullName]] : []),
     ...(request.paymentMethod ? [['Payment method', isSplit ? 'SPLIT PAYMENT' : request.paymentMethod.replace('_', ' ')]] : []),
@@ -118,6 +120,62 @@ const drawTotals = (doc, request, startY) => {
     y += total ? 23 : 17;
   });
   return y;
+};
+
+// Medicines prescribed but not on this bill (for example, out of stock today).
+// They are not charged here; the customer collects them later on a new bill.
+// Prescribed medicines not supplied on this bill: either collected later (not
+// charged now) or recorded as not to be issued at all. Each shows its reason.
+const balanceText = (lines) => lines.map((line) => `${line.name}: ${line.quantity} ${line.unit}${line.reason ? ` (${line.reason})` : ''}`).join('\n');
+const drawBalanceBox = (doc, request, startY, { title, intro, lines, fill, stroke, titleColour, textColour }) => {
+  if (!lines?.length) return startY;
+  doc.font('Helvetica').fontSize(8.5);
+  const height = doc.heightOfString(`${intro}\n${balanceText(lines)}`, { width: contentWidth - 24 }) + 32;
+  let y = startY + 14;
+  if (y + height > 760) { drawContinuationBanner(doc, request, title); y = 91; }
+  doc.roundedRect(left, y, contentWidth, height, 6).fillAndStroke(fill, stroke);
+  doc.font('Helvetica-Bold').fontSize(9.5).fillColor(titleColour).text(title.toUpperCase(), left + 12, y + 9, { width: contentWidth - 24 });
+  doc.font('Helvetica').fontSize(8.5).fillColor(textColour).text(`${intro}\n${balanceText(lines)}`, left + 12, y + 25, { width: contentWidth - 24 });
+  doc.y = y + height;
+  return y + height;
+};
+// Prescribed against bought, per medicine (walk-in partial supply).
+const drawSupplyTable = (doc, request, startY) => {
+  const rows = request.supplyRows || [];
+  let y = startY + 14;
+  if (y + 60 + rows.length * 26 > 760) { drawContinuationBanner(doc, request, 'Prescribed and bought'); y = 91; }
+  doc.font('Helvetica-Bold').fontSize(10).fillColor('#174a45').text('PRESCRIBED AND BOUGHT', left, y);
+  doc.font('Helvetica').fontSize(8).fillColor('#64748b').text('Medicines not bought now are not charged on this bill.', left, y + 14);
+  y += 30;
+  const cols = [[left, 150, 'Medicine'], [left + 152, 58, 'Prescribed'], [left + 212, 58, 'Earlier'], [left + 272, 62, 'Bought now'], [left + 336, 62, 'Not bought'], [left + 400, contentWidth - 400, 'Rest of it']];
+  doc.rect(left, y, contentWidth, 18).fill('#f1f6f4');
+  cols.forEach(([x, w, label]) => doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#355b56').text(label.toUpperCase(), x + 3, y + 5, { width: w - 4 }));
+  y += 20;
+  for (const row of rows) {
+    const rest = row.rest ? `${row.rest}${row.reason ? ` - ${row.reason}` : ''}` : '-';
+    const values = [row.name, `${Number(row.prescribed)} ${row.unit}`, Number(row.suppliedBefore) ? `${Number(row.suppliedBefore)}` : '-', `${Number(row.onThisBill)}`, Number(row.notBought) ? `${Number(row.notBought)}` : '-', rest];
+    doc.font('Helvetica').fontSize(8);
+    const height = Math.max(16, doc.heightOfString(rest, { width: cols[5][1] - 4 }) + 6, doc.heightOfString(row.name, { width: cols[0][1] - 4 }) + 6);
+    if (y + height > 760) { drawContinuationBanner(doc, request, 'Prescribed and bought continued'); y = 91; }
+    values.forEach((value, index) => doc.fillColor(index === 4 && Number(row.notBought) ? '#8a5a0e' : '#111827').text(value, cols[index][0] + 3, y + 3, { width: cols[index][1] - 4 }));
+    y += height;
+    doc.moveTo(left, y).lineTo(right, y).lineWidth(0.5).strokeColor('#dce6e3').stroke();
+  }
+  doc.y = y;
+  return y;
+};
+const drawBalanceToCollect = (doc, request, startY) => {
+  if (request.supplyRows?.length) return drawSupplyTable(doc, request, startY);
+  const y = drawBalanceBox(doc, request, startY, {
+    title: 'Balance to collect later', lines: request.balanceToCollect,
+    intro: 'Not charged on this bill. Bring this bill back to collect them: the pharmacy issues a separate bill when stock is available.',
+    fill: '#fff8e6', stroke: '#e2b34a', titleColour: '#8a5a0e', textColour: '#5b4a1e',
+  });
+  return drawBalanceBox(doc, request, y, {
+    title: 'Not to be issued', lines: request.notToBeIssued,
+    intro: 'Prescribed but not supplied and not charged. The pharmacy will not issue these later on this prescription.',
+    fill: '#f3f4f6', stroke: '#9ca3af', titleColour: '#374151', textColour: '#4b5563',
+  });
 };
 
 const drawMedicineDirections = (doc, request) => {
@@ -214,6 +272,7 @@ export const createPaymentRequestPdf = (request, receipt = false, paperWidth = 8
       y = 91;
     }
     y = drawTotals(doc, request, y);
+    y = drawBalanceToCollect(doc, request, y);
 
     if (fullReceipt && request.pickupPin) {
       if (y + 160 > 760) { drawContinuationBanner(doc, request, 'Collection verification'); y = 91; }

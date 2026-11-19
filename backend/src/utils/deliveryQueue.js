@@ -9,9 +9,18 @@ export function deliveryQueuePage(db, user, { page, pageSize, queue, search, cou
     AND medicine.amount_paid - medicine.refunded_amount >= medicine.total
     AND fee.amount_paid - fee.refunded_amount >= fee.total
     AND NOT EXISTS (SELECT 1 FROM refunds r WHERE r.payment_request_id IN (medicine.id, fee.id) AND r.status IN ('PENDING', 'AWAITING_APPROVAL')))`;
+  // ATTENTION: the pharmacy must act (issue or reissue the fee, resolve a
+  // cancellation request, or handle a courier problem or return).
+  // AWAITING_PAYMENT: both bills exist and the customer still has to pay or the
+  // cashier still has to verify a slip; nothing for the pharmacy to do yet.
+  const staffAction = Prisma.sql`(d.status IN ('DELIVERY_FAILED','RETURNING','RETURNED','RESHIP_REQUESTED')
+    OR (d.status IN ('REQUESTED','AWAITING_FEE') AND (fee.id IS NULL OR fee.status = 'CANCELLED'
+      OR medicine.customer_cancellation_reason IS NOT NULL OR fee.customer_cancellation_reason IS NOT NULL)))`;
   const conditions = [queue === 'READY'
     ? Prisma.sql`(COALESCE(${ready}, FALSE) OR d.status = 'RESHIP_READY')`
-    : Prisma.sql`(d.status IN ('REQUESTED','AWAITING_FEE','DELIVERY_FAILED','RETURNING','RETURNED','RESHIP_REQUESTED') AND NOT COALESCE(${ready}, FALSE))`];
+    : queue === 'AWAITING_PAYMENT'
+      ? Prisma.sql`(d.status IN ('REQUESTED','AWAITING_FEE') AND NOT COALESCE(${staffAction}, FALSE) AND NOT COALESCE(${ready}, FALSE))`
+      : Prisma.sql`(COALESCE(${staffAction}, FALSE) AND NOT COALESCE(${ready}, FALSE))`];
   if (user.role === 'PATIENT') conditions.push(Prisma.sql`medicine.patient_id = ${user.id}`);
   if (courier) conditions.push(Prisma.sql`d.courier_service = ${courier}`);
   const column = { createdAt: Prisma.sql`d.created_at`, dispatchedAt: Prisma.sql`d.dispatched_at`, deliveredAt: Prisma.sql`d.delivered_at` }[dateField];

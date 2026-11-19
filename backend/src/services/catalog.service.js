@@ -1,4 +1,5 @@
 import { prisma } from '../config/prisma.js';
+import { DEFAULT_TRANSACTION_OPTIONS } from '../utils/serializable.js';
 import { catalogRepository } from '../repositories/catalog.repository.js';
 import { normalizeDrugName } from '../utils/drug.js';
 import { productBulkService, assertProductIdentity, productHistoryInclude } from './productBulk.service.js';
@@ -82,19 +83,19 @@ export const catalogService = {
       total,
     };
   },
-  createProduct: (data) => prisma.$transaction(async (tx) => tx.product.create({ data: await prepareProductData(tx, data), include: { category: true, manufacturer: true, drugConcept: true } })),
+  createProduct: (data) => prisma.$transaction(async (tx) => tx.product.create({ data: await prepareProductData(tx, data), include: { category: true, manufacturer: true, drugConcept: true } }), DEFAULT_TRANSACTION_OPTIONS),
   updateProduct: (id, data) => prisma.$transaction(async (tx) => {
     const existing = await tx.product.findUniqueOrThrow({ where: { id }, include: productHistoryInclude });
     assertProductIdentity(existing, data);
     const product = await tx.product.update({ where: { id }, data: await prepareProductData(tx, data), include: { category: true, manufacturer: true, drugConcept: true } });
     await tx.lowStockAcknowledgement.deleteMany({ where: { productId: id } });
     return product;
-  }),
+  }, DEFAULT_TRANSACTION_OPTIONS),
   setProductActive: (id, active) => prisma.$transaction(async (tx) => {
     const product = await tx.product.update({ where: { id }, data: { active } });
     await tx.lowStockAcknowledgement.deleteMany({ where: { productId: id } });
     return product;
-  }),
+  }, DEFAULT_TRANSACTION_OPTIONS),
   deleteProduct: (id) => prisma.product.delete({ where: { id } }),
   listSuppliers: catalogRepository.suppliers,
   createSupplier: (data) => prisma.supplier.create({ data }),

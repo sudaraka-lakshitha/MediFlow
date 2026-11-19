@@ -4,7 +4,7 @@
 
 MediFlow is a full-stack pharmacy operations prototype built with **React 19 + TypeScript** (Vite 8), **Node.js + Express 5**, **Prisma ORM 6**, and **MySQL**. It supports walk-in and uploaded prescriptions, retail billing, batch inventory, stock reservations, payments, returns and refunds, home delivery, daily reconciliation, staff activity reporting, and experimental drug-interaction research.
 
-Local development runs against local MySQL / MariaDB (via XAMPP); hosted deployments separate the **Vercel** static CDN frontend, **Render.com** API service, and **Aiven** managed MySQL database.
+You can run MediFlow against a local XAMPP database, let another device on the same Wi-Fi use a computer running MediFlow, or deploy it publicly with a **Vercel** frontend, **Render** API and **Aiven** MySQL database. In all three setups, browsers use the API; they never connect directly to MySQL.
 
 ---
 
@@ -18,6 +18,7 @@ Local development runs against local MySQL / MariaDB (via XAMPP); hosted deploym
 6. [Database Migrations and Demo Seed](#6-database-migrations-and-demo-seed)
 7. [Drug Interaction Data & ML Model (Optional)](#7-drug-interaction-data--ml-model-optional)
 8. [Start the Development Servers](#8-start-the-development-servers)
+   - [Share the app over the same Wi-Fi network](#share-the-app-over-the-same-wi-fi-network)
 9. [Demo Accounts & Test Credentials](#9-demo-accounts--test-credentials)
 10. [Verification Commands & Test Suite](#10-verification-commands--test-suite)
 11. [Architecture Overview & Codebase Structure](#11-architecture-overview--codebase-structure)
@@ -130,7 +131,7 @@ Copy the example file to `.env`:
 Copy-Item frontend\.env.example frontend\.env
 ```
 
-Ensure `VITE_API_URL` is set to `http://localhost:5000/api` (the `/api` suffix is mandatory).
+Keep `VITE_API_URL=/api`. The Vite development server forwards this relative path to the API, which works both on the host computer and for other devices using the LAN address. Avoid `http://localhost:5000/api` on a LAN: on another device, `localhost` means that device itself.
 
 ### 4.3 OTP Password Recovery (Optional)
 
@@ -232,18 +233,19 @@ node backend/ml/train.mjs
 
 ## 8. Start the Development Servers
 
-### Option A — One-Click Launcher (Recommended)
+### Option A — Start the app after setup
 
-Double-click **`start-mediflow.bat`** in the project root. The script will:
-1. Validate that Node.js, npm, and XAMPP MySQL are ready.
-2. Start XAMPP MySQL automatically if it is not running.
-3. Spawn the API server in its own console window (`PORT 5000`).
-4. Spawn the Vite frontend dev server in its own console window (`PORT 5173`).
-5. Open the web application in your default browser.
+After `setup-mediflow.bat` has finished, or whenever you want to start the app again, double-click **`start-mediflow.bat`**. It reads the database connection already configured in `backend/.env`, starts the API at `127.0.0.1:5000`, starts the Vite website on port `5173`, and opens `http://localhost:5173`. It does not start or change MySQL. Keep both MediFlow console windows open while using the app. Close those windows to stop the servers.
 
-Pass `--no-browser` to skip opening the browser tab.
+The configured database can be local XAMPP or a hosted database such as Aiven. The setup helper creates a local XAMPP configuration; for Aiven, configure the backend connection yourself as described in [Hosted deployment](#15-hosted-deployment--upgrade-guide). Never copy hosted credentials into the frontend.
 
-### Option B — Manual Launch (Two Terminals)
+### Option B — First-time local XAMPP setup
+
+Double-click **`setup-mediflow.bat`** once on a new computer. It checks Node.js and XAMPP, creates a local `mediflow` database and restricted application user, creates ignored local environment files, installs dependencies, generates Prisma Client, applies migrations, and asks whether to add demo accounts and sample stock to a fresh database. It then starts MediFlow. On a fresh demo database, the seeded administrator is `pharmacy.mediflow+admin@gmail.com` with password `Demo123!`; sign in and change it before sharing the computer. The demo seed also adds demo staff, patients, products and stock.
+
+The helper will not reset an existing database. It stops if cloud database override variables are present. Review the messages before accepting the demo seed. Do not run the demo seed against real pharmacy data.
+
+### Option C — Manual launch (two terminals)
 
 **Terminal 1 — API Server:**
 ```powershell
@@ -255,15 +257,27 @@ npm run dev:api
 npm run dev:web
 ```
 
+### Share the app over the same Wi-Fi network
+
+`start-mediflow.bat` is also the LAN launcher. The computer running it is the **host**; other computers and phones on the same trusted Wi-Fi open the host's website. They do not need Node.js, XAMPP or database credentials installed.
+
+1. Complete local setup or configure `backend/.env` on the host. Start MediFlow with `start-mediflow.bat` and leave both server windows running.
+2. On the host, open PowerShell and run `ipconfig`. Find the **IPv4 Address** under the Wi-Fi adapter currently in use (for example `192.168.1.25`). Do not use `127.0.0.1`, `localhost`, the router's gateway address, or an old address from another network.
+3. On each device connected to the same Wi-Fi, open `http://HOST-IP:5173`, replacing `HOST-IP` with the host IPv4 address (for example `http://192.168.1.25:5173`). Bookmark this address if useful.
+4. If Windows Firewall asks, allow Node.js only on the **Private network**. If prompted manually, allow inbound TCP port `5173` on the Private profile. Do not expose ports `5000` (API) or `3306` (MySQL) to Wi-Fi. The Vite server forwards `/api` calls to the API on the host computer.
+5. If the host uses local XAMPP, the database stays on that host and other devices reach it only through MediFlow's API. If `backend/.env` points to Aiven, all devices use that same Aiven database through the host API. Keep the Aiven certificate on the host; never send database passwords to other devices.
+
+This development LAN mode uses HTTP, so use it only on a trusted private network. Guest Wi-Fi, client isolation, VPNs, or a Windows network marked Public may block device-to-device traffic. The host's IP may change after reconnecting; reserve it in the router if a stable bookmark is needed. Do not forward these development ports from your router to the public internet. For public access, follow the HTTPS deployment guide in section 15.
+
 ### Service Endpoints
 
 | Service | Address |
 |---|---|
 | **Web Application** | http://localhost:5173 |
-| **API Liveness Check** | http://localhost:5000/health |
-| **Database Readiness Check** | http://localhost:5000/ready |
-| **Swagger / OpenAPI Documentation** | http://localhost:5000/docs |
-| **OpenAPI Specification JSON** | http://localhost:5000/openapi.json |
+| **API liveness check (host only)** | http://localhost:5000/health |
+| **Database readiness check (host only)** | http://localhost:5000/ready |
+| **Swagger / OpenAPI documentation (host only)** | http://localhost:5000/docs |
+| **OpenAPI specification JSON (host only)** | http://localhost:5000/openapi.json |
 
 ---
 
@@ -350,7 +364,7 @@ MediFlow/
 ├── frontend/                                React 19 + TypeScript SPA (Vite 8)
 │   ├── src/
 │   │   ├── api/
-│   │   │   └── client.ts                   Axios instance with 30s timeout, JWT bearer interceptor, idempotency headers
+│   │   │   └── client.ts                   Axios client with JWT, idempotency headers and longer limits on slow workflows
 │   │   ├── auth/
 │   │   │   ├── AuthContext.tsx             Authentication provider, login/logout state, user session context
 │   │   │   ├── SessionGuard.tsx            Optimistic session checking with non-blocking warming-up banner
@@ -460,10 +474,12 @@ MediFlow/
 ## 12. Core Workflows & Features
 
 ### 1. Prescription Management & Dispensing
-- **Walk-in & Digital Prescriptions**: Staff can record walk-in prescriptions. Patients can submit one request with up to five attachments, typed items, recipient details, and a quotation, collection, or home-delivery preference.
-- **Clinical Safety Checks**: Automatic lookup of drug-drug interactions, patient allergies, and duplicate therapies against the curated DDInter dataset and live clinical APIs.
-- **Stock Reservation**: Reservation rules depend on the order and payment state. Administrators configure default holding periods; staff can adjust individual holds. Availability alone does not confirm payment or dispensing.
-- **Dispensing Transactions**: Executed within serializable MySQL transactions with automatic conflict retries, enforcing FEFO (First Expired, First Out) batch selection.
+- **Patient upload**: One request may include up to five prescription attachments, typed instructions, patient/recipient details, and a request to prepare for collection or home delivery. Staff see new uploads in the workspace; patients can edit an upload only while it is still awaiting pharmacy review.
+- **Pharmacy processing**: Staff review the source and enter the structured prescription, dose, frequency, duration, directions, and any requested retail items. Every upload option ends in one complete final invoice issued in a single step; no rough quote is sent for new uploads. The option only changes stock and delivery handling (see *Upload options* below).
+- **Patient acknowledgement**: Before payment, the customer reviews and acknowledges the final invoice and selects a payment/collection option. If staff materially revise the bill, its acknowledgement is cleared so the customer can review the new version.
+- **Clinical safety information**: The app stores patient-entered allergy and condition information and offers separate medicine research tools. Prescription processing does not automatically certify allergies, interactions, or a medicine's suitability. A pharmacist must check the source prescription and authoritative references before dispensing.
+- **Stock reservation and dispensing**: Reservations depend on the upload option, payment method and order state. Administrators configure default holding periods; staff can adjust an individual hold. Availability does not mean stock is reserved, paid for, or dispensed. Paid quantities are dispensed with FEFO (First Expired, First Out) batch allocation inside a bounded database transaction.
+- **Partial supply**: For a walk-in (counter) prescription the pharmacist may issue less than the remaining quantity, or leave a medicine off the bill, when stock is short or the customer wants less today; at least one prescribed medicine must be on the bill. For every medicine issued in part, the pharmacist records why (*not enough stock* or *customer asked for less*) and whether the rest will be issued later. If not, the shortfall is listed as *Not to be issued* and closed automatically when the bill is dispensed. Otherwise the rest stays pending, is not charged, and is billed later with *Bill Remaining* when the customer returns and stock is available. The bill, receipt and final invoice show it under *Balance to collect later*; the cashier sees it in the payment window, and the patient sees it on the invoice in Sales & billing. If the customer will not return, *Close remaining balance* records the rest as not supplied with a reason and closes the prescription. Uploaded orders are always billed in full. Dispensed, cancelled, not-supplied and still-pending quantities are tracked separately. Supplying a remaining quantity requires a new bill and payment; cancelled quantities are not silently re-added to the current bill.
 
 ### 2. Point of Sale & Retail Billing
 - **Counter Sales**: Fast barcode and predictive search for retail goods, over-the-counter medications, and toiletries.
@@ -472,16 +488,20 @@ MediFlow/
 - **Receipt Printing**: Thermal 58mm/80mm receipt printing and full A4 PDF invoice generation with payment status watermarks.
 
 ### 3. Cashier Desk & Payment Verification
-- **Payment Methods**: Cash, credit/debit card, bank transfer slip upload, and statement-verified ledger allocations.
-- **Slip Verification**: Patients can upload bank transfer receipts; cashiers cross-reference and verify before marking orders as paid.
+- **Payment methods**: Cash, card, bank transfer slip upload, and statement-verified bank allocations are recorded through pharmacy/cashier workflows. MediFlow does not itself charge a bank card or initiate an online payment-gateway transaction.
+- **Payment verification**: The customer can upload a transfer slip; an authorized cashier checks the credited amount and reference before marking the invoice paid. A pending slip cannot be collected again as cash until it is resolved.
+- **Pickup**: The cashier records payment and issues a one-time receipt PIN when configured. Pharmacy staff verify the PIN and dispense against the paid quantities; a cashier can dispense at payment only when an administrator enables that permission.
 - **Verified Bank Allocations**: Allows cashiers to record direct bank statement receipts and allocate available funds across multiple pending invoices for the same patient.
 - **End-of-Day Reconciliation**: Cash drawer counts, card settlements, bank transfer allocations, and refund payouts reconcile against system totals with automated variance tracking.
 
 ### 4. Home Delivery Logistics
 - **Delivery Queues**: Staff record processing, dispatch, delivery, failure, return and reshipment actions. “Ready to dispatch” is a filtered queue, not a separate persisted status. Patients can see courier details, tracking references and dispatch dates.
-- **Payment Before Dispatch**: Both medicines and delivery fees must be fully paid and verified. A delivery requested after the medicine invoice was paid uses a separate delivery-fee balance.
+- **Payment Before Dispatch**: Both medicines and delivery fees must be fully paid and verified. For a home-delivery upload, the delivery-fee bill is issued together with the medicine bill when a standard delivery fee is configured; otherwise staff issue it from Home deliveries, before or after the medicine bill is paid. A delivery requested after the medicine invoice was paid uses a separate delivery-fee balance.
+- **Delivery fees by bank transfer only**: The customer acknowledges the delivery-fee bill, transfers the fee and uploads the receipt; the cashier verifies it or allocates a matching bank-statement receipt. Cash, card and split payments are refused for delivery-fee bills. A fee bill is issued only when an active pharmacy bank account exists.
+- **Counter handover**: A cashier cannot record a counter handover for an active home-delivery order; its medicines are dispensed at dispatch.
+- **No collection PIN for home delivery**: Paying a home-delivery order or its delivery-fee bill issues no collection PIN, and a PIN issued before delivery was requested is withdrawn. If staff cancel the delivery so the customer collects at the counter, a collection PIN is issued then and appears on the customer's receipt.
 - **Courier Integration**: Assignment of couriers, tracking numbers, and automatic dispatch timestamps.
-- **Patient Self-Cancellation**: Patients can directly cancel unconfirmed delivery requests without pharmacy intervention.
+- **Patient self-cancellation**: Before the medicine invoice is paid or a bank-transfer slip is submitted, a patient may choose delivery-only cancellation or request cancellation of the whole order; the latter requires a reason. After payment or slip submission, the self-service choice is hidden and pharmacy staff review the delivery, cancellation and any refund.
 - **Protected Fee Configuration**: The standard delivery fee setting is toggle-locked to prevent accidental modifications during navigation.
 - **Bulk Excel/CSV Operations**: Import and export delivery status updates using standardized Excel templates. When no deliveries are selected, the formatted template downloads instantly from static CDN assets; when deliveries are selected, the template is pre-populated with those specific delivery records for editing and re-upload.
 
@@ -489,6 +509,25 @@ MediFlow/
 - **Stock Quarantine**: Returned medicines enter an isolated quarantine review state and require pharmacist inspection before being restocked or destroyed.
 - **Two-Tier Administrator Refund Approval**: Uncollected, paid prescription cancellations require approval from an administrator other than the requester before payout can proceed.
 - **Delivery Fee Exception Handling**: Delivery charges are normally excluded from returned-item refunds. Exceptional delivery-fee refunds require authorized staff approval with reasons; approved reshipment of a returned parcel can proceed without charging another delivery fee.
+
+### End-to-end customer order paths
+
+#### Upload options
+
+| Patient's choice | Final bill | Stock hold | Delivery |
+|---|---|---|---|
+| Prepare in advance for collection | Issued in one step after pharmacist review | Held as soon as the bill is issued, for the bill's hold period (administrator default), whichever payment method is chosen; renewed on acknowledgement if it has expired | None |
+| Prepare for home delivery | Same | Same as above | Delivery request created with the bill; delivery-fee bill issued with it when a standard fee and an active bank account are configured. The fee is payable by bank transfer only |
+| Send me the complete bill to review first | Same | Nothing held until the bill is paid, even if cash is chosen | None |
+
+Walk-in prescriptions and retail requests keep the earlier rule: stock is held only when the customer acknowledges the bill and chooses cash.
+
+1. **Upload and prepare**: Patient submits one or more files and asks the pharmacy to prepare medicines. A pharmacist reviews the original, records the full medicine directions and quantities, adds any requested retail goods, and issues the final invoice. The stock is held from that moment. If it cannot be held, the bill is not issued and the pharmacist must adjust the quantities or receive stock.
+2. **Bill to review first**: The pharmacist issues the same complete final invoice. The patient acknowledges and pays it, or declines it, which sends a cancellation request to the pharmacy. Older uploads that already hold a rough quotation can still finish the legacy quote flow.
+3. **Pay and collect**: Patient reviews and acknowledges the final bill, then pays at the pharmacy or uses the listed bank-transfer process. Cashiers record cash/card payments or verify transfers/slips. When required, the pharmacist checks the receipt PIN before dispensing.
+4. **Pay and deliver**: Patient requests delivery and provides recipient/contact/address details. The medicine bill must already be paid. Any separate delivery-fee bill must also be paid and verified before dispatch. Staff record the courier and tracking number; dispatch time is recorded when staff mark it dispatched.
+5. **Cancel, return or refund**: Before payment or transfer-slip submission, customers can choose delivery-only or entire-order cancellation; a whole-order request needs a reason. After payment or slip submission, pharmacy staff handle cancellation and any refund review. Returned medicines are quarantined for pharmacist review before any possible restocking. A delivery fee is ordinarily non-refundable; an authorized exception must include a reason. A returned parcel may be approved for reshipment without another delivery fee.
+6. **Retail sale**: Cashier creates a counter sale, checks applicable stock and price, records payment, and produces the receipt. Retail returns/refunds follow authorization and stock-review controls appropriate to the item.
 
 ### 6. Clinical Research & Experimental AI
 - **Multi-Source Drug Information**: Unified search querying RxNorm, PubChem, and openFDA public drug labels.
@@ -532,7 +571,7 @@ Each chunk commits separately. If a later chunk fails, earlier chunks may alread
 
 ## 13. Security & Data Integrity Controls
 
-- **Retry Protection**: Protected mutations use idempotency keys or signed previews and operation receipts. Completed operations can return their stored result on retry. This does not make an interrupted, multi-chunk import atomic or automatically resumable.
+- **Retry Protection**: Prescription dispensing, cashier payment, retail handover, selected stock operations and other protected mutations use idempotency keys and operation receipts. A retry of a completed protected action returns its stored result rather than applying the stock or payment effect again. This does not make an interrupted, multi-chunk import atomic or automatically resumable.
 - **Optimistic Locking & Workflow Leases**: Prevents concurrent editing collisions when multiple pharmacists inspect or edit the same prescription simultaneously using `X-Workflow-Lease` tokens.
 - **Revocable JWT Sessions**: Tokens include a server-tracked session version and generation number. Password resets or administrative lockouts invalidate active sessions across all devices immediately.
 - **Shared Brute-Force Rate Limiting**: Centralized database rate limiter protecting against distributed brute-force attempts on login, registration, and OTP verification endpoints.
@@ -558,6 +597,8 @@ Version checks, payment/readiness validation and reservation checks still apply.
 
 Other optimizations include compressed API responses, split frontend bundles, debounced searches, reduced navigation polling, and loading-stage feedback. Stock, delivery and master-data imports show a spinner and the current stage without invented percentages. Product imports show confirmed row counts only after the server acknowledges each batch. Hosted speed depends on database distance, load and API cold starts. Increasing Axios timeouts does not extend a hosting provider's proxy timeout. Very large or consistently slow imports need smaller files or a future background-job workflow.
 
+Interactive database transactions use a 15-second default window (10 seconds to acquire a connection); inventory dispensing, cashier dispense-at-payment and delivery dispatch use a bounded 30-second window. Transactions that save prescription attachments or bank-slip files use a bounded 25-second window. The browser allows up to 60 seconds for uploads, prescription billing and payment/dispense actions. These limits address slow hosted MySQL round-trips, including Prisma's 5-second default timeout, but cannot prevent an Aiven outage, network interruption, or Render/Vercel proxy timeout. Dispense and cashier-payment actions now use durable idempotency receipts: after a lost response, retry the same action to retrieve the saved result without repeating stock/payment effects. If a screen still shows an error, refresh and confirm the invoice/prescription state before starting a different operation.
+
 Keep `BCRYPT_ROUNDS=12` as the default. The supported range is 10–14; changing it is a security/performance trade-off, not a guaranteed fix for slow sign-in. Existing password hashes retain their original work factor until replaced.
 
 ---
@@ -581,6 +622,8 @@ DATABASE_URL=mysql://USER:ENCODED_PASSWORD@HOST:PORT/defaultdb?sslcert=/etc/secr
 ```
 
 This project uses Prisma 6's `sslcert` and `sslaccept` options, not the MySQL CLI's `ssl-mode` option. See the [Prisma MySQL connector documentation](https://docs.prisma.io/docs/orm/v6/overview/databases/mysql). Remove stale `AIVEN_PRISMA_URL` and `MYSQL_DATABASE_URL` variables unless intentionally used: they take precedence over `DATABASE_URL` in this project.
+
+Keep a secure copy of the Aiven URL and CA certificate for the one-time administrator setup below. Do not put either in the frontend project, GitHub, or this README.
 
 ### B. Deploy the API on Render
 
@@ -629,19 +672,30 @@ Render Free blocks outbound ports 25, 465 and 587. It also spins down idle servi
 
 After deployment, check `/health` for API process liveness and `/ready` for database readiness, then check sign-in, password-recovery email delivery and a small sample upload. The Render blueprint uses `/ready`. The API root `/` may return 404; that alone is not a failed deployment.
 
-### Initializing the First Administrator on Aiven MySQL
+### E. Create the first administrator on Aiven
 
-Run the administrative bootstrapping script locally to create the root administrator account without exposing credentials:
+Do this only **after Render has applied all database migrations successfully**. Run the script from the checked-out project on a computer that can reach Aiven. It connects directly over TLS to the exact Aiven URL you enter, and it does not write the URL or password to `.env`.
 
 ```powershell
-npm --prefix backend run setup:admin -- --certificate "C:\path\to\aiven-ca.pem"
+Set-Location "C:\path\to\MediFlow"
+npm --prefix backend ci --include=dev
+npm --prefix backend run prisma:generate
+npm --prefix backend run setup:admin
 ```
 
-The script connects over TLS, checks for existing administrators, and prompts securely for account credentials.
+At the prompts:
+
+1. Paste the **Aiven `DATABASE_URL`** (the same database URL used by Render). Input is hidden. Do not paste it into chat, a document, or a screenshot.
+2. Paste the downloaded Aiven CA certificate file path. A path with spaces can be pasted in quotes, for example `"C:\Users\Your Name\Documents\aiven-ca.pem"`. Alternatively, pass it on the command line: `npm --prefix backend run setup:admin -- --certificate "C:\path\to\aiven-ca.pem"`.
+3. Enter the administrator email, then enter and repeat a new password. Password input is hidden; use at least 16 characters and a unique password.
+
+The script checks the certificate, uses TLS verification, and refuses to replace an administrator if one already exists. It creates the admin with a forced password change. Once it reports success, open the Vercel website, sign in using that email and password, and choose a new password when prompted. If it says an administrator already exists, use that account or the password recovery process; do not delete users to rerun bootstrap.
+
+For **local demo only**, the fresh local seed creates a demo admin with `Demo123!` along with demo records. Change it before sharing the app. `setup:admin` is deliberately for Aiven URLs; the demo seed is not a safe bootstrap method for a real or hosted pharmacy database.
 
 ### Upgrading an Existing Deployment
 
-Back up the database first. Deploy the tested commit to Render and Vercel. Render's start command applies pending migrations before starting the API. Never use `prisma migrate reset` on hosted data, and do not run either demo seed against a real pharmacy database; the workflow demo seed is only for a dedicated demonstration database. After schema changes, local development also needs `prisma:deploy` and `prisma:generate`.
+Back up the database first. Push the approved `master` commit and let Render deploy the API. Its start command (`npm run prisma:deploy && npm start`) applies pending migrations before starting the API. Then let Vercel build the frontend from the same commit. Confirm Render `/ready`, Vercel loads, sign-in works, and a small non-financial workflow succeeds. Never use `prisma migrate reset` on hosted data, and do not run either demo seed against a real pharmacy database; the workflow demo seed is only for a dedicated demonstration database. For local XAMPP after a schema change, run `npm --prefix backend run prisma:deploy` and `npm --prefix backend run prisma:generate` from PowerShell, pointing at the intended database.
 
 ---
 
@@ -705,14 +759,24 @@ The following status codes appear in MediFlow's audit logs (`/audit`), applicati
 
 ## 17. Current QA Status & Verification Boundaries
 
-Verified on **4 November 2026** for the pre-commit working tree:
+Historical automated verification, on **4 November 2026** for the pre-commit working tree:
 
 - **Backend suite:** 739 tests passed across 66 files. These include unit and HTTP-boundary tests; most workflow tests use mocked database dependencies.
 - **Frontend:** `tsc -b && vite build` passed. The lint command exits successfully but reports non-blocking React warnings that still need review.
 - **Database:** Prisma client generation passed; migration `20261104000000_remaining_direction_snapshots` was applied to Aiven, migration status is up to date, and a read-only check confirmed all four new direction columns.
-- **Not verified here:** the final hosted Render/Vercel deployment, Android device behavior, Aiven load performance, physical printers/scanners and production email delivery.
+- **Not verified in that review:** the final hosted Render/Vercel deployment, Android device behavior, Aiven load performance, physical printers/scanners and production email delivery.
 
-Follow-up on **19 November 2026:** the new Windows first-time setup script passed PowerShell syntax parsing, but has not yet been run on a clean Windows/XAMPP computer. The test and build results above are from 4 November 2026.
+Checks run for the **19 November 2026** working-tree revision:
+
+- **Frontend production build:** `npm --prefix frontend run build` passed, including the TypeScript project build.
+- **Backend JavaScript syntax:** `node --check` passed for all 13 changed backend JavaScript files.
+- **Windows setup script syntax:** PowerShell parser check passed for `scripts/setup-local.ps1`.
+- **Patch whitespace:** `git diff --check` passed with CRLF-aware checking.
+- **Test suites:** not run for this revision.
+
+The transaction timeout, retry-protection, cancellation-policy and LAN/API URL changes have not been checked against the hosted database or from a second Wi-Fi device. The 4 November backend test results above are historical and do not cover this revision.
+
+The Windows first-time setup script has passed syntax parsing, but has not yet been run on a clean Windows/XAMPP computer.
 
 These results do not certify every business workflow or a maximum hosted upload time. Review the hosted deployment after pushing, especially its `/ready` health check and required environment variables. HTTP-boundary tests need access to temporary local test-server ports.
 

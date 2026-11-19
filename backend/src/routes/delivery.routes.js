@@ -13,7 +13,6 @@ import { deliveryBulkSchema, deliveryBulkService } from '../services/deliveryBul
 import { workflowLeaseService } from '../services/workflowLease.service.js';
 import { exportDeliveryWorkbook, readDeliveryWorkbook } from '../services/deliveryWorkbook.service.js';
 import { prisma } from '../config/prisma.js';
-import { AppError } from '../utils/AppError.js';
 export const deliveryRoutes = Router();
 // Authenticate only matching delivery routes; leave login and registration public.
 deliveryRoutes.use(['/deliveries', '/delivery-settings', '/payment-requests/:id/delivery'], authenticate);
@@ -45,30 +44,19 @@ deliveryRoutes.get('/deliveries/couriers', authorize('PATIENT', 'ADMIN', 'PHARMA
   res.json({ data: await deliveryService.couriers(req.user) });
 }));
 deliveryRoutes.post('/payment-requests/:id/delivery', authorize('PATIENT'), validate({ params: idParams, body: deliveryContactSchema }), asyncHandler(withWorkflowLease(async (req, res) => res.status(201).json({ data: await deliveryService.request(Number(req.params.id), req.body, req.user) }))));
-// Patient can cancel their own REQUESTED delivery before the pharmacy confirms it
-deliveryRoutes.delete('/payment-requests/:id/delivery', authorize('PATIENT'), validate({ params: idParams }), asyncHandler(withWorkflowLease(async (req, res) => {
-  await prisma.$transaction(async (tx) => {
-    const row = await tx.deliveryRequest.findFirst({
-      where: { paymentRequestId: Number(req.params.id), paymentRequest: { patientId: req.user.id } },
-      include: { paymentRequest: { select: { revision: true } } },
-    });
-    // Do not reveal whether another patient's invoice has a delivery request.
-    if (!row) throw new AppError(404, 'Delivery request not found.');
-    if (row.status !== 'REQUESTED') throw new AppError(409, 'This delivery can no longer be cancelled. Contact the pharmacy for assistance.');
-    const changed = await tx.deliveryRequest.updateMany({
-      where: { id: row.id, status: 'REQUESTED' },
-      data: { status: 'CANCELLED' },
-    });
-    if (changed.count !== 1) throw new AppError(409, 'Delivery details changed. Refresh and review the latest status.');
-    await tx.paymentRequestEvent.create({ data: {
-      paymentRequestId: row.paymentRequestId,
-      revision: row.paymentRequest.revision,
-      actorId: req.user.id,
-      kind: 'DELIVERY_CANCELLED_BY_PATIENT',
-      details: { previousStatus: row.status },
-    } });
-  });
-  res.json({ message: 'Delivery request cancelled. You can re-request delivery if needed.' });
+// Let patients stop an unpaid delivery request, and optionally request cancellation
+// of the already-paid medicine invoice before paying the separate delivery fee.
+const patientDeliveryCancellationSchema = z.object({
+  scope: z.enum(['DELIVERY_ONLY', 'ENTIRE_ORDER']).default('DELIVERY_ONLY'),
+  reason: z.string().trim().min(3).max(500).optional(),
+}).superRefine((data, context) => {
+  if (data.scope === 'ENTIRE_ORDER' && !data.reason) context.addIssue({ code: 'custom', path: ['reason'], message: 'Explain why the entire order should be cancelled.' });
+});
+deliveryRoutes.delete('/payment-requests/:id/delivery', authorize('PATIENT'), validate({ params: idParams, body: patientDeliveryCancellationSchema }), asyncHandler(withWorkflowLease(async (req, res) => {
+  const data = await deliveryService.cancelByPatient(Number(req.params.id), req.body, req.user);
+  res.json({ data, message: req.body.scope === 'ENTIRE_ORDER'
+    ? 'Delivery stopped. The pharmacy will review your request to cancel the medicine order and any applicable refund.'
+    : 'Delivery cancelled. Your paid medicines remain available for pharmacy collection.' });
 })));
 deliveryRoutes.post('/payment-requests/:id/delivery/reshipment', authorize('PATIENT'), validate({ params: idParams }), asyncHandler(withWorkflowLease(async (req, res) => res.json({ data: await deliveryService.requestReshipment(Number(req.params.id), req.user) }))));
 deliveryRoutes.post('/payment-requests/:id/delivery/reshipment/withdraw', authorize('PATIENT'), validate({ params: idParams }), asyncHandler(withWorkflowLease(async (req, res) => res.json({ data: await deliveryService.requestReshipment(Number(req.params.id), req.user, true) }))));
