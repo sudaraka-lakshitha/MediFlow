@@ -50,6 +50,14 @@ export const workflowLeaseService = {
       // Active requests have their own processing heartbeat in the middleware.
       const renewed = await prisma.workflowLease.updateMany({ where: { resourceKey, ...owner, token: expectedToken, processing: false, expiresAt: { gt: now } }, data: { expiresAt } });
       if (renewed.count) return { resourceKey, token: expectedToken, expiresAt, processing: false };
+      // Reclaim an expired lease for this same editor with a fresh fencing token.
+      // Any delayed request still carrying the old token can no longer pin or renew it.
+      const reclaimedToken = crypto.randomUUID();
+      const reclaimed = await prisma.workflowLease.updateMany({
+        where: { resourceKey, ...owner, token: expectedToken, expiresAt: { lte: now } },
+        data: { token: reclaimedToken, processing: false, expiresAt },
+      });
+      if (reclaimed.count) return { resourceKey, token: reclaimedToken, expiresAt, processing: false };
       const current = await prisma.workflowLease.findUnique({ where: { resourceKey } });
       if (current?.token === expectedToken && current.userId === owner.userId && current.sessionId === owner.sessionId && current.clientId === owner.clientId && current.processing && current.expiresAt > now) {
         return { resourceKey, token: expectedToken, expiresAt: current.expiresAt, processing: true };
