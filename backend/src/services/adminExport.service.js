@@ -1,10 +1,11 @@
 import { Prisma } from '@prisma/client';
+import { formatPharmacyIsoTimestamp } from '../utils/pharmacyTime.js';
 import { prisma } from '../config/prisma.js';
 import { exportPages } from '../utils/exportPages.js';
 import { productBulkFields } from '../utils/productBulkFormat.js';
 
 const yesNo = (value) => value ? 'Yes' : 'No';
-const date = (value) => value ? new Date(value).toISOString() : '';
+const date = (value) => value ? formatPharmacyIsoTimestamp(value) : '';
 export const stockExportTotals = (batches, now = new Date()) => {
   const result = Object.fromEntries(['stockOnHand', 'stockReserved', 'stockExpired', 'stockRestricted', 'stockAvailable'].map((key) => [key, new Prisma.Decimal(0)]));
   for (const b of batches) {

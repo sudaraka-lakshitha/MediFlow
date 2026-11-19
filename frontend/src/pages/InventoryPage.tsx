@@ -1,3 +1,4 @@
+import { formatPharmacyDate, formatPharmacyDateTime } from "../utils/pharmacyTime";
 import {
   useCallback,
   useEffect,
@@ -728,7 +729,7 @@ export function InventoryPage() {
                     <div className="low-stock-card-footer">
                       <div className="low-stock-audit">
                         {product.lowStockAcknowledged && product.lowStockAcknowledgement?.acknowledgedBy ? (
-                          <small title={new Date(product.lowStockAcknowledgement.acknowledgedAt).toLocaleString()}>
+                          <small title={formatPharmacyDateTime(product.lowStockAcknowledgement.acknowledgedAt)}>
                             <i className="bi bi-check2 text-success me-1" />
                             Noted by {product.lowStockAcknowledgement.acknowledgedBy.fullName}
                           </small>
@@ -1023,8 +1024,8 @@ export function InventoryPage() {
                         </small>
                       )}
                     </td>
-                    <td>{new Date(batch.receivedAt).toLocaleString()}</td>
-                    <td>{new Date(batch.expiryDate).toLocaleDateString()}</td>
+                    <td>{formatPharmacyDateTime(batch.receivedAt)}</td>
+                    <td>{formatPharmacyDate(batch.expiryDate)}</td>
                     <td>
                       <div className="inventory-row-statuses">
                         {batch.restricted && <Status value="RESTRICTED" />}
@@ -1077,15 +1078,15 @@ export function InventoryPage() {
                             ]
                           }{" "}
                           by {batch.latestDisposition.processedBy.fullName} on{" "}
-                          {new Date(
+                          {formatPharmacyDateTime(
                             batch.latestDisposition.processedAt,
-                          ).toLocaleString()}
+                          )}
                         </small>
                       )}
                       {batch.restricted && (
                         <small className="inventory-disposition-note text-danger">
                           Issuing stopped: {batch.restrictionReason}
-                          {batch.restrictedAt ? ` · ${new Date(batch.restrictedAt).toLocaleString()}` : ""}
+                          {batch.restrictedAt ? ` · ${formatPharmacyDateTime(batch.restrictedAt)}` : ""}
                         </small>
                       )}
                     </td>
@@ -1173,7 +1174,7 @@ export function InventoryPage() {
                     <strong>{productName(selected.product)}</strong>
                     <small>
                       Batch {selected.batchNumber} expired on{" "}
-                      {new Date(selected.expiryDate).toLocaleDateString()} ·{" "}
+                      {formatPharmacyDate(selected.expiryDate)} ·{" "}
                       {selected.quantityAvailable} {selected.product.unit}{" "}
                       awaiting action
                     </small>

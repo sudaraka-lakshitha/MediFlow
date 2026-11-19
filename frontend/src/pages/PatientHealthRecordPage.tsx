@@ -1,3 +1,4 @@
+import { formatPharmacyDate, formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { useEffect, useState } from "react";
 import { errorMessage } from "../api/client";
 import { useHistoryPage } from "../api/useHistoryPage";
@@ -44,7 +45,7 @@ export function PatientHealthRecordPage() {
               <div className="col-md-6">
                 <strong>Date of Birth:</strong>{" "}
                 {record.dateOfBirth
-                  ? new Date(record.dateOfBirth).toLocaleDateString()
+                  ? formatPharmacyDate(record.dateOfBirth)
                   : "—"}
               </div>
               <div className="col-md-6">
@@ -87,7 +88,7 @@ export function PatientHealthRecordPage() {
                         <strong>{rx.prescriptionNumber}</strong>
                         <br />
                         <small className="text-secondary">
-                          {new Date(rx.prescriptionDate).toLocaleDateString()}{" "}
+                          {formatPharmacyDate(rx.prescriptionDate)}{" "}
                           by {prescriberLabel(rx)}
                         </small>
                       </td>
@@ -107,7 +108,7 @@ export function PatientHealthRecordPage() {
                       </td>
                       <td>
                         {rx.dispensings?.[0]?.dispensedAt
-                          ? new Date(rx.dispensings[0].dispensedAt).toLocaleString()
+                          ? formatPharmacyDateTime(rx.dispensings[0].dispensedAt)
                           : "Never"}
                       </td>
                     </tr>

@@ -1,3 +1,4 @@
+import { formatPharmacyDate, formatPharmacyDateTime } from "../utils/pharmacyTime";
 import {
   useCallback,
   useEffect,
@@ -544,11 +545,11 @@ export function CashierPage() {
                     <small className="d-block">
                       {row.prescription?.prescriptionNumber || "Retail goods"}
                     </small>
-                    <small>{new Date(row.createdAt).toLocaleString()}</small>
+                    <small>{formatPharmacyDateTime(row.createdAt)}</small>
                     {row.events?.length > 0 && (
                       <details className="small mt-2"><summary>Payment and adjustment history</summary>
                         {row.events.map((event: any) => <div className="border-top py-1" key={event.id}>
-                          {new Date(event.createdAt).toLocaleString()} · {event.kind.replaceAll("_", " ")} · {money(event.amount)}
+                          {formatPharmacyDateTime(event.createdAt)} · {event.kind.replaceAll("_", " ")} · {money(event.amount)}
                           {event.details?.reason && <div>{event.details.reason}</div>}
                           {event.details?.removedItems?.map((item: any, index: number) => <div key={index}>{item.name} × {item.quantity} {item.unit}</div>)}
                         </div>)}
@@ -589,7 +590,7 @@ export function CashierPage() {
                         {row.acknowledgedRevision !== row.revision
                           ? `Waiting for customer acknowledgement of revision ${row.revision}`
                           : row.customerPaymentChoice === "CASH"
-                            ? `Cash selected · reserved until ${row.reservationExpiresAt ? new Date(row.reservationExpiresAt).toLocaleString() : "deadline unavailable"}`
+                            ? `Cash selected · reserved until ${row.reservationExpiresAt ? formatPharmacyDateTime(row.reservationExpiresAt) : "deadline unavailable"}`
                             : "Bank transfer selected · waiting for receipt"}
                       </small>
                     )}
@@ -1531,7 +1532,7 @@ export function CashierPage() {
                   <label className="form-label">Paid on</label>
                   <div className="form-control bg-light">
                     {slipReview.slip.paidOn
-                      ? new Date(slipReview.slip.paidOn).toLocaleDateString()
+                      ? formatPharmacyDate(slipReview.slip.paidOn)
                       : "Not given"}
                   </div>
                 </div>

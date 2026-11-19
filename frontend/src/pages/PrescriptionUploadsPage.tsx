@@ -1,3 +1,4 @@
+import { formatPharmacyDate, formatPharmacyDateTime, pharmacyTodayDateInput } from "../utils/pharmacyTime";
 import { personNameInputProps } from '../utils/personName';
 import { uploadAttemptKey, completeUploadAttempt } from '../utils/uploadAttempt';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
@@ -994,8 +995,8 @@ export function PrescriptionUploadsPage() {
                 <strong>{item.originalName}</strong>
                 <small>
                   {patient
-                    ? new Date(item.createdAt).toLocaleString()
-                    : `${item.patient.fullName} · ${item.patient.email} · ${new Date(item.createdAt).toLocaleString()}`}
+                    ? formatPharmacyDateTime(item.createdAt)
+                    : `${item.patient.fullName} · ${item.patient.email} · ${formatPharmacyDateTime(item.createdAt)}`}
                 </small>
               </div>
               {item.prescription?.status === "CANCELLED" ? <div className="text-end"><small className="d-block">Prescription</small><Status value="CANCELLED" /></div> : item.prescription?.status === "REJECTED" ? <div className="text-end"><small className="d-block">Prescription</small><Status value="REJECTED" /></div> : item.prescription?.paymentRequest ? <div className="text-end"><small className="d-block">Current invoice</small><Status value={item.prescription.paymentRequest.status} /></div> : <UploadStatus value={item.status} />}
@@ -1250,7 +1251,7 @@ export function PrescriptionUploadsPage() {
               <small className="reviewed-by">
                 Reviewed by {item.reviewedBy.fullName}
                 {item.reviewedAt
-                  ? ` on ${new Date(item.reviewedAt).toLocaleString()}`
+                  ? ` on ${formatPharmacyDateTime(item.reviewedAt)}`
                   : ""}
               </small>
             )}
@@ -1258,7 +1259,7 @@ export function PrescriptionUploadsPage() {
               <small className="text-secondary">
                 {item.attachmentRemovedAt ? "Attachment removed; order history retained. Scheduled date: " : "Attachment retention deadline (deferred for active orders): "}
                 {item.deleteAt
-                  ? new Date(item.deleteAt).toLocaleString()
+                  ? formatPharmacyDateTime(item.deleteAt)
                   : "Not scheduled"}
               </small>
               {admin && !item.attachmentRemovedAt && deadlineEditingId !== item.id && (
@@ -1272,7 +1273,7 @@ export function PrescriptionUploadsPage() {
                   <input
                     className="form-control form-control-sm"
                     type="date"
-                    min={new Date().toISOString().slice(0, 10)}
+                    min={pharmacyTodayDateInput()}
                     value={deadlineDraft}
                     disabled={deadlineSavingId === item.id}
                     onChange={(event) => setDeadlineDraft(event.target.value)}
@@ -2404,7 +2405,7 @@ export function PrescriptionUploadsPage() {
           <div className="prescription-popup-heading">
             <div>
               <strong>{preview.item.originalName}</strong>
-              <small>{new Date(preview.item.createdAt).toLocaleString()}</small>
+              <small>{formatPharmacyDateTime(preview.item.createdAt)}</small>
             </div>
             <Status value={preview.item.status} />
           </div>
@@ -2514,7 +2515,7 @@ export function PrescriptionUploadsPage() {
             <input
               className="form-control"
               type="date"
-              max={new Date().toISOString().slice(0, 10)}
+              max={pharmacyTodayDateInput()}
               value={slipForm.paidOn}
               onChange={(event) => setSlipForm({ ...slipForm, paidOn: event.target.value })}
             />
@@ -2572,7 +2573,7 @@ export function PrescriptionUploadsPage() {
                 {slipReviewItem.slip.paidOn && (
                   <div>
                     <small>Transfer date</small>
-                    <strong>{new Date(slipReviewItem.slip.paidOn).toLocaleDateString()}</strong>
+                    <strong>{formatPharmacyDate(slipReviewItem.slip.paidOn)}</strong>
                   </div>
                 )}
                 {slipReviewItem.slip.note && (

@@ -1,3 +1,4 @@
+import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { useCallback, useEffect, useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { useAuth } from '../auth/useAuth';
@@ -37,7 +38,7 @@ export function RefundApprovalPanel({ onDecision }: { onDecision: () => Promise<
         <strong>{row.requestNumber} · {money(row.amount)} · {row.status}</strong><p className="mb-1">{row.reason}</p>
         {row.selection.lines.map((line: any) => <div className="small" key={line.id}>{line.name} × {line.quantity}</div>)}
         {row.selection.includesDeliveryFee && <p className="small">Includes the paid, pre-dispatch delivery fee.</p>}
-        <small>Requested by staff #{row.requestedById} · {new Date(row.createdAt).toLocaleString()}</small>
+        <small>Requested by staff #{row.requestedById} · {formatPharmacyDateTime(row.createdAt)}</small>
         {row.decisionReason && <p>Decision: {row.decisionReason}</p>}
         {user?.role === 'ADMIN' && row.status === 'PENDING' && row.requestedById !== user.id && <button className="btn btn-sm btn-outline-primary ms-2" disabled={busy} onClick={() => setDecision({ ...row, approved: false, reason: '' })}>Review request</button>}
         {row.status === 'PENDING' && row.requestedById === user?.id && <p className="small">A different administrator must review this request.</p>}

@@ -1,3 +1,4 @@
+import { formatPharmacyDate, formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { personNameInputProps } from '../utils/personName';
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api/client";
@@ -467,7 +468,7 @@ export function PatientsPage() {
                 <strong>Patient Number:</strong> <code>{healthRecord.patientNumber}</code>
               </div>
               <div className="col-md-6">
-                <strong>Date of Birth:</strong> {healthRecord.dateOfBirth ? new Date(healthRecord.dateOfBirth).toLocaleDateString() : "—"}
+                <strong>Date of Birth:</strong> {healthRecord.dateOfBirth ? formatPharmacyDate(healthRecord.dateOfBirth) : "—"}
               </div>
               <div className="col-md-6">
                 <strong>Contact Phone:</strong> {healthRecord.user.phone || "—"}
@@ -506,7 +507,7 @@ export function PatientsPage() {
                       <strong>{rx.prescriptionNumber}</strong>
                       <br />
                       <small className="text-secondary">
-                        {new Date(rx.prescriptionDate).toLocaleDateString()} by {prescriberLabel(rx)}
+                        {formatPharmacyDate(rx.prescriptionDate)} by {prescriberLabel(rx)}
                       </small>
                     </td>
                     <td>
@@ -522,7 +523,7 @@ export function PatientsPage() {
                       </ul>
                     </td>
                     <td>
-                      {rx.dispensings?.[0]?.dispensedAt ? new Date(rx.dispensings[0].dispensedAt).toLocaleString() : "Never"}
+                      {rx.dispensings?.[0]?.dispensedAt ? formatPharmacyDateTime(rx.dispensings[0].dispensedAt) : "Never"}
                     </td>
                   </tr>
                 ))}

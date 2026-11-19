@@ -1,3 +1,4 @@
+import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 const money = (value: unknown) => `Rs. ${Number(value || 0).toFixed(2)}`;
 
 export function InvoiceChanges({ invoice }: { invoice: any }) {
@@ -10,7 +11,7 @@ export function InvoiceChanges({ invoice }: { invoice: any }) {
       {!events.length && <div>{invoice.cancellationReason}</div>}
       {events.map((event: any) => (
         <div key={event.id} className="border-top pt-2 mt-2">
-          <small className="text-secondary">{new Date(event.createdAt).toLocaleString()} · Revision {event.revision}</small>
+          <small className="text-secondary">{formatPharmacyDateTime(event.createdAt)} · Revision {event.revision}</small>
           <div>{event.details?.reason || event.kind.replaceAll("_", " ")}</div>
           {event.details?.previousNote !== event.details?.currentNote && event.details?.currentNote !== undefined && (
             <div className="mt-1">Pharmacy note: {event.details.previousNote || "None"} → {event.details.currentNote || "Removed"}</div>

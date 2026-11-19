@@ -1,3 +1,4 @@
+import { formatPharmacyDate, formatPharmacyDateTime, formatPharmacyDateTimeInput, formatPharmacyTime, pharmacyDateTimeInputToISOString, pharmacyTodayDateInput } from "../utils/pharmacyTime";
 import { personNameInputProps } from '../utils/personName';
 import { UploadAttachmentSelector } from '../components/UploadAttachmentSelector';
 import {
@@ -186,9 +187,7 @@ const line = (): Line => ({
   overrideReason: "",
 });
 const localDateTime = (value: Date | string = new Date()) => {
-  const date = new Date(value);
-  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
-  return date.toISOString().slice(0, 16);
+  return formatPharmacyDateTimeInput(value);
 };
 const emptyForm = () => ({
   patientId: 0,
@@ -839,7 +838,7 @@ export function PrescriptionsPage() {
     ...form,
     patientId: Number(form.patientId),
     prescriberTitle: form.prescriberTitle || null,
-    prescriptionDate: new Date(form.prescriptionDate).toISOString(),
+    prescriptionDate: pharmacyDateTimeInputToISOString(form.prescriptionDate),
     recipientName: form.orderedForSelf ? null : form.recipientName,
     recipientRelationship: form.orderedForSelf
       ? null
@@ -854,7 +853,7 @@ export function PrescriptionsPage() {
       ? null
       : (form.recipientConditions?.trim() || null),
     pickupNote: form.pickupNote || null,
-    plannedPickupAt: form.plannedPickupAt ? new Date(form.plannedPickupAt).toISOString() : null,
+    plannedPickupAt: form.plannedPickupAt ? pharmacyDateTimeInputToISOString(form.plannedPickupAt) : null,
     items: form.items.map((item: Line) => {
       const liquid = isLiquid(
         products.find((product) => product.id === Number(item.productId)),
@@ -978,7 +977,7 @@ export function PrescriptionsPage() {
     try {
       await api.patch(`/prescriptions/${collectionModal.id}/pickup-details`, {
         pickupNote: collectionForm.pickupNote,
-        plannedPickupAt: collectionForm.plannedPickupAt ? new Date(collectionForm.plannedPickupAt).toISOString() : null,
+        plannedPickupAt: collectionForm.plannedPickupAt ? pharmacyDateTimeInputToISOString(collectionForm.plannedPickupAt) : null,
       });
       setCollectionModal(null);
       load();
@@ -1304,7 +1303,7 @@ export function PrescriptionsPage() {
               
               <div class="rx-info">
                 <span>RX: <strong>${escapeHtml(rx.prescriptionNumber)}</strong></span>
-                <span>Date: ${escapeHtml(new Date(issue.dispensedAt).toLocaleDateString())}</span>
+                <span>Date: ${escapeHtml(formatPharmacyDate(issue.dispensedAt))}</span>
               </div>
               
               <div class="items-title">Dispensed Medicines</div>
@@ -1315,7 +1314,7 @@ export function PrescriptionsPage() {
             
             <div class="footer-box">
               <div>Dispensed by: <strong>${escapeHtml(issue.pharmacist.fullName)}</strong></div>
-              <div>Time: ${escapeHtml(new Date(issue.dispensedAt).toLocaleTimeString())}</div>
+              <div>Time: ${escapeHtml(formatPharmacyTime(issue.dispensedAt))}</div>
               <div class="signature-line">
                 Verified & Handed Over By (Signature)
               </div>
@@ -1618,7 +1617,7 @@ export function PrescriptionsPage() {
                   )}
                   <div className="text-secondary small">
                     {rx.patient.user.fullName} · {prescriberLabel(rx)} ·{" "}
-                    {new Date(rx.prescriptionDate).toLocaleString()}
+                    {formatPharmacyDateTime(rx.prescriptionDate)}
                   </div>
                   <div className="small">
                     {rx.orderedForSelf ? (
@@ -1654,7 +1653,7 @@ export function PrescriptionsPage() {
                         <i className="bi bi-clock-history me-1" />
                         <strong>Estimated collection:</strong>{" "}
                         {rx.plannedPickupAt
-                          ? new Date(rx.plannedPickupAt).toLocaleString()
+                          ? formatPharmacyDateTime(rx.plannedPickupAt)
                           : "Not specified"}
                       </div>
                       {rx.pickupNote && (
@@ -1714,8 +1713,8 @@ export function PrescriptionsPage() {
                   )}
                   <div className="workflow-actors">
                     {!staff && <>
-                      <span><i className="bi bi-pencil-square" /><span><strong>Prescription prepared by {rx.createdBy?.fullName || "Not recorded"}</strong><small>{new Date(rx.createdAt).toLocaleString()}</small></span></span>
-                      {rx.verifiedBy && <span><i className="bi bi-patch-check" /><span><strong>Verified by {rx.verifiedBy.fullName}</strong>{rx.verifiedAt && <small>{new Date(rx.verifiedAt).toLocaleString()}</small>}</span></span>}
+                      <span><i className="bi bi-pencil-square" /><span><strong>Prescription prepared by {rx.createdBy?.fullName || "Not recorded"}</strong><small>{formatPharmacyDateTime(rx.createdAt)}</small></span></span>
+                      {rx.verifiedBy && <span><i className="bi bi-patch-check" /><span><strong>Verified by {rx.verifiedBy.fullName}</strong>{rx.verifiedAt && <small>{formatPharmacyDateTime(rx.verifiedAt)}</small>}</span></span>}
                     </>}
                     {staff ? (
                       <>
@@ -1728,7 +1727,7 @@ export function PrescriptionsPage() {
                             </strong>
                             <small>
                               {rx.createdBy?.role?.toLowerCase() || "staff"} ·{" "}
-                              {new Date(rx.createdAt).toLocaleString()}
+                              {formatPharmacyDateTime(rx.createdAt)}
                             </small>
                           </span>
                         </span>
@@ -1741,7 +1740,7 @@ export function PrescriptionsPage() {
                               </strong>
                               <small>
                                 {rx.verifiedBy.role?.toLowerCase() || "staff"} ·{" "}
-                                {new Date(rx.verifiedAt).toLocaleString()}
+                                {formatPharmacyDateTime(rx.verifiedAt)}
                               </small>
                             </span>
                           </span>
@@ -1754,7 +1753,7 @@ export function PrescriptionsPage() {
                                 Dispensed by {last.pharmacist.fullName}
                               </strong>
                               <small>
-                                {new Date(last.dispensedAt).toLocaleString()}
+                                {formatPharmacyDateTime(last.dispensedAt)}
                               </small>
                             </span>
                           </span>
@@ -1768,7 +1767,7 @@ export function PrescriptionsPage() {
                             Dispensed by {last.pharmacist.fullName}
                           </strong>
                           <small>
-                            {new Date(last.dispensedAt).toLocaleString()}
+                            {formatPharmacyDateTime(last.dispensedAt)}
                           </small>
                         </span>
                       </span>
@@ -4102,7 +4101,7 @@ export function PrescriptionsPage() {
                 </div>
                 <div className="text-end d-flex flex-column align-items-end gap-1">
                   <strong>
-                    {new Date(issue.dispensedAt).toLocaleString()}
+                    {formatPharmacyDateTime(issue.dispensedAt)}
                   </strong>
                   <small>
                     {issue.sale?.invoiceNumber || "No invoice"} ·{" "}
@@ -4185,7 +4184,7 @@ export function PrescriptionsPage() {
                     pattern={key === "phone" ? "0[0-9]{9}" : undefined}
                     maxLength={key === "phone" ? 10 : undefined}
                     {...(key === "fullName" ? personNameInputProps((fullName) => setPatientForm((previous) => ({ ...previous, fullName }))) : {})}
-                    max={key === "dateOfBirth" ? new Date().toISOString().slice(0, 10) : undefined}
+                    max={key === "dateOfBirth" ? pharmacyTodayDateInput() : undefined}
                     value={patientForm[key]}
                     onChange={(event) =>
                       setPatientForm({
@@ -4597,7 +4596,7 @@ function PatientClinicalWarning({
             ? "Recipient age required before prescribing"
             : thirdPartyRecipient
               ? `${age} years`
-              : `${age} years (${new Date(medicineRecipientDateOfBirth!).toLocaleDateString()})`}
+              : `${age} years (${formatPharmacyDate(medicineRecipientDateOfBirth!)})`}
         </div>
 
         <div className="small mt-1">

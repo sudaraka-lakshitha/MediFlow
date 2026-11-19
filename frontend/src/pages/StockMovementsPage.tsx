@@ -1,3 +1,4 @@
+import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { errorMessage } from "../api/client";
 import { useHistoryPage } from "../api/useHistoryPage";
@@ -114,7 +115,7 @@ export function StockMovementsPage() {
               {pagination.visibleRows.map((row) => (
                 <tr key={row.id}>
                   <td>
-                    <small>{new Date(row.createdAt).toLocaleString()}</small>
+                    <small>{formatPharmacyDateTime(row.createdAt)}</small>
                   </td>
                   <td>
                     <Status value={row.type} />

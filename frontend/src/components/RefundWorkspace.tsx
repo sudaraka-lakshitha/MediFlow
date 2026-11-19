@@ -1,3 +1,4 @@
+import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { useCallback, useEffect, useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { stockQuantityStep } from "../utils/unitMeasure";
@@ -45,7 +46,7 @@ export function RefundWorkspace({ sales = noSales, refreshToken }: { sales?: any
       {staff && refund.category === 'DELIVERY_FEE' && <p className="small text-secondary">Requested by staff #{refund.createdById} · Supporting reference: {refund.evidenceReference}{refund.approvedById ? ` · Reviewed by staff #${refund.approvedById}` : ''}</p>}
       {canApproveFee && refund.status === 'AWAITING_APPROVAL' && refund.createdById !== user?.id && <button className="btn btn-outline-primary my-2" disabled={busy} onClick={() => setFeeDecision({ id: refund.id, approved: false, reason: '' })}>Review delivery-fee exception</button>}
       {staff && refund.status === 'AWAITING_APPROVAL' && refund.createdById === user?.id && <p className="small">Another authorized staff member must review your request.</p>}
-      {refund.status === 'SETTLED' && <small className="text-secondary">{refund.method} · {refund.reference} · {new Date(refund.settledAt).toLocaleString()}</small>}
+      {refund.status === 'SETTLED' && <small className="text-secondary">{refund.method} · {refund.reference} · {formatPharmacyDateTime(refund.settledAt)}</small>}
       {canPay && refund.status === 'PENDING' && <button className="btn btn-sm btn-outline-primary my-2" onClick={() => setAction({ type: 'settle', id: refund.id, method: 'CASH', reference: '', confirmed: false })}>Record completed payout</button>}
       {refund.lines.map((line: any) => <div className="border-top mt-2 pt-2" key={line.id}><span>{line.name} × {line.quantity} — {money(line.amount)}</span>{staff && <><small className="d-block text-secondary">Stock: {line.stockStatus.replaceAll('_',' ')}{line.stockReason ? ` — ${line.stockReason}` : ''}</small>{canReview && line.stockStatus === 'PENDING_REVIEW' && <button className="btn btn-sm btn-outline-secondary mt-1" onClick={() => setAction({ type: 'stock', id: line.id, decision: 'NOT_RESTOCKED', reason: '', confirmed: false })}>Review returned stock</button>}</>}</div>)}
     </article>)}

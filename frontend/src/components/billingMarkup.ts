@@ -1,3 +1,4 @@
+import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]!);
 const money = (value: unknown) => escape(`Rs. ${Number(value || 0).toFixed(2)}`);
 
@@ -19,7 +20,7 @@ export const billMarkup = (data: any, final: boolean, options: { width?: number;
     .filter(([label, value]) => label === 'Invoice total' || label === 'Amount paid' || Number(value || 0) !== 0);
   return page(`<main>
     <header class="brand"><div class="mark">+</div><div><h1>MediFlow Pharmacy</h1><small>${escape(options.title || (final ? 'Final invoice' : 'Bill preview — not a final invoice'))}</small></div><div class="ref"><span class="eyebrow">Reference</span><br><strong>${escape(data.reference)}</strong></div></header>
-    <div class="content"><div class="summary"><span class="status ${statusClass}">${escape(data.status.replaceAll('_',' '))}</span><time>${escape(new Date(data.createdAt).toLocaleString())}</time></div>
+    <div class="content"><div class="summary"><span class="status ${statusClass}">${escape(data.status.replaceAll('_',' '))}</span><time>${escape(formatPharmacyDateTime(data.createdAt))}</time></div>
       <div class="grid"><div class="field"><small>Customer</small><strong>${escape(data.customer)}</strong></div>${data.prescription?`<div class="field"><small>Prescription</small><strong>${escape(data.prescription)}</strong></div>`:''}<div class="field team"><small>Pharmacy team</small><strong>Prepared: ${escape(data.preparedBy || 'Not recorded')}<br>Dispensed: ${escape(data.dispensedBy || 'Not yet dispensed')}</strong></div></div>
       <table><thead><tr><th>Item / batch</th><th>Quantity</th><th>Unit price</th><th>Line total</th></tr></thead><tbody>${data.items.map((item:any)=>`<tr><td>${escape(item.name)}${item.batch?`<small>Batch: ${escape(item.batch)}</small>`:''}</td><td>${escape(item.quantity)}</td><td>${money(item.unitPrice)}</td><td>${money(item.lineTotal)}</td></tr>`).join('')}</tbody></table>
       ${medicineMarkup(data.medicineInstructions || [])}

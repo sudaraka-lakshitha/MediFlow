@@ -1,3 +1,4 @@
+import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
@@ -820,7 +821,7 @@ export function AuditPage() {
                     </td>
                     <td>
                       {member.lastLoginAt
-                        ? new Date(member.lastLoginAt).toLocaleString()
+                        ? formatPharmacyDateTime(member.lastLoginAt)
                         : "Never"}
                       <small className="d-block text-secondary">
                         {member.loginCount} login(s) in period
@@ -851,7 +852,7 @@ export function AuditPage() {
                       </span>
                       <small className="d-block text-secondary">
                         {member.lastActionAt
-                          ? new Date(member.lastActionAt).toLocaleString()
+                          ? formatPharmacyDateTime(member.lastActionAt)
                           : "—"}
                       </small>
                     </td>
@@ -1059,7 +1060,7 @@ export function AuditPage() {
                         />
                       )}
                     </td>
-                    <td>{new Date(row.createdAt).toLocaleString()}</td>
+                    <td>{formatPharmacyDateTime(row.createdAt)}</td>
                     <td>
                       <strong>{row.user?.fullName || "System"}</strong>
                       <small className="d-block text-secondary">
@@ -1132,14 +1133,14 @@ export function AuditPage() {
                       )}
                       {!row.success && row.readAt && tab === "audit" && (
                         <small className="d-block text-secondary mt-1">
-                          Read {new Date(row.readAt).toLocaleString()}
+                          Read {formatPharmacyDateTime(row.readAt)}
                         </small>
                       )}
                       {tab === "trash" && row.deletedAt && (
                         <small className="d-block text-secondary mt-1">
-                          Trashed {new Date(row.deletedAt).toLocaleString()}
+                          Trashed {formatPharmacyDateTime(row.deletedAt)}
                           <br />
-                          Deletes {deletionDate(row.deletedAt).toLocaleString()}
+                          Deletes {formatPharmacyDateTime(deletionDate(row.deletedAt))}
                         </small>
                       )}
                     </td>
@@ -1263,7 +1264,7 @@ export function AuditPage() {
                   <tr key={row.id}>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {row.timestamp
-                        ? new Date(row.timestamp).toLocaleString()
+                        ? formatPharmacyDateTime(row.timestamp)
                         : "—"}
                     </td>
                     <td>

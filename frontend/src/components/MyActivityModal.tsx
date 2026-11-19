@@ -1,3 +1,4 @@
+import { formatPharmacyDateTimeInput, PHARMACY_TIME_ZONE, pharmacyTodayDateInput } from "../utils/pharmacyTime";
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api/client";
 import type { User } from "../auth/AuthSession";
@@ -33,10 +34,7 @@ type ActivityResponse = {
 type ActivityCategory = "key" | "all" | "prescriptions" | "payments" | "inventory" | "account";
 
 const dateValue = (date: Date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return formatPharmacyDateTimeInput(date).slice(0, 10);
 };
 
 const rangeForDays = (days: number) => {
@@ -49,6 +47,7 @@ const rangeForDays = (days: number) => {
 const localDayKey = (value: string) => {
   const date = new Date(value);
   const parts = new Intl.DateTimeFormat("en", {
+    timeZone: PHARMACY_TIME_ZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -221,7 +220,7 @@ export function MyActivityModal({ user, onClose }: { user: User; onClose(): void
         </div>
         <div className="my-activity-dates">
           <label>From<input type="date" className="form-control form-control-sm" value={draft.from} max={draft.to} onChange={(event) => setDraft({ ...draft, from: event.target.value })} /></label>
-          <label>To<input type="date" className="form-control form-control-sm" value={draft.to} min={draft.from} max={dateValue(new Date())} onChange={(event) => setDraft({ ...draft, to: event.target.value })} /></label>
+          <label>To<input type="date" className="form-control form-control-sm" value={draft.to} min={draft.from} max={pharmacyTodayDateInput()} onChange={(event) => setDraft({ ...draft, to: event.target.value })} /></label>
           <button type="button" className="btn btn-sm btn-outline-primary" onClick={applyDates}>Apply</button>
         </div>
       </div>
@@ -253,7 +252,7 @@ export function MyActivityModal({ user, onClose }: { user: User; onClose(): void
       {!loading && groups.map(([day, activities]) => (
         <section className="my-activity-day" key={day}>
           <div className="my-activity-day-heading">
-            <time dateTime={day}>{new Intl.DateTimeFormat("en-LK", { weekday: "long", year: "numeric", month: "long", day: "numeric" }).format(new Date(`${day}T00:00:00`))}</time>
+            <time dateTime={day}>{new Intl.DateTimeFormat("en-LK", { timeZone: PHARMACY_TIME_ZONE, weekday: "long", year: "numeric", month: "long", day: "numeric" }).format(new Date(`${day}T00:00:00`))}</time>
             <span>{activities.length}</span>
           </div>
           <div className="my-activity-timeline">
@@ -268,7 +267,7 @@ export function MyActivityModal({ user, onClose }: { user: User; onClose(): void
                     {activityReference(record) && <small>{activityReference(record)}</small>}
                   </div>
                   <div className="my-activity-entry-meta">
-                    <time dateTime={record.createdAt}>{new Intl.DateTimeFormat("en-LK", { hour: "2-digit", minute: "2-digit" }).format(new Date(record.createdAt))}</time>
+                    <time dateTime={record.createdAt}>{new Intl.DateTimeFormat("en-LK", { timeZone: PHARMACY_TIME_ZONE, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(record.createdAt))}</time>
                     <span className={record.success ? "activity-result-success" : "activity-result-failed"}>{record.success ? "Successful" : "Failed"}</span>
                   </div>
                 </article>

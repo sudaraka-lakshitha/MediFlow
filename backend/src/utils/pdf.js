@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { formatPharmacyTimestamp } from './pharmacyTime.js';
 
 const MARGIN = 36;
 const ROW_HEIGHT = 16;
@@ -16,6 +17,9 @@ const formatCell = (value) => {
   if (value === null || value === undefined) return '';
   if (typeof value === 'number') return value.toLocaleString(undefined, { maximumFractionDigits: 3 });
   const text = String(value);
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i.test(text)) {
+    return formatPharmacyTimestamp(text);
+  }
   if (/^-?\d+(\.\d+)?$/.test(text)) {
     const asNumber = Number(text);
     if (Number.isFinite(asNumber)) return asNumber.toLocaleString(undefined, { maximumFractionDigits: 3 });
@@ -175,12 +179,12 @@ export const createPdf = ({ title, subtitle, columns, rows, summary = [], chart 
     });
   }
 
-  const generatedAt = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const generatedAt = formatPharmacyTimestamp(new Date());
   const pages = doc.bufferedPageRange();
   for (let page = pages.start; page < pages.start + pages.count; page += 1) {
     doc.switchToPage(page);
     doc.font('Helvetica').fontSize(7).fillColor('#94a3b8')
-      .text(`Generated ${generatedAt} UTC  -  Page ${page + 1 - pages.start} of ${pages.count}`,
+      .text(`Generated ${generatedAt} Sri Lanka time  -  Page ${page + 1 - pages.start} of ${pages.count}`,
         left, doc.page.height - 48, { width: available, align: 'center', height: 10, lineBreak: false });
   }
   doc.end();

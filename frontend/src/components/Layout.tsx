@@ -1,3 +1,4 @@
+import { formatPharmacyDate } from '../utils/pharmacyTime';
 import { Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { api, errorMessage } from '../api/client';
@@ -144,7 +145,7 @@ export function Layout() {
   const visible = items.filter((item) => (!item.roles || item.roles.includes(user!.role)) && (item.to !== '/cashier' || user!.role === 'ADMIN' || user!.role === 'CASHIER' || Boolean(user!.cashierAccess)));
   const current = visible.find((item) => item.to === location.pathname)?.label || 'MediFlow';
   const initials = user!.fullName.split(' ').map((part) => part[0]).slice(0, 2).join('');
-  const today = new Intl.DateTimeFormat('en-LK', { weekday: 'short', day: '2-digit', month: 'short' }).format(new Date());
+  const today = formatPharmacyDate(new Date(), { weekday: 'short', day: '2-digit', month: 'short' });
   const openPassword = () => {
     setMobileNavOpen(false);
     setPasswords({ currentPassword: '', newPassword: '', confirmPassword: '' });

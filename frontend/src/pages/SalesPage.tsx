@@ -1,3 +1,4 @@
+import { formatPharmacyDate, formatPharmacyDateTime, pharmacyTodayDateInput } from "../utils/pharmacyTime";
 import {
   useCallback,
   useEffect,
@@ -506,7 +507,7 @@ export function SalesPage() {
                         <small className="d-block text-secondary">
                           {invoice.prescription?.prescriptionNumber ||
                             "Pharmacy items"}{" "}
-                          · {new Date(invoice.createdAt).toLocaleDateString()}
+                          · {formatPharmacyDate(invoice.createdAt)}
                         </small>
                       </div>
                       <div className="text-end">
@@ -544,7 +545,7 @@ export function SalesPage() {
                         <small className="d-block">
                           You sent {money(pendingSlip.declaredAmount)} on{" "}
                           {pendingSlip.paidOn
-                            ? new Date(pendingSlip.paidOn).toLocaleDateString()
+                            ? formatPharmacyDate(pendingSlip.paidOn)
                             : "an unstated date"}
                           . The pharmacy will confirm it shortly and start
                           preparing your medicine.
@@ -618,7 +619,7 @@ export function SalesPage() {
                           <div className="alert alert-success mt-3 mb-0">
                             <strong>{invoice.reservationExpiresAt ? "Cash payment selected — stock reserved temporarily." : "Cash payment selected — stock hold expired."}</strong>
                             <small className="d-block">
-                              {invoice.reservationExpiresAt ? `Pay at the pharmacy counter before ${new Date(invoice.reservationExpiresAt).toLocaleString()}.` : "Renew your reservation to check availability and hold the medicines again."} Expiry releases stock but does not cancel your invoice approval.
+                              {invoice.reservationExpiresAt ? `Pay at the pharmacy counter before ${formatPharmacyDateTime(invoice.reservationExpiresAt)}.` : "Renew your reservation to check availability and hold the medicines again."} Expiry releases stock but does not cancel your invoice approval.
                             </small>
                           </div>
                         ) : (
@@ -644,7 +645,7 @@ export function SalesPage() {
                                   declaredAmount: Number(invoice.total),
                                   bankAccountId: bankAccounts[0]?.id || "",
                                   reference: invoice.requestNumber,
-                                  paidOn: new Date().toISOString().slice(0, 10),
+                                  paidOn: pharmacyTodayDateInput(),
                                   note: "",
                                   file: null,
                                 });
@@ -726,7 +727,7 @@ export function SalesPage() {
                     <td>
                       <strong>{request.requestNumber}</strong>
                       <small className="d-block">
-                        {new Date(request.createdAt).toLocaleString()}
+                        {formatPharmacyDateTime(request.createdAt)}
                       </small>
                     </td>
                     <td>{request.patient?.fullName || "Walk-in customer"}</td>
@@ -825,7 +826,7 @@ export function SalesPage() {
                     ))}
                   </td>
                   <td>{row.patient?.fullName || "Walk-in"}</td>
-                  <td>{new Date(row.createdAt).toLocaleString()}</td>
+                  <td>{formatPharmacyDateTime(row.createdAt)}</td>
                   <td>Rs. {Number(row.subtotal).toFixed(2)}</td>
                   <td className="text-success">
                     -Rs. {Number(row.discount).toFixed(2)}
@@ -901,8 +902,8 @@ export function SalesPage() {
                         !row.dispensingId &&
                         row.status === "PENDING" &&
                         (isAdmin ||
-                          new Date(row.createdAt).toDateString() ===
-                            new Date().toDateString()) && (
+                          formatPharmacyDate(row.createdAt) ===
+                            formatPharmacyDate(new Date())) && (
                           <button
                             className="btn btn-sm btn-outline-danger"
                             onClick={() => {
@@ -1309,7 +1310,7 @@ export function SalesPage() {
                 <input
                   className="form-control"
                   type="date"
-                  max={new Date().toISOString().slice(0, 10)}
+                  max={pharmacyTodayDateInput()}
                   value={payOnline.paidOn}
                   onChange={(event) =>
                     setPayOnline({ ...payOnline, paidOn: event.target.value })

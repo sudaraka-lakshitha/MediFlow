@@ -1,3 +1,4 @@
+import { formatPharmacyTime } from "../utils/pharmacyTime";
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, errorMessage } from '../api/client';
 import { Alert, Empty, Loading } from '../components/Ui';
@@ -419,7 +420,7 @@ export function DrugResearchPage() {
                 {result.searchedAt && (
                   <span className="ms-2">
                     · Searched{' '}
-                    {new Date(result.searchedAt).toLocaleTimeString()}
+                    {formatPharmacyTime(result.searchedAt)}
                   </span>
                 )}
               </small>

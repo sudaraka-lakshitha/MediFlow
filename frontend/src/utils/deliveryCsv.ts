@@ -1,4 +1,8 @@
 const columns = ['invoice_number', 'version', 'action', 'recipient_name', 'address', 'phone', 'courier', 'tracking', 'current_status', 'dispatched_at', 'delivered_at'];
+const sriLankaTime = (value?: string | null) => value ? new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'Asia/Colombo', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+}).format(new Date(value)) : '';
 const cell = (value: unknown) => {
   let text = String(value ?? '');
   let first = 0;
@@ -7,7 +11,7 @@ const cell = (value: unknown) => {
   return `"${text.replaceAll('"', '""')}"`;
 };
 export function exportDeliveries(rows: any[]) {
-  const data = rows.map(row => [row.paymentRequest.requestNumber, row.updatedAt, '', row.recipientName || row.paymentRequest.patient?.fullName, row.address, row.phone, row.courierService, row.trackingReference, row.status, row.dispatchedAt, row.deliveredAt]);
+  const data = rows.map(row => [row.paymentRequest.requestNumber, row.updatedAt, '', row.recipientName || row.paymentRequest.patient?.fullName, row.address, row.phone, row.courierService, row.trackingReference, row.status, sriLankaTime(row.dispatchedAt), sriLankaTime(row.deliveredAt)]);
   const guide = [
     ['MEDIFLOW DELIVERY UPDATE GUIDE', 'Edit the data table below. These guide rows are not imported.'],
     ['1. SELECT ROWS', 'Keep at most 50 delivery rows per upload. Leave action blank to skip a row.'],
@@ -19,7 +23,7 @@ export function exportDeliveries(rows: any[]) {
     ['EXAMPLE ONLY', 'action: DISPATCH | courier: Example Courier | tracking: TRACK123. Use your actual values in the data table.'],
     ['BLANK VALUES', 'Blank or omitted editable fields keep saved values. Required delivery details cannot be cleared.'],
     ['PHONE / TRACKING', 'Keep these columns as Text in Excel to preserve leading zeros. Phone: 0701234567 or +94701234567.'],
-    ['REFERENCE COLUMNS', 'current_status, dispatched_at and delivered_at are read-only. Dates are recorded automatically and exported in UTC.'],
+    ['REFERENCE COLUMNS', 'current_status, dispatched_at and delivered_at are read-only. Dates are recorded automatically and exported in Sri Lanka time (UTC+05:30).'],
     ['7. UPLOAD AND CONFIRM', 'Save as CSV UTF-8. Upload, review every change, then confirm. Nothing changes before confirmation.'],
     ['PRIVACY', 'Contains customer contact details. Store securely and delete downloaded copies when no longer needed.'],
     [], ['DELIVERY DATA BELOW', 'Enter actions only for the rows you want to update.'], [],

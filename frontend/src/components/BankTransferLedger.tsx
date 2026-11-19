@@ -1,3 +1,4 @@
+import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { useCallback, useEffect, useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { useHistoryPage } from '../api/useHistoryPage';
@@ -27,7 +28,7 @@ export function BankTransferLedger({ onAllocated }: { onAllocated(): Promise<unk
         <strong>BT#{row.id} · {row.reference} · {row.patient.fullName}</strong>
         <div>{row.bankAccount.bankName} · {row.bankAccount.accountNumber} · Bank payment date {row.paidOn.slice(0, 10)}</div>
         <div>Received {money(row.amount)} · Unallocated {money(row.availableAmount)}</div>
-        {row.allocations.map((allocation: any) => <small className="d-block" key={allocation.id}>{allocation.paymentRequest.requestNumber} · {money(allocation.amount)} · {new Date(allocation.createdAt).toLocaleString()}</small>)}
+        {row.allocations.map((allocation: any) => <small className="d-block" key={allocation.id}>{allocation.paymentRequest.requestNumber} · {money(allocation.amount)} · {formatPharmacyDateTime(allocation.createdAt)}</small>)}
         {Number(row.availableAmount) > 0 && <button className="btn btn-sm btn-outline-primary mt-2" disabled={busy} onClick={() => { setAllocate(row); setInvoice(null); setInvoices([]); setError(''); }}>Allocate to an invoice</button>}
       </article>)}
     </details>

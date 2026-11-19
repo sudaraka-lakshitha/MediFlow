@@ -1,3 +1,4 @@
+import { formatPharmacyDate, formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
@@ -70,7 +71,7 @@ function SalesActivityChart({ series }: { series: any[] }) {
     ? `${linePath} L ${points[points.length - 1].x},${zeroY} L ${points[0].x},${zeroY} Z`
     : "";
   const dayLabel = (date: string) =>
-    new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
+    formatPharmacyDate(new Date(`${date}T00:00:00`), {
       weekday: "short",
     });
 
@@ -200,7 +201,7 @@ export function DashboardPage() {
               <div className="alert alert-info mb-2" key={notice.id}>
                 <strong><i className="bi bi-bell me-2" />{notice.title}</strong>
                 <div className="small mt-1">{notice.message}</div>
-                <small className="text-secondary">From {notice.createdBy.fullName} · {new Date(notice.createdAt).toLocaleString()}</small>
+                <small className="text-secondary">From {notice.createdBy.fullName} · {formatPharmacyDateTime(notice.createdAt)}</small>
               </div>
             ))}
           </div>
@@ -238,7 +239,7 @@ export function DashboardPage() {
                 <small>
                   {row.type === "RETAIL" ? "Retail goods" : "Prescription"} ·
                   Prepared by {row.pharmacist.fullName} ·{" "}
-                  {new Date(row.createdAt).toLocaleString()}
+                  {formatPharmacyDateTime(row.createdAt)}
                 </small>
               </div>
               <Status value={row.status} />
@@ -310,7 +311,7 @@ export function DashboardPage() {
                     )}
                     <small>
                       {prescriberLabel(row)} —{" "}
-                      {new Date(row.prescriptionDate).toLocaleString()}
+                      {formatPharmacyDateTime(row.prescriptionDate)}
                     </small>
                   </div>
                   <Status value={row.status} />
@@ -329,7 +330,7 @@ export function DashboardPage() {
                   <div>
                     <strong>{row.invoiceNumber}</strong>
                     <small>
-                      {new Date(row.createdAt).toLocaleString()} — Paid{" "}
+                      {formatPharmacyDateTime(row.createdAt)} — Paid{" "}
                       {money(row.amountPaid)}
                     </small>
                   </div>
@@ -353,7 +354,7 @@ export function DashboardPage() {
           </p>
         </div>
         <span className="text-secondary small">
-          {new Date().toLocaleDateString(undefined, {
+          {formatPharmacyDate(new Date(), {
             weekday: "long",
             year: "numeric",
             month: "long",
@@ -553,7 +554,7 @@ export function DashboardPage() {
                   </strong>
                   <small>
                     {prescriberLabel(row)} —{" "}
-                    {new Date(row.prescriptionDate).toLocaleString()}
+                    {formatPharmacyDateTime(row.prescriptionDate)}
                   </small>
                 </div>
                 <Status value={row.status} />
@@ -574,7 +575,7 @@ export function DashboardPage() {
                   </strong>
                   <small>
                     {row.pharmacist.fullName} —{" "}
-                    {new Date(row.createdAt).toLocaleString()}
+                    {formatPharmacyDateTime(row.createdAt)}
                     {row.discountApplications.length
                       ? ` — ${row.discountApplications.length} discount(s)`
                       : ""}

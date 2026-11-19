@@ -1,5 +1,6 @@
 import PDFDocument from 'pdfkit';
 import { createCollectionSlipPdf } from './collectionSlipPdf.js';
+import { formatPharmacyTimestamp } from './pharmacyTime.js';
 
 const money = (value) => `Rs. ${Number(value || 0).toFixed(2)}`;
 const productName = (product) => `${product.genericName}${product.strength && product.strength !== 'N/A' ? ` ${product.strength}` : ''}`;
@@ -25,8 +26,8 @@ const drawHeader = (doc, request, receipt) => {
   const category = request.deliveryFeeFor ? 'Home delivery service' : retail ? 'Retail' : 'Prescription';
   doc.font('Helvetica').fontSize(10).fillColor('#64748b').text(`${category} ${receipt ? (request.pickupPin ? 'itemized payment receipt with collection PIN' : 'payment receipt') : 'payment request'}`, left + 52, 70);
   doc.font('Helvetica-Bold').fontSize(12).fillColor('#111827').text(request.requestNumber, 330, 46, { width: right - 330, align: 'right' });
-  const created = new Date(request.createdAt).toISOString().replace('T', ' ').slice(0, 19);
-  doc.font('Helvetica').fontSize(8).fillColor('#64748b').text(`Created: ${created} UTC`, 330, 68, { width: right - 330, align: 'right' });
+  const created = formatPharmacyTimestamp(request.createdAt);
+  doc.font('Helvetica').fontSize(8).fillColor('#64748b').text(`Created: ${created} Sri Lanka time`, 330, 68, { width: right - 330, align: 'right' });
   doc.moveTo(left, 100).lineTo(right, 100).lineWidth(1).strokeColor('#cfe0dc').stroke();
 
   const banner = statusBanners[request.status] || statusBanners.AWAITING_PAYMENT;
@@ -156,8 +157,8 @@ const drawCompactSlip = (doc, request) => {
   doc.font('Helvetica-Bold').fontSize(18).fillColor('#174a45').text('MediFlow Pharmacy', left, 42);
   doc.font('Helvetica').fontSize(9).fillColor('#64748b').text('Payment receipt - awaiting collection', left, 66);
   doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text(request.requestNumber, 330, 44, { width: right - 330, align: 'right' });
-  const created = new Date(request.createdAt).toISOString().replace('T', ' ').slice(0, 19);
-  doc.font('Helvetica').fontSize(8).fillColor('#64748b').text(`${created} UTC`, 330, 62, { width: right - 330, align: 'right' });
+  const created = formatPharmacyTimestamp(request.createdAt);
+  doc.font('Helvetica').fontSize(8).fillColor('#64748b').text(`${created} Sri Lanka time`, 330, 62, { width: right - 330, align: 'right' });
   doc.moveTo(left, 86).lineTo(right, 86).lineWidth(1).strokeColor('#cfe0dc').stroke();
 
   doc.font('Helvetica-Bold').fontSize(8).fillColor('#64748b').text('CUSTOMER', left, 98);

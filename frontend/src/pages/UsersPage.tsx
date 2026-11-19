@@ -1,3 +1,4 @@
+import { formatPharmacyDate, formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { personNameInputProps } from '../utils/personName';
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
@@ -225,9 +226,9 @@ export function UsersPage() {
                       </small>
                     )}
                   </td>
-                  <td>{new Date(row.createdAt).toLocaleDateString()}</td>
+                  <td>{formatPharmacyDate(row.createdAt)}</td>
                   <td>
-                    {row.lastLoginAt ? new Date(row.lastLoginAt).toLocaleString() : "Never"}
+                    {row.lastLoginAt ? formatPharmacyDateTime(row.lastLoginAt) : "Never"}
                     {row.mustChangePassword && (
                       <small className="d-block text-warning">
                         Temporary password pending

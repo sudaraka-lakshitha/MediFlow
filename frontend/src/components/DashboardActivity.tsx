@@ -1,3 +1,4 @@
+import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { Empty } from './Ui';
 
 type Activity = {
@@ -25,7 +26,7 @@ export function DashboardActivity({ items = [], pharmacyWide = false }: { items?
             <strong>{item.action.replaceAll('_', ' ').toLowerCase()}</strong>
             <small>
               {pharmacyWide && `${item.user?.fullName || 'System'} — `}
-              {new Date(item.createdAt).toLocaleString()}
+              {formatPharmacyDateTime(item.createdAt)}
             </small>
           </div>
           <i className="bi bi-check-circle text-success" />
