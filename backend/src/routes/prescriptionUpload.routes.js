@@ -14,6 +14,7 @@ import {
   uploadSlipSchema,
   uploadSlipReviewSchema,
   cancelUploadSchema,
+  proceedUploadSchema,
 } from '../validators/prescriptionUpload.validator.js';
 import { prescriptionUploadController } from '../controllers/prescriptionUpload.controller.js';
 
@@ -33,6 +34,7 @@ prescriptionUploadRoutes.put('/:id', authorize('PATIENT'), validate({ params: id
 
 // Patient: accept the estimate (no-prepare → prepare)
 prescriptionUploadRoutes.put('/:id/accept', authorize('PATIENT'), validate({ params: idParams, body: z.object({ revision: z.coerce.number().int().nonnegative() }) }), asyncHandler(prescriptionUploadController.acceptEstimate));
+prescriptionUploadRoutes.post('/:id/proceed', authorize('PATIENT'), validate({ params: idParams, body: proceedUploadSchema }), asyncHandler(prescriptionUploadController.proceedToOrder));
 
 // Patient / Staff: cancel or decline quotation / upload
 prescriptionUploadRoutes.post('/:id/cancel', authorize('PATIENT', 'ADMIN', 'PHARMACIST'), validate({ params: idParams, body: cancelUploadSchema }), asyncHandler(prescriptionUploadController.cancel));

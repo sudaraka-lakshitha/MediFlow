@@ -60,12 +60,21 @@ export const reviewUploadSchema = z.object({
   availabilityNotes: z.string().trim().max(1000).optional().nullable(),
   estimatedTotal: z.coerce.number().nonnegative().max(100_000_000).optional().nullable(),
 }).superRefine((data, context) => {
-  if (['AVAILABLE', 'PARTIALLY_AVAILABLE'].includes(data.status) && data.estimatedTotal == null) {
-    context.addIssue({ code: 'custom', path: ['estimatedTotal'], message: 'An estimated invoice total is required when medicines are available.' });
-  }
   if (data.status !== 'AVAILABLE' && (!data.availabilityNotes || data.availabilityNotes.length < 3)) {
     context.addIssue({ code: 'custom', path: ['availabilityNotes'], message: 'Add a short note explaining partial or unavailable medicines.' });
   }
+});
+
+export const proceedUploadSchema = z.object({
+  deliveryRequested: z.boolean().default(false),
+  recipientName: z.string().trim().min(2).max(150).optional(),
+  address: z.string().trim().min(10).max(500).optional(),
+  phone: z.string().trim().regex(/^(?:0|\+94)\d{9}$/, 'Use 0701234567 or +94701234567.').optional(),
+}).superRefine((data, context) => {
+  if (!data.deliveryRequested) return;
+  if (!data.recipientName) context.addIssue({ code: 'custom', path: ['recipientName'], message: 'Enter the delivery recipient name.' });
+  if (!data.address) context.addIssue({ code: 'custom', path: ['address'], message: 'Enter a complete delivery address.' });
+  if (!data.phone) context.addIssue({ code: 'custom', path: ['phone'], message: 'Enter a valid Sri Lankan mobile number.' });
 });
 
 const estimateItem = z.object({

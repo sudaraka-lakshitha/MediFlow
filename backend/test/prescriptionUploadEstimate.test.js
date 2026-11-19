@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   reviewUploadSchema,
+  proceedUploadSchema,
   uploadEstimateQuoteSchema,
 } from "../src/validators/prescriptionUpload.validator.js";
 
@@ -50,9 +51,33 @@ describe("uploaded prescription estimate validation", () => {
     const result = reviewUploadSchema.parse({
       status: "AVAILABLE",
       availabilityNotes: "",
-      estimatedTotal: 150,
     });
     expect(result.status).toBe("AVAILABLE");
+    expect(result.estimatedTotal).toBeUndefined();
+  });
+
+  it("accepts a final-bill request for collection without a rough estimate", () => {
+    expect(proceedUploadSchema.parse({ deliveryRequested: false })).toEqual({ deliveryRequested: false });
+  });
+
+  it("requires valid delivery contact details when requesting delivery", () => {
+    const result = proceedUploadSchema.safeParse({
+      deliveryRequested: true,
+      recipientName: "Demo Patient",
+      address: "12 Main Street, Colombo",
+      phone: "+94701234567",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects incomplete or invalid delivery contact details", () => {
+    const result = proceedUploadSchema.safeParse({
+      deliveryRequested: true,
+      recipientName: "A",
+      address: "Street",
+      phone: "077123456",
+    });
+    expect(result.success).toBe(false);
   });
 
   it("requires a note for partial availability", () => {

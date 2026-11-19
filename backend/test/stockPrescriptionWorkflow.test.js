@@ -99,6 +99,69 @@ describe('quotation revision acceptance', () => {
   });
 });
 
+describe('patient decision after availability review', () => {
+  const patient = { id: 2, role: 'PATIENT' };
+  const availableUpload = (status = 'AVAILABLE') => ({
+    id: 1, patientId: 2, status, prepareRequested: false, prescription: null,
+  });
+
+  it('claims a fully available upload and keeps the rough amount private', async () => {
+    tx.prescriptionUpload.findUnique
+      .mockResolvedValueOnce(availableUpload())
+      .mockResolvedValueOnce({ ...availableUpload(), prepareRequested: true, estimatedTotal: d(99), estimateDetails: { secret: true } });
+    tx.prescriptionUpload.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await prescriptionUploadService.proceedToOrder(1, { deliveryRequested: false }, patient);
+
+    expect(tx.prescriptionUpload.updateMany.mock.calls[0][0]).toEqual({
+      where: { id: 1, patientId: 2, status: 'AVAILABLE', prepareRequested: false, prescription: { is: null } },
+      data: { prepareRequested: true, deliveryRequested: false, deliveryRecipientName: null, deliveryAddress: null, deliveryPhone: null },
+    });
+    expect(result.estimatedTotal).toBeNull();
+    expect(result.estimateDetails).toBeNull();
+  });
+
+  it('saves validated delivery contact details when the patient requests delivery', async () => {
+    tx.prescriptionUpload.findUnique
+      .mockResolvedValueOnce(availableUpload('PARTIALLY_AVAILABLE'))
+      .mockResolvedValueOnce({ ...availableUpload('PARTIALLY_AVAILABLE'), prepareRequested: true, deliveryRequested: true });
+    tx.prescriptionUpload.updateMany.mockResolvedValue({ count: 1 });
+
+    await prescriptionUploadService.proceedToOrder(1, {
+      deliveryRequested: true,
+      recipientName: 'Demo Patient',
+      address: '12 Main Street, Colombo',
+      phone: '0701234567',
+    }, patient);
+
+    expect(tx.prescriptionUpload.updateMany.mock.calls[0][0].data).toMatchObject({
+      prepareRequested: true, deliveryRequested: true,
+      deliveryRecipientName: 'Demo Patient', deliveryAddress: '12 Main Street, Colombo', deliveryPhone: '0701234567',
+    });
+  });
+
+  it('prevents another patient from claiming an upload', async () => {
+    tx.prescriptionUpload.findUnique.mockResolvedValue({ ...availableUpload(), patientId: 88 });
+    await expect(prescriptionUploadService.proceedToOrder(1, { deliveryRequested: false }, patient))
+      .rejects.toMatchObject({ statusCode: 403 });
+    expect(tx.prescriptionUpload.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects a duplicate or stale decision instead of creating a second request', async () => {
+    tx.prescriptionUpload.findUnique.mockResolvedValue(availableUpload());
+    tx.prescriptionUpload.updateMany.mockResolvedValue({ count: 0 });
+    await expect(prescriptionUploadService.proceedToOrder(1, { deliveryRequested: false }, patient))
+      .rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it('does not allow proceeding before the pharmacy confirms availability', async () => {
+    tx.prescriptionUpload.findUnique.mockResolvedValue({ ...availableUpload(), status: 'PENDING' });
+    await expect(prescriptionUploadService.proceedToOrder(1, { deliveryRequested: false }, patient))
+      .rejects.toMatchObject({ statusCode: 409 });
+    expect(tx.prescriptionUpload.updateMany).not.toHaveBeenCalled();
+  });
+});
+
 describe('patient coupon application on online invoices', () => {
   const onlineBill = () => ({
     id: 9, patientId: 2, prescriptionId: 1, status: 'AWAITING_PAYMENT', revision: 3,
