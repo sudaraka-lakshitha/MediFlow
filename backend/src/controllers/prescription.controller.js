@@ -45,6 +45,7 @@ export const prescriptionController = protectRetryController(protectWorkflowCont
   },
   updatePickupDetails: async (req, res) => {
     const data = await prescriptionService.updatePickupDetails(Number(req.params.id), req.body, req.user);
+    await recordAudit({ userId: req.user.id, action: 'PRESCRIPTION_COLLECTION_REQUESTED', entityType: 'PRESCRIPTION', entityId: data.id, details: { plannedPickupAt: data.plannedPickupAt?.toISOString() || null }, ipAddress: req.ip });
     res.json({ data });
   },
   sendToCashier: async (req, res) => {

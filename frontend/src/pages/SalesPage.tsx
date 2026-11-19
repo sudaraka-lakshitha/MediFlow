@@ -1,4 +1,4 @@
-import { formatPharmacyDate, formatPharmacyDateTime, pharmacyTodayDateInput } from "../utils/pharmacyTime";
+import { formatPharmacyDate, formatPharmacyDateTime, formatPharmacyDateTimeInput, pharmacyDateTimeInputToISOString, pharmacyTodayDateInput } from "../utils/pharmacyTime";
 import {
   useCallback,
   useEffect,
@@ -71,6 +71,53 @@ function BankAccountDetails({
       </small>
     </div>
   );
+}
+
+function PatientPickupPlan({ invoice, onSaved }: { invoice: any; onSaved(): void }) {
+  const prescription = invoice.prescription;
+  const [editing, setEditing] = useState(false);
+  const [plannedAt, setPlannedAt] = useState(() => prescription?.plannedPickupAt ? formatPharmacyDateTimeInput(prescription.plannedPickupAt) : "");
+  const [note, setNote] = useState(prescription?.pickupNote || "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const hasActiveDelivery = invoice.delivery && invoice.delivery.status !== "CANCELLED";
+  const canSetPickup = prescription?.id && ["AWAITING_PAYMENT", "SLIP_SUBMITTED", "PAID"].includes(invoice.status) && !hasActiveDelivery;
+  if (!canSetPickup) return null;
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await api.patch(`/prescriptions/${prescription.id}/pickup-details`, {
+        plannedPickupAt: pharmacyDateTimeInputToISOString(plannedAt),
+        pickupNote: note.trim() || null,
+      });
+      setEditing(false);
+      onSaved();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <div className="border rounded-3 p-3 mt-3 bg-light-subtle">
+    <div className="d-flex flex-wrap align-items-start justify-content-between gap-2">
+      <div>
+        <strong><i className="bi bi-clock me-2" />Pharmacy collection time</strong>
+        {prescription.plannedPickupAt ? <small className="d-block text-secondary mt-1">Requested: {formatPharmacyDateTime(prescription.plannedPickupAt)}{prescription.pickupNote ? ` · ${prescription.pickupNote}` : ""}</small> : <small className="d-block text-secondary mt-1">Tell the pharmacy when you would like to collect this prescription.</small>}
+      </div>
+      {!editing && <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => { setPlannedAt(prescription.plannedPickupAt ? formatPharmacyDateTimeInput(prescription.plannedPickupAt) : ""); setNote(prescription.pickupNote || ""); setError(""); setEditing(true); }}>{prescription.plannedPickupAt ? "Change request" : "Choose pickup time"}</button>}
+    </div>
+    <small className="d-block text-secondary mt-2">This is a request for the pharmacy. Wait for the pharmacy to confirm your medicines are ready before travelling.</small>
+    {editing && <form className="row g-2 mt-2" onSubmit={save}>
+      <label className="col-md-5">Requested date and time (Sri Lanka time)<input className="form-control" type="datetime-local" required min={formatPharmacyDateTimeInput(new Date(Date.now() + 60_000))} value={plannedAt} onChange={event => setPlannedAt(event.target.value)} /></label>
+      <label className="col-md-7">Note for the pharmacy (optional)<input className="form-control" maxLength={500} value={note} onChange={event => setNote(event.target.value)} placeholder="For example, I will arrive after 5 pm" /></label>
+      {error && <div className="col-12"><Alert message={error} /></div>}
+      <div className="col-12 d-flex gap-2"><button type="submit" className="btn btn-sm btn-primary" disabled={busy}>{busy ? "Sending…" : "Send pickup time to pharmacy"}</button><button type="button" className="btn btn-sm btn-outline-secondary" disabled={busy} onClick={() => { setEditing(false); setError(""); }}>Cancel</button></div>
+    </form>}
+  </div>;
 }
 
 import { WorkflowGuard } from '../components/WorkflowGuard';
@@ -536,6 +583,27 @@ export function SalesPage() {
                     )}
 
                     <InvoiceChanges invoice={invoice} />
+
+                    <PatientPickupPlan invoice={invoice} onSaved={load} />
+
+                    {invoice.prescription && !invoice.delivery && ["AWAITING_PAYMENT", "SLIP_SUBMITTED", "PAID"].includes(invoice.status) && (
+                      <div className="alert alert-info small mt-3 mb-0">
+                        {invoice.status === "PAID" ? <>
+                          <strong>Prefer home delivery?</strong> Request it under Home deliveries. The pharmacy will confirm a separate delivery-fee invoice, which must be paid before dispatch.
+                          <div className="mt-2"><Link to="/deliveries" className="btn btn-sm btn-outline-primary">Request home delivery</Link></div>
+                        </> : invoice.status === "SLIP_SUBMITTED" ? <>
+                          <strong>Your transfer receipt is being verified.</strong> Once the cashier confirms payment, you can collect at your requested time or request home delivery. The delivery fee is separate and must be paid before dispatch.
+                        </> : <>
+                          <strong>To pay online, choose bank transfer and upload your receipt above.</strong> After cashier verification, you can collect at your requested time or request home delivery. The delivery fee is separate and must be paid before dispatch.
+                        </>}
+                      </div>
+                    )}
+                    {invoice.prescription && invoice.delivery && invoice.delivery.status !== "CANCELLED" && ["AWAITING_PAYMENT", "SLIP_SUBMITTED", "PAID"].includes(invoice.status) && (
+                      <div className="alert alert-info small mt-3 mb-0">
+                        <strong>Home delivery requested:</strong> {invoice.delivery.status.replaceAll("_", " ").toLowerCase()}. Track the courier and delivery-fee payment under Home deliveries.
+                        <div className="mt-2"><Link to="/deliveries" className="btn btn-sm btn-outline-primary">Track home delivery</Link></div>
+                      </div>
+                    )}
 
                     {["CANCELLED", "FULFILLED"].includes(invoice.status) ? (
                       <div className="text-secondary mt-3">{invoice.status === "FULFILLED" ? (invoice.delivery ? `Delivery ${invoice.delivery.status.toLowerCase()}.` : invoice.deliveryFeeFor ? 'Delivery service paid.' : 'Order collected.') : "Invoice closed — no payment is due."}</div>

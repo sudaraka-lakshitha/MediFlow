@@ -316,6 +316,9 @@ export const prescriptionService = {
     if (['DISPENSED', 'REJECTED', 'CANCELLED'].includes(current.status)) {
       throw new AppError(409, 'Cannot update collection details for closed prescriptions.');
     }
+    if (data.plannedPickupAt && data.plannedPickupAt <= new Date()) {
+      throw new AppError(400, 'Choose a future collection date and time.');
+    }
     const update = {};
     if (Object.hasOwn(data, 'pickupNote')) update.pickupNote = data.pickupNote;
     if (Object.hasOwn(data, 'plannedPickupAt')) update.plannedPickupAt = data.plannedPickupAt;

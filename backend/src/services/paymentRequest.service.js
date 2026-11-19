@@ -47,7 +47,7 @@ const include = {
   pharmacist: { select: { id: true, fullName: true } },
   cashier: { select: { id: true, fullName: true } },
   cancelledBy: { select: { id: true, fullName: true } },
-  prescription: { select: { id: true, prescriptionNumber: true, status: true, sourceUploadId: true, isOnline: true, createdBy: { select: { fullName: true } }, verifiedBy: { select: { fullName: true } } } },
+  prescription: { select: { id: true, prescriptionNumber: true, status: true, sourceUploadId: true, isOnline: true, plannedPickupAt: true, pickupNote: true, createdBy: { select: { fullName: true } }, verifiedBy: { select: { fullName: true } } } },
   items: { include: { prescriptionItem: { select: directionSelect }, product: { select: { id: true, genericName: true, strength: true, unit: true, productType: true, prescriptionRequired: true, storageInstructions: true } } } },
   slips: { select: slipSelect, orderBy: { createdAt: 'desc' } },
   sale: { select: { id: true, invoiceNumber: true } },
