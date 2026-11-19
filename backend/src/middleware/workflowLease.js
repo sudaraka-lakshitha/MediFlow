@@ -11,7 +11,7 @@ export const withWorkflowLease = controller => async (req, res, next) => {
   const resource = await workflowLeaseService.resource(target.kind, target.id, req.user);
   const lease = await workflowLeaseService.begin(resource, owner, req.get('X-Workflow-Lease'));
   const heartbeat = setInterval(() => {
-    void workflowLeaseService.acquire(resource, owner, lease.token).catch(error => logger.error('Workflow processing lease renewal failed.', { resource, error }));
+    void workflowLeaseService.renewProcessing(resource, owner, lease.token).catch(error => logger.error('Workflow processing lease renewal failed.', { resource, error }));
   }, 20_000);
   heartbeat.unref?.();
   // Send JSON only after releasing the processing flag, so a subsequent step can

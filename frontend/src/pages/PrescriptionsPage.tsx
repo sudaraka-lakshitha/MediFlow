@@ -326,6 +326,7 @@ export function PrescriptionsPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const saveInFlight = useRef(false);
   const [editor, setEditor] = useState<{
     mode: "create" | "edit";
     rx?: Rx;
@@ -900,11 +901,12 @@ export function PrescriptionsPage() {
     options?: { autoVerify?: boolean; sendToCashier?: boolean },
   ) => {
     if (event) event.preventDefault();
-    if (!editor) return;
+    if (!editor || saveInFlight.current) return;
     if (form.items.some((item: Line) => calculated(item).packSizeMissing)) {
       setError("A liquid medicine counted by container needs a supported container unit and its volume (for example, a 100 mL bottle). Update the product details before saving.");
       return;
     }
+    saveInFlight.current = true;
     setBusy(true);
     setError("");
     try {
@@ -914,7 +916,7 @@ export function PrescriptionsPage() {
           autoVerify: options?.autoVerify ?? false,
           sendToCashier: options?.sendToCashier ?? false,
         };
-        await api.post("/prescriptions", body);
+        await api.post("/prescriptions", body, { timeout: 45_000 });
         closeEditor();
         setError("");
       } else {
@@ -926,6 +928,7 @@ export function PrescriptionsPage() {
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
+      saveInFlight.current = false;
       setBusy(false);
     }
   };

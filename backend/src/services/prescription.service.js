@@ -230,7 +230,7 @@ export const prescriptionService = {
     }
 
     return tx.prescription.findUnique({ where: { id: prescription.id }, include: { items: { include: { product: true } }, patient: { include: { user: { select: { id: true, fullName: true } } } } } });
-    });
+    }, 3, { maxWait: 10_000, timeout: 30_000 });
   },
   async update(id, data, actorId) {
     return serializable(async (tx) => {

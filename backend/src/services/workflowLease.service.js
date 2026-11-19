@@ -46,20 +46,33 @@ export const workflowLeaseService = {
   async acquire(resourceKey, owner, expectedToken = null) {
     const now = new Date(), expiresAt = new Date(now.getTime() + TTL);
     if (expectedToken) {
-      const renewed = await prisma.workflowLease.updateMany({ where: { resourceKey, ...owner, token: expectedToken, expiresAt: { gt: now } }, data: { expiresAt } });
-      if (!renewed.count) throw conflict();
-      return { resourceKey, token: expectedToken, expiresAt };
+      // The editor heartbeat must not keep a failed processing operation alive.
+      // Active requests have their own processing heartbeat in the middleware.
+      const renewed = await prisma.workflowLease.updateMany({ where: { resourceKey, ...owner, token: expectedToken, processing: false, expiresAt: { gt: now } }, data: { expiresAt } });
+      if (renewed.count) return { resourceKey, token: expectedToken, expiresAt, processing: false };
+      const current = await prisma.workflowLease.findUnique({ where: { resourceKey } });
+      if (current?.token === expectedToken && current.userId === owner.userId && current.sessionId === owner.sessionId && current.clientId === owner.clientId && current.processing && current.expiresAt > now) {
+        return { resourceKey, token: expectedToken, expiresAt: current.expiresAt, processing: true };
+      }
+      throw conflict();
     }
     const token = crypto.randomUUID();
     // Unique key and compare-and-swap prevent competing claims across servers.
     try {
       await prisma.workflowLease.create({ data: { resourceKey, ...owner, token, expiresAt } });
-      return { resourceKey, token, expiresAt };
+      return { resourceKey, token, expiresAt, processing: false };
     } catch (error) { if (error.code !== 'P2002') throw error; }
     const claimed = await prisma.workflowLease.updateMany({ where: { resourceKey, expiresAt: { lte: now } },
       data: { ...owner, token, expiresAt, processing: false } });
     if (!claimed.count) throw conflict();
-    return { resourceKey, token, expiresAt };
+    return { resourceKey, token, expiresAt, processing: false };
+  },
+  async renewProcessing(resourceKey, owner, token) {
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + TTL);
+    const renewed = await prisma.workflowLease.updateMany({ where: { resourceKey, ...owner, token, processing: true, expiresAt: { gt: now } }, data: { expiresAt } });
+    if (!renewed.count) throw conflict();
+    return { resourceKey, token, expiresAt, processing: true };
   },
   async release(resourceKey, owner, token) {
     await prisma.workflowLease.deleteMany({ where: { resourceKey, ...owner, token, processing: false } });

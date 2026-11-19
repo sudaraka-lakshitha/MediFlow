@@ -2,7 +2,7 @@ import { createBrowserId, fingerprintPayload } from './browserCrypto';
 
 const attempts = new Map<string, string>();
 export const retryProtectedPath = (method: string, path: string) => method.toUpperCase() === 'POST'
-  && /^\/(?:sales\/(?:retail|\d+\/pay)|inventory\/batches(?:\/\d+\/(?:adjust|dispose-expired))?|payment-requests\/retail|prescriptions\/\d+\/refill)$/.test(path);
+  && /^\/(?:sales\/(?:retail|\d+\/pay)|inventory\/batches(?:\/\d+\/(?:adjust|dispose-expired))?|payment-requests\/retail|prescriptions(?:\/\d+\/refill)?)$/.test(path);
 
 export async function operationAttempt(userId: number, path: string, payload: unknown) {
   const hash = await fingerprintPayload({ path, payload });
