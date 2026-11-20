@@ -1,3 +1,7 @@
+// PATIENTS PAGE (staff)
+// Register and edit patients, reset a patient's password, switch an account off or on, send a
+// notice and open a patient's health record.
+
 import { formatPharmacyDate, formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { personNameInputProps } from '../utils/personName';
 import { useCallback, useEffect, useState, type FormEvent } from "react";
@@ -42,6 +46,7 @@ const empty = {
 };
 const prescriberLabel = (rx: { prescriberTitle?: string; prescriberName?: string }) =>
   [rx.prescriberTitle, rx.prescriberName].filter(Boolean).join(" ") || "Not mentioned";
+// The page.
 export function PatientsPage() {
   const [historyPatientId, setHistoryPatientId] = useState<number | null>(null);
   const { get: readHistory, controls: historyControls } = useHistoryPage('Patient prescription history', {}, String(historyPatientId || ''));
@@ -65,6 +70,7 @@ export function PatientsPage() {
   const [total, setTotal] = useState(0);
   const debouncedSearch = useDebouncedValue(search);
 
+  // Open a patient's prescription and medicine history.
   const viewHealthRecord = (p: Patient) => { setHealthRecord(null); setHistoryPatientId(p.id); setShowHealthRecord(true); };
   useEffect(() => {
     if (!showHealthRecord || !historyPatientId) return;
@@ -91,12 +97,14 @@ export function PatientsPage() {
     load();
   }, [load]);
   const pagination = useClientPagination(rows, 25);
+  // Open an empty form for a new patient.
   const openCreate = () => {
     setError("");
     setSelected(null);
     setForm({ ...empty });
     setModal("create");
   };
+  // Open the form filled with this patient's details.
   const openEdit = (p: Patient) => {
     setError("");
     setSelected(p);
@@ -111,12 +119,14 @@ export function PatientsPage() {
     });
     setModal("edit");
   };
+  // Open the password reset window.
   const openReset = (p: Patient) => {
     setError("");
     setSelected(p);
     setForm({ ...empty });
     setModal("reset");
   };
+  // Send a notice that the patient will see in their portal.
   const sendNotice = async (event: FormEvent) => {
     event.preventDefault();
     if (!selected) return;
@@ -132,6 +142,7 @@ export function PatientsPage() {
       setBusy(false);
     }
   };
+  // Save the patient form (new or edited).
   const save = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
@@ -173,6 +184,7 @@ export function PatientsPage() {
       setBusy(false);
     }
   };
+  // Switch a patient account off or on.
   const toggle = async (patient: Patient) => {
     try {
       await api.patch(`/patients/${patient.id}/active`, {

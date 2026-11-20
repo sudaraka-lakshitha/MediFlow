@@ -1,3 +1,8 @@
+// Receives the web requests for stock batches: receiving, correcting, restricting and disposing of
+// stock, calls the matching service, writes the audit log entry and sends the reply.
+// The real rules are in services/inventory.service.js. To trace a button: route -> this controller
+// -> service.
+
 import { inventoryService } from '../services/inventory.service.js';
 import { recordAudit } from '../services/audit.service.js';
 import { listPagination } from '../utils/listPagination.js';

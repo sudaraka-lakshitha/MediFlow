@@ -1,3 +1,5 @@
+// The cashier's end-of-day balance form, using Sri Lanka dates and times.
+
 import { useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { Modal, ModalActions } from './Modal';

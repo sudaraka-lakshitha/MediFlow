@@ -1,3 +1,6 @@
+// The server log. Errors and important events are written here; look here first when something
+// fails on the server.
+
 import winston from 'winston';
 import { env } from './env.js';
 

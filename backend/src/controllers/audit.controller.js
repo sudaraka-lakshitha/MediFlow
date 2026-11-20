@@ -1,3 +1,8 @@
+// Receives the web requests for the audit log page and "My activity", calls the matching service,
+// writes the audit log entry and sends the reply.
+// The real rules are in services/audit.service.js. To trace a button: route -> this controller ->
+// service.
+
 import { prisma } from '../config/prisma.js';
 import { readFile, writeFile, stat } from 'node:fs/promises';
 import { auditService } from '../services/audit.service.js';

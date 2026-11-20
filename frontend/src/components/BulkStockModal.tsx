@@ -1,3 +1,5 @@
+// Window to upload many stock batches from a spreadsheet, with a preview before saving.
+
 import { useState } from 'react';
 import axios from 'axios';
 import { api, errorMessage } from '../api/client';

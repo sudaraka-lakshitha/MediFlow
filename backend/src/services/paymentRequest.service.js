@@ -1,3 +1,11 @@
+// BILLS (payment requests)
+// This file handles everything about a customer's bill: creating it, changing it, taking payment,
+// checking bank slips, cancelling it and handing over the medicines.
+// A bill moves through these steps: AWAITING_PAYMENT -> (SLIP_SUBMITTED) -> PAID -> FULFILLED,
+// or it can be CANCELLED.
+// If a bill gets stuck, look at its "events" list in the database first: every important step
+// writes an event there with who did it and when.
+
 import { invoiceSnapshot, invoiceMaterialChanged } from '../utils/invoiceRevision.js';
 import { queueRefund } from './refund.service.js';
 import { assertUnusedBankReference } from '../utils/bankReference.js';
@@ -40,6 +48,7 @@ const slipSelect = {
   bankAccount: { select: { id: true, bankName: true, accountNumber: true } },
 };
 
+// The related records we load with every bill, so the screens get everything in one go.
 const include = {
   delivery: { select: { status: true, trackingReference: true, dispatchedAt: true, feePaymentRequest: { select: { status: true, refunds: { select: { id: true } } } } } },
   deliveryFeeFor: { select: { paymentRequestId: true, status: true, paymentRequest: { select: { requestNumber: true } } } },
@@ -55,6 +64,7 @@ const include = {
   sale: { select: { id: true, invoiceNumber: true } },
 };
 
+// Patients may only see their own bills. Staff can see every bill.
 const canView = (record, user) => user.role !== 'PATIENT' || record.patientId === user.id;
 // Attach what the customer can still collect later (not charged on this bill).
 const withBalance = (record) => {
@@ -62,6 +72,8 @@ const withBalance = (record) => {
   const { later, notIssued } = supplyBalance(record.prescription.items, record);
   return { ...record, balanceToCollect: later, notToBeIssued: notIssued, supplyRows: supplyRows(record.events) };
 };
+// Never send the collection PIN (or its locked version) to the screen. Remove it before returning a
+// bill.
 const safeRecord = ({ pickupPinHash, pickupPinEncrypted, ...record }) => withBalance(record);
 
 // Which stock-hold rule applies to a bill. An uploaded order follows the
@@ -76,6 +88,8 @@ export const stockHoldPolicy = (bill) => {
   if (!upload) return 'CASH_CHOICE';
   return upload.prepareRequested ? 'AT_BILLING' : 'AFTER_PAYMENT';
 };
+// The message shown when there is not enough stock to set aside for an order the customer asked us
+// to prepare.
 const billingHoldShortage = {
   purpose: 'to hold this prepared order',
   advice: 'The customer asked the pharmacy to prepare it, so its stock is held when the bill is issued. Reduce the quantity, record the shortage, or receive more stock first.',
@@ -123,6 +137,7 @@ const assertBilledQuantities = (prescription, remainingItems, quantities, decisi
   }
   return partial ? lines : [];
 };
+// True when two lists of "supplied less than prescribed" decisions say exactly the same thing.
 const samePartialLines = (a, b) => {
   const key = (lines) => JSON.stringify([...lines].map(({ prescriptionItemId, shortQuantity, reason, issueLater }) => ({ prescriptionItemId: Number(prescriptionItemId), shortQuantity: String(shortQuantity), reason, issueLater })).sort((x, y) => x.prescriptionItemId - y.prescriptionItemId));
   return key(a) === key(b);
@@ -143,6 +158,8 @@ const holdStockForPreparedOrder = async (tx, paymentRequestId, items, reservatio
   await reserveStock(tx, paymentRequestId, items, batchAllocationOrder(settings.allocationMethod), billingHoldShortage);
   return new Date(Date.now() + hours * 60 * 60 * 1000);
 };
+// Until a bill is paid, a patient should not see the dosage directions on it. They see them after
+// paying.
 const visibleDirections = (record, user) => user.role === 'PATIENT' && !['PAID', 'FULFILLED'].includes(record.status)
   ? { ...record, items: record.items?.map(item => ({ ...item, prescriptionItem: null, dosageInstructions: null, specialInstructions: null })) }
   : record;
@@ -180,7 +197,12 @@ const settleAsPaid = async (tx, { id, fromStatus, paymentMethod, paymentReferenc
   return { pin, operationSettings };
 };
 
+// All the bill actions the routes can call. Each one checks who is asking and whether the bill is
+// in the right step first.
 export const paymentRequestService = {
+  // Pay a bill using money from a bank transfer the cashier has already confirmed. Only cashier-
+  // level staff can do this. If the same request arrives twice, the first result is returned, so
+  // the money is never used twice.
   async allocateBankTransfer(id, input, user) {
     if (!(user.role === 'ADMIN' || user.role === 'CASHIER' || (user.role === 'PHARMACIST' && user.cashierAccess))) throw new AppError(403, 'Cashier access is required.');
     return serializable(async tx => {
@@ -201,6 +223,8 @@ export const paymentRequestService = {
       return { amount: bill.total, data: safeRecord(await tx.paymentRequest.findUnique({ where: { id }, include })) };
     });
   },
+  // Show what would happen if some lines were removed from a bill (new total, refund due) without
+  // changing anything yet.
   async cancellationPreview(id, input, user) {
     const bill = await prisma.paymentRequest.findUnique({ where: { id }, include: { items: { include: { product: true } } } });
     const policy = billCancellationPolicy(bill, user);
@@ -208,6 +232,8 @@ export const paymentRequestService = {
     const { removed, kept, ...quote } = cancellationQuote(bill, input.itemIds, input.quantities);
     return quote;
   },
+  // Today's money taken and refunded, counted from midnight Sri Lanka time, plus how many bills are
+  // still unpaid.
   async collectionsToday() {
     const now = new Date();
     const start = new Date(Date.parse(`${localDateKey(now)}T00:00:00Z`) - env.REPORT_TIMEZONE_OFFSET_MINUTES * 60_000);
@@ -215,6 +241,8 @@ export const paymentRequestService = {
     const awaitingPayment = await prisma.paymentRequest.count({ where: { status: 'AWAITING_PAYMENT' } });
     return { awaitingPayment, payments: events.filter((event) => event.kind === 'PAYMENT_RECEIVED').length, netCollected: events.reduce((sum, event) => sum.add(event.amount), new Prisma.Decimal(0)) };
   },
+  // Make a new collection PIN when the customer has lost theirs. Admin only. Home-delivery orders
+  // never use a PIN.
   async resetPickupPin(id, reason, user) {
     if (user.role !== 'ADMIN') throw new AppError(403, 'Only an administrator can reissue a collection PIN.');
     return serializable(async (tx) => {
@@ -229,6 +257,7 @@ export const paymentRequestService = {
       return { data: safeRecord(await tx.paymentRequest.findUnique({ where: { id }, include })), pickupPin: pin };
     });
   },
+  // List bills page by page. Patients only get their own.
   async list(user, { page = 1, pageSize = 300, status, search, type } = {}) {
     await cleanupExpiredCashReservations();
     return (await prisma.paymentRequest.findMany({
@@ -238,11 +267,17 @@ export const paymentRequestService = {
       skip: (page - 1) * pageSize, take: pageSize,
     })).map(record => safeRecord(visibleDirections(record, user)));
   },
+  // Load one bill with all its details, after checking the person may see it.
   async get(id, user) {
     const record = await prisma.paymentRequest.findUnique({ where: { id }, include });
     if (!record || !canView(record, user)) throw new AppError(404, 'Payment request not found.');
     return withBalance(visibleDirections(record, user));
   },
+  // Turn a checked prescription into a bill for the cashier.
+  // - Only prescriptions that are verified (or partly given out) can be billed.
+  // - An older unpaid bill for the same prescription is closed and kept as history.
+  // - For an online order: a home delivery request and its delivery fee bill are created too, and
+  // if the customer asked us to prepare the order, the stock is set aside now.
   async create(prescriptionId, input, pharmacistId, tx = null) {
     if (!tx) return serializable((transaction) => this.create(prescriptionId, input, pharmacistId, transaction));
     const prescription = await tx.prescription.findUnique({
@@ -301,6 +336,8 @@ export const paymentRequestService = {
     }
     return created;
   },
+  // Change an unpaid bill (quantities, tax, container fee, coupon). Refused if the bill was changed
+  // by someone else since it was opened, or if a bank slip is waiting.
   async update(prescriptionId, input, actorId) {
     return serializable(async (tx) => {
       const prescription = await tx.prescription.findUnique({ where: { id: prescriptionId }, include: { items: { include: { product: { select: { genericName: true, strength: true, unit: true } } } }, sourceUpload: { select: { prepareRequested: true } }, paymentRequest: { include: { items: { include: { product: true } }, events: { where: { kind: PARTIAL_SUPPLY_EVENT }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { kind: true, details: true } } } } } });
@@ -358,6 +395,7 @@ export const paymentRequestService = {
       return safeRecord(await tx.paymentRequest.findUnique({ where: { id: existing.id }, include }));
     });
   },
+  // Let a patient add a coupon code to their own unpaid online bill.
   async applyPatientCoupon(id, { revision, couponCode }, user) {
     const record = await prisma.paymentRequest.findUnique({
       where: { id },
@@ -390,6 +428,8 @@ export const paymentRequestService = {
       tax: Number(record.tax || 0),
     }, user.id);
   },
+  // Cancel a whole bill. Any stock set aside for it is released and any waiting bank slip is
+  // rejected.
   async cancel(id, reason, user, tx = null) {
     if (!tx) return serializable((transaction) => this.cancel(id, reason, user, transaction));
       const current = await tx.paymentRequest.findUnique({ where: { id }, include: { delivery: true, deliveryFeeFor: true, prescription: { select: { sourceUploadId: true, isOnline: true } } } });
@@ -410,6 +450,9 @@ export const paymentRequestService = {
       const data = await tx.paymentRequest.findUnique({ where: { id }, include });
       return safeRecord({ ...data, refundAmount: Number(refund) });
   },
+  // Remove some lines (or reduce quantities) on a bill. Stock set aside for those lines is released
+  // and the totals are worked out again. If the bill was already paid, the difference becomes a
+  // refund.
   async partialCancel(id, { itemIds, quantities, reason, revision, skipCustomerReconfirmation = false }, user, tx = null) {
     if (!tx) return serializable(transaction => this.partialCancel(id, { itemIds, quantities, reason, revision, skipCustomerReconfirmation }, user, transaction));
       const current = await tx.paymentRequest.findUnique({
@@ -543,6 +586,8 @@ export const paymentRequestService = {
       const updated = await tx.paymentRequest.findUnique({ where: { id }, include });
       return safeRecord({ ...updated, refundAmount: Number(refundDiff) });
   },
+  // The customer (or staff on their behalf) asks to cancel. Nothing is cancelled yet: the bill is
+  // flagged so staff can decide.
   async requestCancellation(id, reason, user, revision = undefined, transaction = null) {
     const operation = async (tx) => {
       const current = await tx.paymentRequest.findUnique({ where: { id } });
@@ -567,6 +612,8 @@ export const paymentRequestService = {
     };
     return transaction ? operation(transaction) : serializable(operation);
   },
+  // Staff decide to continue with the order after a cancellation request. A reason must be written
+  // down.
   async resolveCancellation(id, { reason, revision, requestReason }, user) {
     if (!['ADMIN', 'PHARMACIST', 'CASHIER'].includes(user.role)) throw new AppError(403, 'Only pharmacy staff can resolve a cancellation request.');
     if (!reason?.trim() || reason.trim().length < 3) throw new AppError(400, 'Explain why the order should continue.');
@@ -578,12 +625,14 @@ export const paymentRequestService = {
       return safeRecord(await tx.paymentRequest.findUnique({ where: { id }, include }));
     });
   },
+  // Search patients for an over-the-counter sale.
   async retailPatients(search = '') {
     return prisma.user.findMany({ where: { role: 'PATIENT',
       AND: [{ OR: [{ active: true }, { email: { endsWith: '@patients.mediflow.invalid' } }] },
         ...(search ? [{ OR: [{ fullName: { contains: search } }, { email: { contains: search } }, { phone: { contains: search.startsWith('+94') ? `0${search.slice(3)}` : search } }, { patientProfile: { patientNumber: { contains: search } } }] }] : [])],
     }, select: { id: true, fullName: true, phone: true, email: true, patientProfile: { select: { patientNumber: true } } }, orderBy: [{ fullName: 'asc' }, { id: 'asc' }], take: 50 });
   },
+  // Products that can be sold over the counter without a prescription, with their current stock.
   async retailOptions() {
     const [products, patients] = await Promise.all([
       prisma.product.findMany({
@@ -598,6 +647,7 @@ export const paymentRequestService = {
     ]);
     return { products, patients };
   },
+  // Create a bill for an over-the-counter sale (no prescription).
   async createRetail(input, pharmacistId) {
     return serializable(async tx => {
     if (input.patientId) {
@@ -634,6 +684,10 @@ export const paymentRequestService = {
     }));
     });
   },
+  // The cashier takes payment at the counter (cash, card or split).
+  // After this the bill is PAID, the stock is set aside and a collection PIN is made.
+  // If the setting "cashier can dispense at payment" is on and the cashier ticks hand-over, the
+  // medicines are given out in the same step.
   async pay(id, paymentMethod, cashierId, paymentReference, extraDetails = {}) {
     await cleanupExpiredCashReservations();
     return serializable(async (tx) => {
@@ -684,6 +738,8 @@ export const paymentRequestService = {
     }, 3, stockFulfillmentTransactionOptions);
   },
 
+  // The patient accepts the latest version of their online bill and chooses how they will pay.
+  // Stock is set aside or released depending on the option they chose when uploading.
   async acknowledge(id, input, user, changeChoice = false) {
     return serializable(async (tx) => {
       const request = await tx.paymentRequest.findUnique({
@@ -783,6 +839,8 @@ export const paymentRequestService = {
     }, attachmentTransactionOptions);
   },
 
+  // The cashier accepts or rejects a bank slip. Accepting it marks the bill as paid, exactly like a
+  // counter payment.
   async reviewSlip(id, slipId, decision, user) {
     return serializable(async (tx) => {
       const slip = await tx.paymentSlip.findFirst({ where: { id: slipId, paymentRequestId: id }, include: { paymentRequest: true } });
@@ -811,6 +869,7 @@ export const paymentRequestService = {
     });
   },
 
+  // Download the image or PDF of a bank slip, for staff or for the patient who uploaded it.
   async slipFile(id, slipId, user) {
     const slip = await prisma.paymentSlip.findFirst({
       where: { id: slipId, paymentRequestId: id },
@@ -834,6 +893,7 @@ export const paymentRequestService = {
     }
     return this.requestCancellation(id, reason, user, revision);
   },
+  // Everything needed to print a bill or receipt.
   async documentData(id, user, requirePaid = false) {
     const record = await this.get(id, user);
     if (requirePaid && !['PAID', 'FULFILLED'].includes(record.status)) throw new AppError(409, 'Payment must be completed before the receipt is available.');
@@ -845,6 +905,8 @@ export const paymentRequestService = {
     const showPin = requirePaid && record.status === 'PAID' && requirePickupPin && !record.deliveryFeeFor && (!record.delivery || record.delivery.status === 'CANCELLED');
     return { ...record, pickupPin: showPin ? decryptPickupPin(record.pickupPinEncrypted) : null };
   },
+  // Hand over an over-the-counter order after checking the collection PIN. Stock is taken off the
+  // shelf here.
   async fulfillRetail(id, pickupPin, pharmacistId) {
     if (await prisma.deliveryRequest?.findUnique({ where: { feePaymentRequestId: id } })) throw new AppError(409, 'Delivery fees are completed through the delivery dispatch workflow, not retail collection.');
     const request = await prisma.paymentRequest.findUnique({ where: { id }, include: { items: { include: { product: true } } } });

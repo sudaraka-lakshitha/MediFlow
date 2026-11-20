@@ -1,3 +1,6 @@
+// Add or update many products from a spreadsheet. Each row is checked and a preview is shown before
+// saving.
+
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';

@@ -1,3 +1,6 @@
+// Input rules for signing in, registering, passwords and the auto-lock session. Wrong or missing
+// input is stopped here with a clear message, before it reaches the services.
+
 import { personNameSchema } from './personName.js';
 import { z } from 'zod';
 import { phoneSchema as phone } from './phone.js';

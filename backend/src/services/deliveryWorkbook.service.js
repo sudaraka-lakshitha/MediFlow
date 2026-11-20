@@ -1,3 +1,6 @@
+// Creates and reads the delivery Excel sheet used for bulk updates. Formulas and very large sheets
+// are refused for safety.
+
 import ExcelJS from 'exceljs';
 import yauzl from 'yauzl';
 import { AppError } from '../utils/AppError.js';

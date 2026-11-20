@@ -1,3 +1,5 @@
+// Creates the small collection slip PDF with the PIN.
+
 import PDFDocument from 'pdfkit';
 import { deliveryStatusLabel } from './deliveryStatus.js';
 

@@ -1,3 +1,5 @@
+// Reads "page" and "page size" from a request, with safe limits.
+
 import { AppError } from './AppError.js';
 
 export const listPagination = (query = {}, statuses = []) => {

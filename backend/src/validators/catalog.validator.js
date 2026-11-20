@@ -1,3 +1,6 @@
+// Input rules for the product catalogue: products, categories, manufacturers and suppliers. Wrong
+// or missing input is stopped here with a clear message, before it reaches the services.
+
 import { z } from 'zod';
 
 const optionalAge = z.preprocess((value) => value === '' || value == null ? null : value, z.coerce.number().int().min(0).max(130).nullable());

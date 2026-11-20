@@ -1,3 +1,5 @@
+// Collects the dosage directions printed for the patient on invoices.
+
 import { balanceItemSelect } from './prescriptionBalance.js';
 // Display recorded directions only. Never infer dosing from price, quantity or product name.
 export const directionSelect = { id: true, dosageInstructions: true, specialInstructions: true };

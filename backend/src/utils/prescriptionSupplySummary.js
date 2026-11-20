@@ -1,3 +1,5 @@
+// A short summary of how much of each medicine has been given and what is left.
+
 import { Prisma } from '@prisma/client';
 
 // Informational totals only: never use "not supplied" to reopen a cancelled bill.

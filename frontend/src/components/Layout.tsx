@@ -1,3 +1,8 @@
+// THE PAGE FRAME
+// The side menu, top bar and page area shown around every signed-in page.
+// Each menu entry lists which roles can see it, and may show a small counter of items needing
+// attention.
+
 import { formatPharmacyDate } from '../utils/pharmacyTime';
 import { Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
@@ -15,6 +20,7 @@ import { workspaceLocked } from '../auth/workspaceLock';
 type AttentionKey = 'prescriptions' | 'prescriptionUploads' | 'cashier' | 'inventory' | 'sales' | 'deliveries' | 'audit';
 type AttentionSummary = Partial<Record<AttentionKey, { count: number; label: string; tone: 'danger' | 'warning' | 'info' | 'neutral' }>>;
 
+// The side menu entries: address, label, icon, which roles may see it, and which counter to show.
 const items: { to: string; label: string; icon: string; roles?: Role[]; attentionKey?: AttentionKey }[] = [
   { to: '/', label: 'Dashboard', icon: 'grid-1x2-fill' },
   { to: '/prescriptions', label: 'Prescriptions', icon: 'file-medical-fill', roles: ['ADMIN', 'PHARMACIST', 'PATIENT'], attentionKey: 'prescriptions' },
@@ -36,6 +42,7 @@ const items: { to: string; label: string; icon: string; roles?: Role[]; attentio
   { to: '/settings', label: 'System settings', icon: 'sliders', roles: ['ADMIN'] },
 ];
 
+// The frame itself, plus the change-password window.
 export function Layout() {
   const { user, logout, passwordChanged, acceptSession } = useAuth();
   const location = useLocation();
@@ -146,11 +153,13 @@ export function Layout() {
   const current = visible.find((item) => item.to === location.pathname)?.label || 'MediFlow';
   const initials = user!.fullName.split(' ').map((part) => part[0]).slice(0, 2).join('');
   const today = formatPharmacyDate(new Date(), { weekday: 'short', day: '2-digit', month: 'short' });
+  // Open the change-password window.
   const openPassword = () => {
     setMobileNavOpen(false);
     setPasswords({ currentPassword: '', newPassword: '', confirmPassword: '' });
     setPasswordError(''); setPasswordMessage(''); setPasswordOpen(true);
   };
+  // Save a new password.
   const changePassword = async (event: FormEvent) => {
     event.preventDefault(); setPasswordError(''); setPasswordMessage('');
     if (passwords.newPassword !== passwords.confirmPassword) { setPasswordError('New password and confirmation do not match.'); return; }

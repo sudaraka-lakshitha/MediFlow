@@ -1,3 +1,8 @@
+// Receives the web requests for sales (invoices) and over-the-counter sales, calls the matching
+// service, writes the audit log entry and sends the reply.
+// The real rules are in services/sale.service.js. To trace a button: route -> this controller ->
+// service.
+
 import { z } from 'zod';
 import { saleService } from '../services/sale.service.js';
 import { recordAudit } from '../services/audit.service.js';

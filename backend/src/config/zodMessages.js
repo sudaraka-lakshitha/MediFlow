@@ -1,3 +1,6 @@
+// Turns form-checking errors into plain English, for example "Tracking reference must be at least 3
+// characters".
+
 import { z } from 'zod';
 
 // Plain-English validation messages. A message written in a schema

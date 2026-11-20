@@ -1,3 +1,6 @@
+// REGISTER PAGE
+// A new patient creates their own account.
+
 import { personNameInputProps } from '../utils/personName';
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';

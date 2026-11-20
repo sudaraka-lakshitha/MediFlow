@@ -1,3 +1,8 @@
+// SIGN-IN AND ACCOUNTS
+// Registering patients, signing in, changing a password and resetting a forgotten password with a
+// code sent by email. Passwords are never stored as typed: only a scrambled (hashed) version is
+// saved.
+
 import crypto from 'node:crypto';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
@@ -11,6 +16,7 @@ import { logger } from '../config/logger.js';
 import { sessionService } from './session.service.js';
 import { normalizePatientPhone, syncPatientPhoneIdentity } from '../utils/patientPhoneIdentity.js';
 
+// The user details that are safe to send to the screen (no password data).
 const safeUser = (user) => ({
   id: user.id,
   email: user.email,
@@ -26,9 +32,11 @@ const safeUser = (user) => ({
   lastLoginAt: user.lastLoginAt,
   passwordChangedAt: user.passwordChangedAt,
 });
+// Start a new sign-in session for the user.
 const sign = (user) => sessionService.issue(user);
 
 export const authService = {
+  // A patient creates their own account.
   async register(data) {
     const email = data.email.trim().toLowerCase();
     if (await userRepository.findByEmail(email)) throw new AppError(409, 'An account already uses this email address.');
@@ -48,6 +56,8 @@ export const authService = {
     return { token: await sign(user), user: safeUser(user) };
   },
 
+  // Check email and password and start a session. The message is the same whether the email or the
+  // password was wrong, so nobody can test which emails exist.
   async login(email, password) {
     const user = await userRepository.findByEmail(email.trim().toLowerCase());
     if (!user || !user.active || !(await bcrypt.compare(password, user.passwordHash))) {
@@ -59,6 +69,7 @@ export const authService = {
     });
     return { token: await sign(loggedInUser), user: safeUser(loggedInUser) };
   },
+  // Change your password after typing the current one.
   async changePassword(userId, currentPassword, newPassword) {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user || !(await bcrypt.compare(currentPassword, user.passwordHash))) {
@@ -84,6 +95,8 @@ export const authService = {
       user: safeUser(updated),
     };
   },
+  // Forgotten password, step 1: email a short code. The reply is the same even if the email is
+  // unknown.
   async beginSelfReset(data) {
     if (!mailService.isConfigured()) throw new AppError(503, 'Email password recovery is not configured. Ask the administrator to configure SMTP.');
     const response = { message: 'If an active account uses that email address, a reset code has been sent.', expiresInMinutes: env.PASSWORD_RESET_OTP_MINUTES };
@@ -111,6 +124,7 @@ export const authService = {
     }
     return response;
   },
+  // Forgotten password, step 2: check the code.
   async verifyResetOtp(email, otp) {
     const user = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() } });
     const record = user ? await prisma.passwordResetOtp.findUnique({ where: { userId: user.id } }) : null;
@@ -130,6 +144,7 @@ export const authService = {
     const resetToken = jwt.sign({ purpose: 'password-reset', passwordKey, tokenVersion: user.tokenVersion }, env.JWT_SECRET, { subject: String(user.id), expiresIn: '10m' });
     return { resetToken, expiresInMinutes: 10 };
   },
+  // Forgotten password, step 3: save the new password. Each reset code works only once.
   async completeSelfReset(resetToken, newPassword) {
     let payload;
     try { payload = jwt.verify(resetToken, env.JWT_SECRET); } catch { throw new AppError(400, 'The password reset session is invalid or has expired.'); }
@@ -157,6 +172,7 @@ export const authService = {
     }, DEFAULT_TRANSACTION_OPTIONS);
     return { message: 'Password reset successfully. You can now sign in.', auditUserId: user.id };
   },
+  // A user updates their own name, phone and similar details.
   async updateProfile(userId, data) {
     return prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({

@@ -1,3 +1,12 @@
+// STOCK (inventory batches)
+// Stock is kept in batches: each batch is one delivery of a product with its own expiry date and
+// cost.
+// Two numbers matter on each batch:
+//   - quantity_available: what is physically on the shelf
+//   - quantity_reserved: how much of that is set aside for paid or prepared orders
+// Free stock = available - reserved.
+// Every change to stock is also written to the stock movements list, so you can trace any number.
+
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
@@ -9,6 +18,7 @@ import { DEFAULT_TRANSACTION_OPTIONS, serializable } from '../utils/serializable
 import { historySearch } from '../utils/historySearch.js';
 
 export const inventoryService = {
+  // List batches page by page, with search.
   listBatches: ({ page = 1, pageSize = 300, search } = {}) => prisma.inventoryBatch.findMany({
     where: historySearch(search, ['batchNumber', 'product.genericName', 'product.strength', 'supplier.name']),
     include: {
@@ -24,7 +34,10 @@ export const inventoryService = {
     orderBy: [{ expiryDate: 'asc' }, { receivedAt: 'asc' }, { id: 'asc' }],
     skip: (page - 1) * pageSize, take: pageSize,
   }),
+  // List the history of stock changes.
   listMovements: ({ page = 1, pageSize = 300, search, status } = {}) => prisma.stockMovement.findMany({ where: { ...(status ? { type: status } : {}), ...historySearch(search, ['batch.batchNumber', 'product.genericName', 'product.strength', 'performedBy.fullName', 'reason']) }, include: { product: true, batch: true, performedBy: { select: { fullName: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
+  // Low-stock and near-expiry warnings for the dashboard. "Near expiry" uses the number of days set
+  // in operation settings.
   async alerts() {
     const today = new Date();
     const settings = await operationSettingsService.get();
@@ -50,6 +63,8 @@ export const inventoryService = {
       lowStockRequiresAttention: stockStates.filter((state) => state.requiresAttention).length,
     };
   },
+  // A staff member notes they have seen a low-stock warning, so it stops showing until the stock
+  // changes again.
   async acknowledgeLowStock(productId, userId) {
     return prisma.$transaction(async (tx) => {
       const now = new Date();
@@ -73,10 +88,12 @@ export const inventoryService = {
       });
     }, DEFAULT_TRANSACTION_OPTIONS);
   },
+  // Remove that note so the warning shows again.
   async clearLowStockAcknowledgement(productId) {
     const result = await prisma.lowStockAcknowledgement.deleteMany({ where: { productId } });
     return { cleared: result.count > 0 };
   },
+  // Record new stock arriving from a supplier (a new batch).
   receive(data, userId) {
     return serializable(async (tx) => {
       const product = await tx.product.findUnique({ where: { id: data.productId }, select: { unit: true } });
@@ -88,6 +105,7 @@ export const inventoryService = {
       return batch;
     });
   },
+  // Correct a batch's details such as expiry date, cost or price.
   updateBatch: (id, data) => prisma.$transaction(async (tx) => {
     const current = await tx.inventoryBatch.findUnique({ where: { id } });
     if (!current) throw new AppError(404, 'Inventory batch not found.');
@@ -100,6 +118,7 @@ export const inventoryService = {
     await tx.lowStockAcknowledgement.deleteMany({ where: { productId: batch.productId } });
     return batch;
   }, DEFAULT_TRANSACTION_OPTIONS),
+  // Stop (or allow again) a batch being sold, for example while it is being checked or recalled.
   async setRestriction(id, data) {
     const batch = await prisma.inventoryBatch.findUnique({ where: { id } });
     if (!batch) throw new AppError(404, 'Inventory batch not found.');
@@ -114,6 +133,8 @@ export const inventoryService = {
       include: { product: true, supplier: true },
     });
   },
+  // Change a batch's quantity by hand (damage, counting error). Stock can never go below zero or
+  // below what is already set aside for customers. The change is saved in the stock movements list.
   adjust(batchId, data, userId) {
     return serializable(async (tx) => {
       const batch = await tx.inventoryBatch.findUnique({ where: { id: batchId }, include: { product: true } });
@@ -128,6 +149,7 @@ export const inventoryService = {
       return updated;
     });
   },
+  // Remove expired stock from a batch and record why (returned to supplier, destroyed...).
   disposeExpired(batchId, data, userId) {
     return serializable(async (tx) => {
       const batch = await tx.inventoryBatch.findUnique({
@@ -173,6 +195,7 @@ export const inventoryService = {
       };
     });
   },
+  // Delete a batch that was entered by mistake. Only an empty batch (nothing left on the shelf) can be deleted.
   async deleteBatch(batchId) {
     return prisma.$transaction(async (tx) => {
       const batch = await tx.inventoryBatch.findUnique({

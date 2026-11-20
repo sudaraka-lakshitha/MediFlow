@@ -1,3 +1,5 @@
+// A drop-down list you can type into to find an option.
+
 import { useEffect, useId, useMemo, useState, type KeyboardEvent } from 'react';
 import { fuzzyMatchScore } from '../utils/fuzzy';
 import { useDebouncedValue } from '../utils/useDebouncedValue';

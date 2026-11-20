@@ -1,8 +1,18 @@
+// STOPPING DOUBLE ACTIONS
+// If the network is slow, a user might press "Pay" or "Dispense" twice, or the browser might send
+// the
+// same request again. Each important request carries a unique key from the browser. The first time,
+// we save
+// the result under that key. If the same key comes again, we return the saved result instead of
+// charging or giving out medicine a second time.
+
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { AppError } from './AppError.js';
 
+// Remembers, for the request being handled right now, its key and who sent it.
 export const operationContext = new AsyncLocalStorage();
+// Wraps the payment, sale and stock routes so they need a retry key and are protected from doubles.
 export const protectRetryController = handlers => Object.fromEntries(Object.entries(handlers).map(([name, handler]) => [name, async (req, res, next) => {
   const path = decodeURIComponent((req.originalUrl || '').split('?')[0]).replace(/\/+$/, '').toLowerCase();
   const protectedWrite = req.method === 'POST' && /^\/api\/(?:sales\/(?:retail|\d+\/pay)|inventory\/batches(?:\/\d+\/(?:adjust|dispose-expired))?|payment-requests\/(?:retail|\d+\/(?:pay|fulfill-retail))|prescriptions(?:\/\d+\/(?:refill|dispense|payment-request))?)$/.test(path);
@@ -13,6 +23,7 @@ export const protectRetryController = handlers => Object.fromEntries(Object.entr
   return operationContext.run({ actorId: req.user.id, key, hash }, () => handler(req, res, next));
 }]));
 
+// Run the action once and save its result, or return the saved result if this key was already used.
 export async function recordOperation(tx, context, operation) {
   const where = { actorId_key: { actorId: context.actorId, key: context.key } };
   const existing = await tx.operationReceipt.findUnique({ where });

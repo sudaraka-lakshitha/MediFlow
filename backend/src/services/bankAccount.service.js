@@ -1,3 +1,6 @@
+// The pharmacy's bank accounts: add, edit, switch on or off. Customers pay bank transfers into the
+// active accounts.
+
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
 import { serializable } from '../utils/serializable.js';

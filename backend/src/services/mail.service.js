@@ -1,3 +1,6 @@
+// Sends emails (for example password reset codes). If email is not set up, the message is written
+// to the log instead.
+
 import nodemailer from 'nodemailer';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';

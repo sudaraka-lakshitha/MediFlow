@@ -1,3 +1,14 @@
+// UPLOADED PRESCRIPTIONS PAGE (patients and staff)
+// Patients use this page to upload a prescription photo or PDF, follow its progress, accept the
+// rough price
+// and upload a bank slip. Staff use the same page to review uploads, send a rough price
+// (quotation),
+// check bank slips and then create the real prescription from the upload.
+// How this file is laid out:
+//   1. Status labels and small helpers at the top
+//   2. PrescriptionUploadsPage: loading data, then the actions behind each button, then the layout
+// Server rules: backend/src/services/prescriptionUpload.service.js
+
 import { formatPharmacyDate, formatPharmacyDateTime, pharmacyTodayDateInput } from "../utils/pharmacyTime";
 import { personNameInputProps } from '../utils/personName';
 import { uploadAttemptKey, completeUploadAttempt } from '../utils/uploadAttempt';
@@ -85,6 +96,7 @@ type Upload = {
   paymentSlips?: UploadSlip[];
 };
 
+// Plain words for each upload status.
 const uploadStatusLabels: Record<string, string> = {
   PENDING: "Awaiting pharmacy review",
   AVAILABLE: "Availability confirmed — final bill in progress",
@@ -99,22 +111,27 @@ const uploadStatusLabels: Record<string, string> = {
   READY_TO_PREPARE: "Payment verified — prepare medicines",
 };
 
+// The coloured status badge.
 const UploadStatus = ({ value }: { value: string }) => (
   <span className={`status status-${value.toLowerCase().replaceAll("_", "-")}`}>
     {uploadStatusLabels[value] || value.replaceAll("_", " ")}
   </span>
 );
 
+// Shows an amount as Sri Lankan rupees.
 const money = (value: unknown) =>
   `Rs. ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// True when the uploaded file is a picture (not a PDF).
 const isImageUpload = (mimeType: string) => mimeType.startsWith("image/");
 const fittedDocumentUrl = (url: string, mimeType: string) =>
   mimeType === "application/pdf" ? `${url}#view=FitH&zoom=page-width` : url;
+// Rough date of birth when only an age is known.
 const dobFromAge = (age: number) => {
   const date = new Date();
   date.setFullYear(date.getFullYear() - age);
   return date.toISOString().slice(0, 10);
 };
+// Age in years from a date of birth.
 const ageFromDob = (dob?: string) => {
   if (!dob) return "";
   const birth = new Date(dob);
@@ -127,6 +144,7 @@ const ageFromDob = (dob?: string) => {
     age -= 1;
   return String(age);
 };
+// Link that opens the Prescriptions page with this upload's patient and file already filled in.
 const buildPrescriptionCreateUrl = (uploadItem: Upload) => {
   const params = new URLSearchParams({
     uploadId: String(uploadItem.id),
@@ -142,12 +160,14 @@ const buildPrescriptionCreateUrl = (uploadItem: Upload) => {
   return `/prescriptions?${params.toString()}`;
 };
 const liquidUnits = ["ml", "millilitre", "milliliter", "l", "litre", "liter"];
+// True for syrups and other liquids (measured in ml).
 const isLiquidProduct = (product: any) =>
   liquidUnits.includes(String(product?.unit || "").toLowerCase()) ||
   /syrup|suspension|solution|elixir|liquid/i.test(
     String(product?.dosageForm || ""),
   );
 const usableStock = usableProductStock;
+// A blank rough-price form.
 const emptyEstimate = () => ({
   items: [{ productId: "", quantity: 1 }],
   retailItems: [],
@@ -160,6 +180,7 @@ const emptyEstimate = () => ({
 });
 
 import { WorkflowGuard } from '../components/WorkflowGuard';
+// The page. State first, then loading data, then button actions, then the layout.
 export function PrescriptionUploadsPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -181,6 +202,7 @@ export function PrescriptionUploadsPage() {
   const [additionalFiles, setAdditionalFiles] = useState<File[]>([]);
   const [editingUpload, setEditingUpload] = useState<Upload | null>(null);
   const [removedAttachments, setRemovedAttachments] = useState<number[]>([]);
+  // Close the upload window and clear the chosen files.
   const closeUpload = () => { setUploadOpen(false); setEditingUpload(null); setAdditionalFiles([]); setRemovedAttachments([]); };
   const [review, setReview] = useState<Upload | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -327,6 +349,7 @@ export function PrescriptionUploadsPage() {
       document.removeEventListener("visibilitychange", refresh);
     };
   }, [busy, load, patient]);
+  // Admin: how many days uploaded files are kept before they are deleted.
   const saveRetention = async () => {
     setBusy(true);
     setError("");
@@ -340,6 +363,7 @@ export function PrescriptionUploadsPage() {
       setBusy(false);
     }
   };
+  // Staff: change the deletion date for one upload's file.
   const saveDeadline = async (item: Upload, value: string) => {
     if (!value) return;
     setDeadlineSavingId(item.id);
@@ -362,6 +386,7 @@ export function PrescriptionUploadsPage() {
       setDeadlineSavingId(null);
     }
   };
+  // Staff: send the rough price to the patient.
   const sendQuotation = async (item: Upload) => {
     setBusy(true);
     setError("");
@@ -375,6 +400,7 @@ export function PrescriptionUploadsPage() {
       setBusy(false);
     }
   };
+  // Patient: accept the rough price so the pharmacy can make the final bill.
   const acceptQuotation = async (item: Upload) => {
     setBusy(true);
     setError("");
@@ -392,11 +418,13 @@ export function PrescriptionUploadsPage() {
     }
   };
   // Patient: open slip upload modal
+  // Patient: open the window to upload a bank slip.
   const openSlipUpload = (item: Upload) => {
     setSlipForm({ file: null, declaredAmount: "", bankAccountId: "", reference: "", paidOn: "", note: "" });
     setSlipUploadItem(item);
     setError("");
   };
+  // Patient: send the bank slip (file, amount, reference, date).
   const submitSlip = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!slipUploadItem || !slipForm.file) return setError("Select a file for the bank transfer receipt.");
@@ -432,6 +460,7 @@ export function PrescriptionUploadsPage() {
     }
   };
   // Cashier: open slip review modal
+  // Staff: open a bank slip to check it.
   const openSlipReview = async (upload: Upload, slip: UploadSlip) => {
     setSlipReviewItem({ upload, slip });
     setSlipReviewForm({ reason: "" });
@@ -444,11 +473,13 @@ export function PrescriptionUploadsPage() {
       setError(errorMessage(caught));
     }
   };
+  // Close the slip check window.
   const closeSlipReview = () => {
     if (slipReviewUrl) URL.revokeObjectURL(slipReviewUrl);
     setSlipReviewUrl("");
     setSlipReviewItem(null);
   };
+  // Staff: accept the bank slip (the money is in the bank).
   const approveSlip = async () => {
     if (!slipReviewItem) return;
     setBusy(true);
@@ -463,6 +494,7 @@ export function PrescriptionUploadsPage() {
       setBusy(false);
     }
   };
+  // Staff: reject the bank slip with a reason.
   const rejectSlip = async () => {
     if (!slipReviewItem) return;
     if (!slipReviewForm.reason.trim() || slipReviewForm.reason.trim().length < 3) {
@@ -482,6 +514,7 @@ export function PrescriptionUploadsPage() {
     }
   };
 
+  // Patient: send a new upload or save changes to one. The file is checked for size and type first.
   const submitUpload = async (event: FormEvent) => {
     event.preventDefault();
     if (uploadInFlight.current) return;
@@ -575,6 +608,7 @@ export function PrescriptionUploadsPage() {
     }
   };
 
+  // Show the uploaded file (or an extra file) in the preview window.
   const openFile = async (item: Upload, attachment?: { id: number; originalName: string; mimeType: string }) => {
     try {
       fitDocumentViewer();
@@ -590,11 +624,13 @@ export function PrescriptionUploadsPage() {
       setError(errorMessage(caught));
     }
   };
+  // Close the file preview.
   const closePreview = () => {
     if (preview) URL.revokeObjectURL(preview.url);
     setPreview(null);
   };
 
+  // Close the review window.
   const closeReview = () => {
     setRejectOpen(false);
     setRejectionReason("");
@@ -604,6 +640,7 @@ export function PrescriptionUploadsPage() {
     setReviewText("");
     setReview(null);
   };
+  // Staff: open an upload to review it and prepare the rough price.
   const openReview = async (item: Upload) => {
     setError("");
     fitDocumentViewer();
@@ -652,6 +689,7 @@ export function PrescriptionUploadsPage() {
       setError(errorMessage(caught));
     }
   };
+  // Change one medicine line of the rough price.
   const updateEstimateItem = (
     index: number,
     field: "productId" | "quantity",
@@ -662,6 +700,7 @@ export function PrescriptionUploadsPage() {
     setEstimateForm({ ...estimateForm, items });
     setEstimateError("");
   };
+  // Change one over-the-counter line of the rough price.
   const updateEstimateRetailItem = (
     index: number,
     field: "productId" | "quantity",
@@ -672,6 +711,7 @@ export function PrescriptionUploadsPage() {
     setEstimateForm({ ...estimateForm, retailItems });
     setEstimateError("");
   };
+  // Add or remove the bottle (container) fee on the rough price.
   const updateBottleFee = (
     bottleCount: number,
     bottleFeePerBottle: number,
@@ -695,6 +735,7 @@ export function PrescriptionUploadsPage() {
     )
     .filter(Boolean);
   const estimateHasLiquid = selectedEstimateProducts.some(isLiquidProduct);
+  // Ask the server to work out the rough price with current prices and stock.
   const calculateEstimate = async () => {
     if (!review) return;
     const items = estimateForm.items
@@ -820,6 +861,7 @@ export function PrescriptionUploadsPage() {
     estimateForm.tax,
   ]);
 
+  // Patient: withdraw the upload (a reason is required).
   const submitCancelUpload = async (event: FormEvent) => {
     event.preventDefault();
     if (!cancelModal) return;
@@ -837,6 +879,7 @@ export function PrescriptionUploadsPage() {
       setBusy(false);
     }
   };
+  // Staff: save the review result (available, partly available, unavailable).
   const submitReview = async (event: FormEvent) => {
     event.preventDefault();
     if (!review) return;
@@ -859,6 +902,7 @@ export function PrescriptionUploadsPage() {
       setBusy(false);
     }
   };
+  // Staff: reject the upload.
   const rejectUpload = async () => {
     if (!review) return;
     if (rejectionReason.trim().length < 3) {

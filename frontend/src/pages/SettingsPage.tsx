@@ -1,3 +1,7 @@
+// SETTINGS PAGE (admin)
+// Pharmacy-wide settings (stock order FIFO/FEFO, PIN rules, holding hours, auto-lock time...) and
+// the pharmacy's bank accounts.
+
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api/client";
 import { Modal, ModalActions } from "../components/Modal";
@@ -13,6 +17,7 @@ const emptyAccount = {
   active: true,
 };
 
+// The page.
 export function SettingsPage() {
   const [form, setForm] = useState({
     allocationMethod: "FIFO",
@@ -49,6 +54,7 @@ export function SettingsPage() {
       .finally(() => setLoading(false));
   }, [loadAccounts]);
 
+  // Add or edit a pharmacy bank account.
   const saveAccount = async (event: FormEvent) => {
     event.preventDefault();
     setAccountBusy(true);
@@ -73,6 +79,7 @@ export function SettingsPage() {
     }
   };
 
+  // Switch a bank account on or off for customer payments.
   const toggleAccount = async (account: any) => {
     setError("");
     try {
@@ -83,6 +90,7 @@ export function SettingsPage() {
     }
   };
 
+  // Save the pharmacy settings.
   const save = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);

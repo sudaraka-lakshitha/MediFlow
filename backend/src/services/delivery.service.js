@@ -1,3 +1,11 @@
+// HOME DELIVERIES
+// A delivery order has two bills: the medicine bill and a separate delivery fee bill.
+// The delivery fee can only be paid by bank transfer.
+// The order cannot be dispatched until BOTH bills are paid and checked by the cashier.
+// Status steps: REQUESTED -> AWAITING_FEE -> DISPATCHED -> DELIVERED.
+// It can also go to DELIVERY_FAILED, RETURNED, RESHIP_REQUESTED, RESHIP_READY or CANCELLED.
+// Every action is written to the bill's event history as DELIVERY_<ACTION>.
+
 import crypto from 'node:crypto';
 import { prisma } from '../config/prisma.js';
 import { serializable, stockFulfillmentTransactionOptions } from '../utils/serializable.js';
@@ -18,9 +26,12 @@ const medicineBillAcceptsDeliveryFee = (bill) => !bill.customerCancellationReaso
   ['AWAITING_PAYMENT', 'SLIP_SUBMITTED'].includes(bill.status)
   || (bill.status === 'PAID' && Number(bill.amountPaid) - Number(bill.refundedAmount) >= Number(bill.total)));
 
+// The bill details we need to decide whether a delivery can move to its next step.
 const feeSelect = { id: true, requestNumber: true, status: true, total: true, amountPaid: true, paidAt: true, refundedAmount: true, customerCancellationReason: true, refunds: { where: { status: { in: ['PENDING', 'AWAITING_APPROVAL'] } }, select: { id: true } } };
 const include = { feePaymentRequest: { select: feeSelect }, paymentRequest: { select: { ...feeSelect, patientId: true, prescriptionId: true, patient: { select: { fullName: true } }, events: { where: { kind: { in: ['DELIVERY_RETURNED', 'DELIVERY_RESHIP', 'DELIVERY_DISPATCH', 'DELIVERY_DELIVERED', 'DELIVERY_DELIVERY_FAILED', 'DELIVERY_RETURNING', 'DELIVERY_RETRY_DELIVERY', 'DELIVERY_CORRECT_DELIVERED'] } }, orderBy: { createdAt: 'asc' }, select: { kind: true, createdAt: true, details: true } } } } };
+// All delivery actions the routes can call.
 export const deliveryService = {
+  // Courier names used before, to suggest them when dispatching.
   async couriers(user) {
     const rows = await prisma.deliveryRequest.findMany({
       where: { courierService: { not: null }, ...(user.role === 'PATIENT' ? { paymentRequest: { patientId: user.id } } : {}) },
@@ -28,6 +39,7 @@ export const deliveryService = {
     });
     return rows.map(row => row.courierService).filter(Boolean);
   },
+  // List deliveries with search, courier, date and queue filters. Patients only see their own.
   async list(user, { page = 1, pageSize = 300, search, courier, dateField = 'createdAt', from, to, queue = 'ALL' } = {}) {
     const where = { ...(user.role === 'PATIENT' ? { paymentRequest: { patientId: user.id } } : {}),
       ...(courier ? { courierService: courier } : {}),
@@ -45,6 +57,7 @@ export const deliveryService = {
       return { ...record, paymentRequest, canCancelDelivery, parcelContents: parcelContents(sale) };
     });
   },
+  // The patient asks for home delivery (or changes the address) on a bill.
   request(id, input, user) {
     return serializable(async tx => {
       const bill = await tx.paymentRequest.findUnique({ where: { id } });
@@ -69,6 +82,7 @@ export const deliveryService = {
       return delivery;
     });
   },
+  // The patient cancels the delivery only, or the whole order.
   cancelByPatient(id, { scope = 'DELIVERY_ONLY', reason } = {}, user) {
     return serializable(async tx => {
       const delivery = await tx.deliveryRequest.findFirst({
@@ -109,6 +123,7 @@ export const deliveryService = {
       return tx.deliveryRequest.findUnique({ where: { paymentRequestId: id }, include });
     });
   },
+  // Ask to send a returned parcel again (or withdraw that request).
   async requestReshipment(id, user, withdraw = false, transaction = null) {
     const operation = async tx => {
       const delivery = await tx.deliveryRequest.findUnique({ where: { paymentRequestId: id }, include: { paymentRequest: true } });
@@ -127,6 +142,11 @@ export const deliveryService = {
     };
     return transaction ? operation(transaction) : serializable(operation);
   },
+  // Staff actions on a delivery: CONFIRM (issue the fee bill), DISPATCH, UPDATE_TRACKING,
+  // UPDATE_DETAILS,
+  // DELIVERED, RETURNED, RESHIP and CANCEL.
+  // DISPATCH also gives out the medicines (stock leaves the shelf) and closes the fee bill, so it
+  // is refused until both bills are fully paid.
   async act(id, input, user, transaction = null) {
     if (!['ADMIN', 'PHARMACIST'].includes(user.role)) throw new AppError(403, 'Only pharmacy staff can arrange dispatch.');
     if (['DISPATCH', 'UPDATE_TRACKING', 'RESHIP'].includes(input.action) && (!input.courierService?.trim() || !input.trackingReference?.trim())) throw new AppError(400, 'Courier service and tracking number are required.');

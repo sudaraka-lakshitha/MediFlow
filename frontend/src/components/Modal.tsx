@@ -1,3 +1,5 @@
+// The pop-up window used across the website (closes with Esc, keeps keyboard focus inside).
+
 import { useEffect, useId, useRef, type ReactNode } from "react";
 
 const openDialogs: HTMLElement[] = [];

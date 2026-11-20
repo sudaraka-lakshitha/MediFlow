@@ -1,3 +1,6 @@
+// Takes the "one person at a time" lock when a record is opened for editing, and shows a message if
+// someone else has it.
+
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api, errorMessage } from '../api/client';
 import { beginWorkflowClaim, denyWorkflowClaim, setWorkflowLeaseToken, workflowLeaseToken } from '../api/workflowState';

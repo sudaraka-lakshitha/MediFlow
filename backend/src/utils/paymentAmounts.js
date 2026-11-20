@@ -1,3 +1,5 @@
+// Checks cash, card and split payments add up to the bill total.
+
 import { Prisma } from '@prisma/client';
 import { AppError } from './AppError.js';
 

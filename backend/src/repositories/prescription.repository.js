@@ -1,3 +1,5 @@
+// Ready-made database queries for loading a prescription with its details.
+
 import { prisma } from '../config/prisma.js';
 import { historySearch } from '../utils/historySearch.js';
 import { prescriptionSupplySummary } from '../utils/prescriptionSupplySummary.js';

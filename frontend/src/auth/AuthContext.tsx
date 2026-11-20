@@ -1,3 +1,5 @@
+// Keeps the signed-in user for the whole website and provides sign-in / sign-out to every page.
+
 import {
   useEffect,
   useMemo,

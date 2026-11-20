@@ -1,3 +1,5 @@
+// Gives any page the signed-in user and the sign-in / sign-out actions.
+
 import { useContext } from "react";
 import { AuthContext } from "./AuthSession";
 

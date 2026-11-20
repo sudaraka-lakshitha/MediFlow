@@ -1,3 +1,9 @@
+// SAFE DATABASE SAVES
+// Many people can use the system at once. These helpers run a group of database changes as one
+// all-or-nothing step, and simply try again (up to 3 times) if two people clashed at the same
+// moment.
+// The user only sees an error if it still clashes after the retries.
+
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { operationContext, recordOperation } from './operationContext.js';

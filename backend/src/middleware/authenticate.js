@@ -1,9 +1,15 @@
+// CHECKS WHO IS SIGNED IN
+// Reads the sign-in pass sent by the browser, checks the session is still valid and not locked, and
+// attaches the user to the request (req.user). If anything is wrong the user must sign in again.
+
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
 import { sessionService } from '../services/session.service.js';
 
+// allowLocked = true is only used by the session routes (check session, record activity, unlock),
+// because they must still work while the screen is locked.
 const authenticateWith = (allowLocked) => async (req, _res, next) => {
   try {
     const header = req.headers.authorization;

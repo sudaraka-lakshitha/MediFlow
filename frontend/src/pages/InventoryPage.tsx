@@ -1,3 +1,12 @@
+// STOCK PAGE (inventory)
+// Shows every stock batch with its expiry date and quantities, plus low-stock and near-expiry
+// warnings.
+// Staff can receive new stock, correct or restrict a batch, dispose of expired stock, delete an
+// empty batch,
+// and upload many batches at once from a spreadsheet.
+// Remember: "available" is what is on the shelf; "reserved" is set aside for customers' orders.
+// Server rules: backend/src/services/inventory.service.js
+
 import { formatPharmacyDate, formatPharmacyDateTime } from "../utils/pharmacyTime";
 import {
   useCallback,
@@ -68,6 +77,7 @@ type BatchFilter =
   | "LOW_STOCK"
   | "DISPOSED";
 
+// A blank stock form.
 const emptyForm = {
   productId: 0,
   supplierId: "",
@@ -85,7 +95,9 @@ const emptyForm = {
   destinationName: "",
 };
 
+// True when the batch's expiry date has passed.
 const expired = (batch: Batch) => new Date(batch.expiryDate) < new Date();
+// True when the batch expires within the warning period (set in the pharmacy settings).
 const nearExpiry = (batch: Batch, days: number) => {
   const expiryTime = new Date(batch.expiryDate).getTime();
   const now = Date.now();
@@ -95,8 +107,10 @@ const nearExpiry = (batch: Batch, days: number) => {
     Number(batch.quantityAvailable) > 0
   );
 };
+// Product name with its strength, for lists.
 const productName = (product: Batch["product"]) =>
   `${product.genericName}${product.strength && product.strength !== "N/A" ? ` ${product.strength}` : ""}`;
+// Suggested amount to order: enough to reach twice the reorder level (at least 1).
 const suggestedRestockQuantity = (product: any) =>
   Math.max(
     1,
@@ -106,6 +120,7 @@ const suggestedRestockQuantity = (product: any) =>
     ),
   );
 
+// Plain words for each way of disposing of expired stock.
 const dispositionLabels: Record<DispositionAction, string> = {
   DISCARDED: "Discarded",
   DESTROYED: "Removed / destroyed",
@@ -113,6 +128,7 @@ const dispositionLabels: Record<DispositionAction, string> = {
   RETURNED_TO_MANUFACTURER: "Returned to manufacturer",
 };
 
+// The page. State first, then loading data, then button actions, then the layout.
 export function InventoryPage() {
   const { get: readHistory, controls: historyControls } = useHistoryPage('Inventory batches');
   const [batches, setBatches] = useState<Batch[]>([]);
@@ -141,6 +157,7 @@ export function InventoryPage() {
   const [restrictionTarget, setRestrictionTarget] = useState<Batch | null>(null);
   const [restrictionReason, setRestrictionReason] = useState("");
 
+  // Delete a batch entered by mistake (only allowed when it is empty).
   const deleteBatch = async (batchId: number) => {
     setBusy(true);
     setError("");
@@ -155,6 +172,7 @@ export function InventoryPage() {
       setBusy(false);
     }
   };
+  // Stop or allow sales from a batch (for example while checking a recall).
   const toggleRestriction = async (batch: Batch) => {
     const reason = batch.restricted ? "" : restrictionReason.trim();
     if (!batch.restricted && reason.length < 3) return;
@@ -199,6 +217,7 @@ export function InventoryPage() {
     load();
   }, [load]);
 
+  // Open the stock window in the right mode: receive, edit, adjust or dispose.
   const open = (mode: InventoryModal, batch?: Batch, product?: any) => {
     setSelected(batch || null);
     setRestockProduct(mode === "receive" ? product || null : null);
@@ -230,6 +249,7 @@ export function InventoryPage() {
     setModal(mode);
   };
 
+  // Save the stock window. The server checks the numbers again.
   const save = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -280,6 +300,7 @@ export function InventoryPage() {
     }
   };
 
+  // Mark a low-stock warning as seen (or show it again).
   const setLowStockNoted = async (product: any, noted: boolean) => {
     setNotingProductId(product.id);
     setError("");

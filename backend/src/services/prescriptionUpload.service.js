@@ -1,3 +1,15 @@
+// PATIENT PRESCRIPTION UPLOADS
+// A patient can photograph or scan a prescription and send it from the patient portal.
+// This file saves the upload, lets the pharmacist review it and send a rough price, lets the
+// patient
+// accept the price and pay by bank transfer, and removes old files after the keeping period.
+// The patient chooses one of three options when uploading:
+//   1. Prepare it for collection (stock is set aside when the bill is made)
+//   2. Home delivery
+//   3. Send me the complete bill first (nothing is set aside until it is paid)
+// Status steps: PENDING -> QUOTE_SENT -> QUOTE_ACCEPTED -> PAYMENT_PENDING / PAYMENT_SUBMITTED
+// -> READY_TO_PREPARE, or CANCELLED / REJECTED.
+
 import { attachmentTransactionOptions, serializable } from '../utils/serializable.js';
 import { historySearch } from '../utils/historySearch.js';
 import crypto from 'node:crypto';
@@ -31,6 +43,8 @@ const summarySelect = {
   paymentSlips: { select: slipSelect, orderBy: { createdAt: 'desc' } },
 };
 
+// Checks the first bytes of a file really match its type (for example a real PDF, not a renamed
+// program). This stops harmful files being uploaded.
 const validSignature = (buffer, mimeType) => {
   if (mimeType === 'application/pdf') return buffer.subarray(0, 4).toString() === '%PDF';
   if (mimeType === 'image/png') return buffer.subarray(0, 8).toString('hex') === '89504e470d0a1a0a';
@@ -40,10 +54,12 @@ const validSignature = (buffer, mimeType) => {
   return false;
 };
 
+// A patient may only open their own uploads.
 const ensureAccess = (record, user) => {
   if (!record) throw new AppError(404, 'Uploaded prescription not found.');
   if (user.role === 'PATIENT' && record.patientId !== user.id) throw new AppError(403, 'This uploaded prescription does not belong to you.');
 };
+// The version of an upload sent to the screen, without the large file data.
 const visibleUpload = (record, user) => {
   if (user.role !== 'PATIENT' || !record) return record;
   // Rough working amounts are private unless an older quotation was explicitly
@@ -59,10 +75,12 @@ const visibleUpload = (record, user) => {
   const { estimatedTotal, estimateDetails, ...visible } = record;
   return { ...visible, estimatedTotal: null, estimateDetails: null };
 };
+// True for syrups and other liquids, which are measured in millilitres.
 const isLiquidProduct = (product) =>
   ['ml', 'millilitre', 'milliliter', 'l', 'litre', 'liter'].includes(String(product?.unit || '').toLowerCase())
   || /syrup|suspension|solution|elixir|liquid/i.test(String(product?.dosageForm || ''));
 
+// Stops a quote for a medicine that is not suitable for the age of the person it is for.
 const validateRecipientAge = async (upload, products) => {
   let dateOfBirth = upload.recipientDateOfBirth;
   if (upload.orderedForSelf) {
@@ -81,6 +99,7 @@ const validateRecipientAge = async (upload, products) => {
 };
 
 export const prescriptionUploadService = {
+  // Deletes the uploaded file (not the order history) once its keeping period has ended.
   async cleanupExpired(db = prisma) {
     // Retention applies to the attachment, not order/payment history. Active
     // preparation and unresolved payments keep their source evidence available.
@@ -98,8 +117,10 @@ export const prescriptionUploadService = {
     await db.prescriptionUploadAttachment.deleteMany({ where: { upload: { attachmentRemovedAt: { not: null } } } });
     return result.count;
   },
+  // How many days uploaded files are kept. The admin can change this.
   async retention() { const setting = await prisma.systemSetting.findUnique({ where: { key: 'prescriptionUploadRetentionDays' } }); return { days: Number(setting?.value || 30) }; },
   async setRetention(days) { await prisma.systemSetting.upsert({ where: { key: 'prescriptionUploadRetentionDays' }, update: { value: String(days) }, create: { key: 'prescriptionUploadRetentionDays', value: String(days) } }); return { days }; },
+  // List uploads page by page. Old files are cleaned up first.
   async list(user, { page = 1, pageSize = 300, search, status } = {}) { await this.cleanupExpired(); const records = await prisma.prescriptionUpload.findMany({
     where: { ...(user.role === 'PATIENT' ? { patientId: user.id } : {}), ...historySearch(search, ['originalName', 'patient.fullName', 'patientNote', 'recipientName']),
       ...(status ? { AND: [{ OR: [
@@ -108,6 +129,8 @@ export const prescriptionUploadService = {
       ] }] } : {}) }, select: summarySelect,
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize,
   }); return records.map(record => visibleUpload(record, user)); },
+  // Save a new upload from a patient. Checks file size and type, and ignores a repeat of the same
+  // submission (for example a double click).
   async create(data, userId) {
     const { submissionKey, ...content } = data;
     const submissionHash = submissionKey ? crypto.createHash('sha256').update(JSON.stringify(content)).digest('hex') : null;
@@ -148,6 +171,7 @@ export const prescriptionUploadService = {
       throw error;
     }
   },
+  // Download the uploaded prescription (or one of its extra files).
   async file(id, user, attachmentId) {
     const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true, patientId: true, originalName: true, mimeType: true, fileData: true } });
     ensureAccess(record, user);
@@ -159,12 +183,15 @@ export const prescriptionUploadService = {
     }
     return record;
   },
+  // List the extra files attached to an upload.
   async attachments(id, user) {
     const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { patientId: true, originalName: true, mimeType: true, attachmentRemovedAt: true, attachments: { select: { id: true, originalName: true, mimeType: true }, orderBy: { id: 'asc' } } } });
     ensureAccess(record, user);
     if (record.attachmentRemovedAt) throw new AppError(410, 'Attachments have expired under the retention policy.');
     return [{ id: null, originalName: record.originalName, mimeType: record.mimeType }, ...record.attachments];
   },
+  // The patient changes their upload (files, note, delivery details) before the pharmacy has
+  // started on it.
   async edit(id, data, user) {
     if (user.role !== 'PATIENT') throw new AppError(403, 'Only the patient can edit their upload.');
     return serializable(async tx => {
@@ -211,6 +238,8 @@ export const prescriptionUploadService = {
     return visibleUpload(await tx.prescriptionUpload.findUnique({ where: { id }, select: summarySelect }), user);
     }, 3, attachmentTransactionOptions);
   },
+  // The pharmacist says whether the medicines are available, partly available or unavailable, or
+  // rejects the upload.
   async review(id, data, userId) {
     const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true, status: true, attachmentRemovedAt: true } });
     if (!record) throw new AppError(404, 'Uploaded prescription not found.');
@@ -238,6 +267,7 @@ export const prescriptionUploadService = {
     if (sent.count !== 1) throw new AppError(409, 'The quotation changed. Refresh before sending it.');
     return prisma.prescriptionUpload.findUnique({ where: { id }, select: summarySelect });
   },
+  // Build the rough price list for an upload. Final prices come later, on the real bill.
   async estimateQuote(id, data) {
     const upload = await prisma.prescriptionUpload.findUnique({
       where: { id },
@@ -389,6 +419,7 @@ export const prescriptionUploadService = {
     if (saved.count !== 1) throw new AppError(409, 'The quotation changed or was converted into a final invoice. Refresh before editing.');
     return quote;
   },
+  // The patient agrees to the rough price, so the pharmacy can make the final bill.
   async acceptEstimate(id, userId, revision) {
     const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true, patientId: true, status: true, prepareRequested: true, estimatedTotal: true, quoteRevision: true } });
     if (!record) throw new AppError(404, 'Uploaded prescription not found.');
@@ -401,6 +432,7 @@ export const prescriptionUploadService = {
     if (accepted.count !== 1) throw new AppError(409, 'The quotation has changed. Refresh and review it again.');
     return visibleUpload(await prisma.prescriptionUpload.findUnique({ where: { id }, select: summarySelect }), { id: userId, role: 'PATIENT' });
   },
+  // The patient withdraws their upload before it becomes a prescription.
   async cancelByPatient(id, reason, user) {
     const upload = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true, patientId: true, status: true, prescription: { select: { id: true } } } });
     if (!upload) throw new AppError(404, 'Uploaded prescription not found.');
@@ -426,6 +458,7 @@ export const prescriptionUploadService = {
     if (cancelled.count !== 1) throw new AppError(409, 'This upload changed or was converted into a final invoice. Refresh before cancelling.');
     return visibleUpload(await prisma.prescriptionUpload.findUnique({ where: { id }, select: summarySelect }), user);
   },
+  // Staff change the date when the uploaded file will be deleted.
   async setDeadline(id, deleteAt) {
     const record = await prisma.prescriptionUpload.findUnique({ where: { id }, select: { id: true } });
     if (!record) throw new AppError(404, 'Uploaded prescription not found.');

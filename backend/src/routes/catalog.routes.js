@@ -1,3 +1,7 @@
+// API addresses for the product catalogue: products, categories, manufacturers and suppliers.
+// For each address: who may use it (signed in, which role), which input checks run first, and which
+// controller handles it.
+
 import { Router } from 'express';
 import { catalogController } from '../controllers/catalog.controller.js';
 import { authenticate } from '../middleware/authenticate.js';

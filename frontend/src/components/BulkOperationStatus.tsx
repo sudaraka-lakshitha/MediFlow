@@ -1,3 +1,5 @@
+// Shows the progress of a large upload (for example "Saving 30 of 120").
+
 export type BulkProgress = { stage: string; completed?: number; total?: number };
 
 export function BulkOperationStatus({ progress }: { progress: BulkProgress }) {

@@ -1,3 +1,8 @@
+// Receives the web requests for end-of-day cash balancing for the cashier and the pharmacy, calls
+// the matching service, writes the audit log entry and sends the reply.
+// The real rules are in services/reconciliation.service.js. To trace a button: route -> this
+// controller -> service.
+
 import { createPdf } from '../utils/pdf.js';
 import { recordAudit } from '../services/audit.service.js';
 import { reconciliationService } from '../services/reconciliation.service.js';

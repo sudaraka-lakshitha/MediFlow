@@ -1,3 +1,5 @@
+// Bottle sizes for liquid medicines, so whole bottles are billed.
+
 const LIQUID_CONTAINER_UNIT = /^(bottles?|cans?|vials?|ampoules?|sachets?)$/i;
 const VOLUME_TOKEN = /(\d+(?:\.\d+)?)\s*(ml|millilitres?|milliliters?|l|litres?|liters?)\b/gi;
 

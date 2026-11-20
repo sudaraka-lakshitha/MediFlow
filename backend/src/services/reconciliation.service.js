@@ -1,3 +1,6 @@
+// The cashier's daily balance: money expected vs money counted, per payment method, using Sri Lanka
+// days.
+
 import crypto from 'node:crypto';
 import { prisma } from '../config/prisma.js';
 import { env } from '../config/env.js';

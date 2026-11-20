@@ -1,3 +1,5 @@
+// Works out a person's age in whole years on a given date.
+
 export const ageOnDate = (dateOfBirth, onDate) => {
   const birth = new Date(dateOfBirth);
   const date = new Date(onDate);

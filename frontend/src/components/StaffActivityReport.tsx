@@ -1,3 +1,5 @@
+// The staff activity report (who did what, in Sri Lanka time), with download.
+
 import { useEffect, useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { Alert } from './Ui';

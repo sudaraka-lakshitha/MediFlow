@@ -1,3 +1,5 @@
+// Refunding a delivery fee when the delivery is cancelled after the fee was paid.
+
 import { Prisma } from '@prisma/client';
 import { serializable } from '../utils/serializable.js';
 import { AppError } from '../utils/AppError.js';

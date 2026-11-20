@@ -1,3 +1,7 @@
+// USING A CONFIRMED BANK TRANSFER TO PAY A BILL
+// Takes the bill's amount from the transfer's remaining balance and records the link between the
+// two.
+
 import { Prisma } from '@prisma/client';
 import { AppError } from './AppError.js';
 

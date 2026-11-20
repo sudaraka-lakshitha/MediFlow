@@ -1,3 +1,8 @@
+// Receives the web requests for signing in, registering, passwords and the auto-lock session, calls
+// the matching service, writes the audit log entry and sends the reply.
+// The real rules are in services/auth.service.js. To trace a button: route -> this controller ->
+// service.
+
 import { authService } from '../services/auth.service.js';
 import { prisma } from '../config/prisma.js';
 import { recordRequestAudit } from '../services/audit.service.js';

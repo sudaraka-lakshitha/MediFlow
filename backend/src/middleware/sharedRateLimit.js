@@ -1,3 +1,6 @@
+// The same kind of limit, but counted in the database, so it still works with several servers or
+// after a restart.
+
 import { createHash } from 'node:crypto';
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';

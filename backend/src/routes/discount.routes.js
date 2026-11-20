@@ -1,3 +1,7 @@
+// API addresses for discount rules and coupon codes.
+// For each address: who may use it (signed in, which role), which input checks run first, and which
+// controller handles it.
+
 import { Router } from 'express';
 import { discountController } from '../controllers/discount.controller.js';
 import { authenticate } from '../middleware/authenticate.js';

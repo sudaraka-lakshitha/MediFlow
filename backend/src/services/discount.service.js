@@ -1,3 +1,5 @@
+// Discount rules and coupon codes, and working out the discount on a bill.
+
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';

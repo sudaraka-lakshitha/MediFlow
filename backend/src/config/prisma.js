@@ -1,3 +1,5 @@
+// The single database connection (Prisma) shared by the whole server.
+
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 

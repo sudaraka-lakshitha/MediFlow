@@ -1,3 +1,5 @@
+// Rules for people's names (letters, spaces and common name characters only).
+
 import { z } from 'zod';
 
 export const personNamePattern = /^[A-Za-z]+(?:(?: +|[.'’\-] *)[A-Za-z]+)*\.?$/;

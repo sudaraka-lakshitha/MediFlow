@@ -1,3 +1,8 @@
+// Receives the web requests for admin data downloads (CSV, Excel and PDF copies of the data), calls
+// the matching service, writes the audit log entry and sends the reply.
+// The real rules are in services/adminExport.service.js. To trace a button: route -> this
+// controller -> service.
+
 import { exportDefinitions } from '../services/adminExport.service.js';
 import { recordAudit } from '../services/audit.service.js';
 import { streamCsv } from '../utils/csv.js';

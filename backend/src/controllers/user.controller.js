@@ -1,3 +1,8 @@
+// Receives the web requests for staff accounts, calls the matching service, writes the audit log
+// entry and sends the reply.
+// The real rules are in services/user.service.js. To trace a button: route -> this controller ->
+// service.
+
 import { userService } from '../services/user.service.js';
 import { recordAudit } from '../services/audit.service.js';
 import { AppError } from '../utils/AppError.js';

@@ -1,3 +1,13 @@
+// INVOICES / MY BILLS PAGE
+// Patients see their bills here: accept the latest bill, add a coupon, pay by bank slip, ask to
+// cancel and
+// plan when to collect. Staff see the list of sales here: record a payment, make an over-the-
+// counter sale,
+// hand over an over-the-counter order with its PIN, void a sale and open invoice PDFs.
+// How this file is laid out:
+//   1. Small helpers and two small boxes (bank details, pickup plan) at the top
+//   2. SalesPage: loading data, then the actions behind each button, then the layout
+
 import { formatPharmacyDate, formatPharmacyDateTime, formatPharmacyDateTimeInput, pharmacyDateTimeInputToISOString, pharmacyTodayDateInput } from "../utils/pharmacyTime";
 import {
   useCallback,
@@ -19,6 +29,7 @@ import { RefundWorkspace } from "../components/RefundWorkspace";
 import { Link } from 'react-router-dom';
 import { deliveryStatusLabel } from '../utils/deliveryStatus';
 
+// A blank over-the-counter sale form.
 const emptyRetail = () => ({
   patientId: "",
   couponCode: "",
@@ -27,15 +38,19 @@ const emptyRetail = () => ({
   paymentMethod: "CASH",
   items: [{ productId: "", quantity: 1 }],
 });
+// Shows an amount as Sri Lankan rupees.
 const money = (value: unknown) => `Rs. ${Number(value || 0).toFixed(2)}`;
 // Mirrors the server's stock-hold rule for an invoice. Uploaded orders follow
 // the customer's choice: prepared (collection or delivery) orders are held from
 // billing; "send me the bill first" orders hold nothing until payment.
 type HoldRule = "AT_BILLING" | "AFTER_PAYMENT" | "CASH_CHOICE";
+// Which stock rule applies to this bill: set aside when billed (prepared orders), after payment
+// (bill-first orders), or the cash-choice rule (everything else).
 const holdRule = (invoice: any): HoldRule => invoice?.prescription?.sourceUpload
   ? invoice.prescription.sourceUpload.prepareRequested ? "AT_BILLING" : "AFTER_PAYMENT"
   : "CASH_CHOICE";
 
+// Shows the pharmacy bank account the customer should transfer money into.
 function BankAccountDetails({
   accounts,
   reference,
@@ -84,6 +99,7 @@ function BankAccountDetails({
   );
 }
 
+// Lets the patient say when they plan to collect, with a note for the pharmacy.
 function PatientPickupPlan({ invoice, onSaved }: { invoice: any; onSaved(): void }) {
   const prescription = invoice.prescription;
   const [editing, setEditing] = useState(false);
@@ -132,6 +148,7 @@ function PatientPickupPlan({ invoice, onSaved }: { invoice: any; onSaved(): void
 }
 
 import { WorkflowGuard } from '../components/WorkflowGuard';
+// The page. State first, then loading data, then button actions, then the layout.
 export function SalesPage() {
   const { get: readSales, controls: salesHistoryControls } = useHistoryPage('Final invoices');
   const { user } = useAuth();
@@ -269,6 +286,7 @@ export function SalesPage() {
           ),
     [products, retail],
   );
+  // Staff: record a payment against a sale.
   const savePayment = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -287,6 +305,7 @@ export function SalesPage() {
       setBusy(false);
     }
   };
+  // Staff: save an over-the-counter sale.
   const saveRetail = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -317,6 +336,7 @@ export function SalesPage() {
       setBusy(false);
     }
   };
+  // Patient: upload a bank slip for a bill.
   const submitSlip = async (event: FormEvent) => {
     event.preventDefault();
     if (!payOnline.file) {
@@ -354,6 +374,7 @@ export function SalesPage() {
     }
   };
 
+  // Patient: accept the latest version of the bill and choose how to pay.
   const acknowledgeInvoice = async (event: FormEvent) => {
     event.preventDefault();
     if (!invoiceAck) return;
@@ -374,6 +395,7 @@ export function SalesPage() {
     }
   };
 
+  // Patient: add a coupon code to the bill.
   const applyInvoiceCoupon = async () => {
     if (!invoiceAck || busy) return;
     setBusy(true);
@@ -400,6 +422,7 @@ export function SalesPage() {
     }
   };
 
+  // Patient: ask the pharmacy to cancel the order (a reason is required).
   const submitCancelRequest = async (event: FormEvent) => {
     event.preventDefault();
     if (!cancelRequestTarget) return;
@@ -423,6 +446,7 @@ export function SalesPage() {
     }
   };
 
+  // Staff: hand over an over-the-counter order after checking its PIN.
   const fulfillRetail = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -441,6 +465,7 @@ export function SalesPage() {
       setBusy(false);
     }
   };
+  // Open or download the invoice PDF.
   const invoicePdf = async (row: any, download: boolean) => {
     if (!download) { setDocumentPreview({ id: row.id, kind: 'invoice', name: row.invoiceNumber }); return; }
     try {
@@ -464,9 +489,11 @@ export function SalesPage() {
       setInvoiceBusy(null);
     }
   };
+  // Open the bill or receipt PDF.
   const paymentPdf = async (request: any, kind: "handoff" | "receipt") => {
     setDocumentPreview({ id: request.id, kind, name: request.requestNumber });
   };
+  // Staff: void (cancel) a finished sale with a reason. The stock goes back on the shelf.
   const submitVoid = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -483,6 +510,7 @@ export function SalesPage() {
       setBusy(false);
     }
   };
+  // Change one line of the over-the-counter sale.
   const updateRetailItem = (index: number, changes: object) =>
     setRetail({
       ...retail,

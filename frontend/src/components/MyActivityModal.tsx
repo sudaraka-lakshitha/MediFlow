@@ -1,3 +1,5 @@
+// The "My activity" window: a staff member's own recent actions, grouped by Sri Lanka day.
+
 import { formatPharmacyDateTimeInput, PHARMACY_TIME_ZONE, pharmacyTodayDateInput } from "../utils/pharmacyTime";
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api/client";

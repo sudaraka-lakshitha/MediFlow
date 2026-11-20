@@ -1,3 +1,5 @@
+// Stops the same bank transfer reference being used to pay twice.
+
 import { AppError } from './AppError.js';
 
 // Call inside the same Serializable transaction that records the payment.

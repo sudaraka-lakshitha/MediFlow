@@ -1,3 +1,9 @@
+// REFUNDS
+// A refund is money going back to a customer. It is made in two steps:
+//   1. A refund is created (what and how much).
+//   2. The cashier pays it out and records the reference (settle).
+// Returned medicines are checked separately by a pharmacist before going back on the shelf.
+
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { serializable } from '../utils/serializable.js';
@@ -9,10 +15,13 @@ import { invoiceItemTotal } from '../utils/reportFinancials.js';
 
 const money = (value) => new Prisma.Decimal(value || 0);
 const include = { lines: true, sale: { select: { invoiceNumber: true, patientId: true } }, paymentRequest: { select: { requestNumber: true, patientId: true } } };
+// Only cashier-level staff may handle refunds.
 const cashier = (user) => {
   if (!(user.role === 'ADMIN' || user.role === 'CASHIER' || (user.role === 'PHARMACIST' && user.cashierAccess))) throw new AppError(403, 'Refund authorization and payout require cashier access.');
 };
 
+// Create a refund that still needs to be paid out. Used by other parts, for example when a paid
+// bill is reduced.
 export const queueRefund = async (tx, { paymentRequestId, saleId, amount, reason, userId, lines = [] }) => {
   if (!money(amount).greaterThan(0)) return null;
   return tx.refund.create({ data: { paymentRequestId, saleId, amount, reason, createdById: userId, lines: { create: lines } }, include: { lines: true } });
@@ -23,6 +32,7 @@ export const refundService = {
     const records = await prisma.refund.findMany({ where: { ...(status ? { status } : {}), AND: [user.role === 'PATIENT' ? { OR: [{ sale: { patientId: user.id } }, { paymentRequest: { patientId: user.id } }] } : {}, historySearch(search, ['sale.invoiceNumber', 'paymentRequest.requestNumber', 'reason', 'reference'])] }, include, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize });
     return user.role === 'PATIENT' ? records.map(patientRefund) : records;
   },
+  // What can still be refunded on a sale (quantities not already refunded).
   async context(saleId, user) {
     cashier(user);
     const sale = await prisma.sale.findUnique({ where: { id: saleId }, select: { id: true, status: true, refunds: { select: { lines: { select: { saleItemId: true, quantity: true } } } } } });
@@ -31,6 +41,7 @@ export const refundService = {
     for (const line of sale.refunds.flatMap(refund => refund.lines)) quantities[line.saleItemId] = Number(money(quantities[line.saleItemId]).add(line.quantity));
     return { expectedRefundCount: sale.refunds.length, quantities };
   },
+  // Work out the refund amount for the chosen lines of a paid sale.
   async saleQuote(tx, saleId, input) {
     const sale = await tx.sale.findUnique({ where: { id: saleId }, include: { items: { include: { product: true } }, refunds: { include: { lines: true } }, paymentRequest: { select: { delivery: { select: { status: true } } } } } });
     if (!sale || sale.status !== 'PAID') throw new AppError(409, 'Only a paid, completed sale can be refunded here.');
@@ -63,10 +74,12 @@ export const refundService = {
     if (amount.lessThan(0) || amount.greaterThan(remaining) || lines.some((line) => line.amount.lessThan(0))) throw new AppError(409, 'This refund exceeds the remaining payment.');
     return { sale, lines, amount };
   },
+  // Show the refund amount without saving anything.
   async preview(saleId, input, user) {
     cashier(user);
     return serializable(async (tx) => { const { lines, amount } = await this.saleQuote(tx, saleId, input); return { lines, amount, expectedRefundCount: input.expectedRefundCount }; });
   },
+  // Save a refund for a paid sale.
   async create(saleId, input, user) {
     cashier(user);
     return serializable(async (tx) => {
@@ -80,6 +93,7 @@ export const refundService = {
       return refund;
     });
   },
+  // The cashier confirms the money was paid back and records the payout reference.
   async settle(id, input, user) {
     cashier(user);
     if (!input.payoutConfirmed || !input.reference?.trim()) throw new AppError(400, 'Confirm the payout and record its transaction reference or cash receipt reference.');
@@ -97,6 +111,8 @@ export const refundService = {
       return tx.refund.findUnique({ where: { id }, include });
     });
   },
+  // A pharmacist decides whether returned medicine is fit to go back on the shelf. If it is, the
+  // stock goes up and the change is recorded.
   async reviewStock(lineId, input, user) {
     if (!['ADMIN', 'PHARMACIST'].includes(user.role)) throw new AppError(403, 'Returned stock must be reviewed by a pharmacist or administrator.');
     return serializable(async (tx) => {

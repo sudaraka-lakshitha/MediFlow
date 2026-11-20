@@ -1,3 +1,8 @@
+// Receives the web requests for sales and stock reports, calls the matching service, writes the
+// audit log entry and sends the reply.
+// The real rules are in services/report.service.js. To trace a button: route -> this controller ->
+// service.
+
 import { reportService } from '../services/report.service.js';
 import { recordAudit } from '../services/audit.service.js';
 import { toCsv } from '../utils/csv.js';

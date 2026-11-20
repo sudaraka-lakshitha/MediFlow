@@ -1,3 +1,6 @@
+// FORGOT PASSWORD PAGE
+// Three steps: enter email, enter the code sent by email, choose a new password.
+
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, errorMessage } from '../api/client';

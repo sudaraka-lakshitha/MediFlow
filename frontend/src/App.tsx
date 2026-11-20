@@ -1,3 +1,9 @@
+// THE LIST OF PAGES (routes)
+// Each page is loaded only when it is first opened, to keep the website fast. Further down, each
+// address is
+// linked to its page and to the roles allowed to open it. To find the file for a screen, find its
+// address here.
+
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
@@ -114,6 +120,7 @@ const PatientProfilePage = lazy(() =>
   })),
 );
 
+// Links every address to its page and to the roles allowed to open it.
 export default function App() {
   return (
     <AuthProvider>

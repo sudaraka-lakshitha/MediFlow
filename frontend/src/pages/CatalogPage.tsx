@@ -1,3 +1,7 @@
+// CATALOGUE PAGE
+// Products, categories, manufacturers and suppliers: list, add, edit, switch off, and upload many
+// at once.
+
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, errorMessage } from '../api/client';
 import { useAuth } from '../auth/useAuth';

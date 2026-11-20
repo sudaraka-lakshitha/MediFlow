@@ -1,3 +1,5 @@
+// Tidies and checks people's names.
+
 import type { FocusEvent } from 'react';
 
 export const personNamePattern = "[A-Za-z]+(?:(?: +|[.'’\\x2D] *)[A-Za-z]+)*\\.?";

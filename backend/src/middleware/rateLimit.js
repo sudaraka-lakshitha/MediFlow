@@ -1,3 +1,6 @@
+// Limits how many times someone can try an action (like signing in) in a short time, to stop
+// password guessing. This version counts in memory.
+
 import { AppError } from "../utils/AppError.js";
 
 export const createRateLimiter = ({

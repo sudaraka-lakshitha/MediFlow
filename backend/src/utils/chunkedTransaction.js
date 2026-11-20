@@ -1,3 +1,5 @@
+// Saves a large number of rows in small groups, so one huge save does not time out.
+
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 

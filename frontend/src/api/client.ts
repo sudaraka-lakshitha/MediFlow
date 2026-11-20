@@ -1,3 +1,13 @@
+// THE CONNECTION TO THE SERVER
+// Every request from the website goes through `api` below. Before each request it:
+//   - adds the sign-in pass, and a retry key for payments, sales and stock changes (stops double
+// actions)
+//   - gives slow actions (uploads, payments, dispensing) more time
+//   - blocks changes while the screen is locked or while someone else is editing the same record
+// After each reply it signs the user out if the session has ended, or shows the lock screen if it
+// was locked.
+// `errorMessage` turns any error into one plain sentence to show the user.
+
 import axios from 'axios';
 import { clearSession, sessionToken, sessionUser } from '../auth/authStorage';
 import { operationAttempt, finishOperation, retryProtectedPath } from '../utils/operationAttempt';
@@ -5,12 +15,15 @@ import { pendingWrites, setWorkspaceLocked, trackWrite, workspaceLocked } from '
 import type { InternalAxiosRequestConfig } from 'axios';
 import { workflowClientId, workflowLeaseToken, waitForWorkflow } from './workflowState';
 type TrackedConfig = InternalAxiosRequestConfig & { workspaceWrite?: boolean; operationStorageKey?: string };
+// True for the sign-in session addresses, which must still work while the screen is locked.
 const sessionControl = (url = '') => url.startsWith('/auth/session');
+// Marks a saving request as finished (used to warn before leaving a page mid-save).
 const finishWrite = (config?: TrackedConfig) => {
   if (config?.workspaceWrite) { config.workspaceWrite = false; trackWrite(-1); }
 };
 
 const defaultApiUrl = '/api';
+// The shared connection. Requests time out after 30 seconds unless given more time below.
 export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || defaultApiUrl, timeout: 30000 });
 let redirectingToLogin = false;
 api.interceptors.request.use(async (config) => {
@@ -85,6 +98,7 @@ api.interceptors.response.use((response) => {
   return Promise.reject(error);
 });
 
+// The message to show the user for any error (the server's own message when there is one).
 export const errorMessage = (error: unknown) => {
   if (axios.isAxiosError(error)) {
     const message = error.response?.data?.message || error.message;

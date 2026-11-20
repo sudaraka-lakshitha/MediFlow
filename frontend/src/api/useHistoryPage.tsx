@@ -1,3 +1,5 @@
+// Shared "page by page" list helper with Previous / Next buttons for history lists.
+
 import { useCallback, useRef, useState } from 'react';
 import { api } from './client';
 import { useDebouncedValue } from '../utils/useDebouncedValue';

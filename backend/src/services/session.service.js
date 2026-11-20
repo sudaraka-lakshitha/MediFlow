@@ -1,3 +1,8 @@
+// SIGN-IN SESSIONS AND AUTO-LOCK
+// Each sign-in creates a session. If the user does nothing for a while (15-120 minutes for a user,
+// or the admin's setting), the screen first warns them and then locks. They unlock by typing their
+// password again. Too many wrong passwords means a 15-minute wait.
+
 import crypto from 'node:crypto';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
@@ -8,11 +13,13 @@ import { serializable } from '../utils/serializable.js';
 
 export const WARNING_MS = 60_000;
 const MAX_MS = 8 * 60 * 60_000;
+// Create the signed sign-in pass (token) the browser sends with every request.
 const tokenFor = (user, id, generation) => jwt.sign(
   { role: user.role, version: user.tokenVersion, sid: id, generation },
   env.JWT_SECRET, { subject: String(user.id), expiresIn: env.JWT_EXPIRES_IN },
 );
 const expiryFor = token => new Date(Math.min(jwt.decode(token).exp * 1000, Date.now() + MAX_MS));
+// When the warning should appear, when the screen locks and when the session ends.
 export const sessionView = (session, idleMinutes, now = Date.now()) => {
   const warningAt = new Date(session.lastActiveAt).getTime() + idleMinutes * 60_000;
   const expiresAt = new Date(session.expiresAt).getTime();
@@ -21,12 +28,14 @@ export const sessionView = (session, idleMinutes, now = Date.now()) => {
 };
 
 export const sessionService = {
+  // Start a new session after a successful sign-in.
   async issue(user) {
     const id = crypto.randomUUID();
     const token = tokenFor(user, id, 0);
     await prisma.authSession.create({ data: { id, userId: user.id, expiresAt: expiryFor(token) } });
     return token;
   },
+  // Check a session on each request: is it still valid, locked or expired?
   async inspect(payload) {
     if (typeof payload.sid !== 'string' || !Number.isInteger(payload.generation)) throw new AppError(401, 'Please sign in again to start a secure session.');
     const idleMinutes = await this.idleMinutes(Number(payload.sub));
@@ -43,6 +52,7 @@ export const sessionService = {
     }
     return { session, view: sessionView(session, idleMinutes) };
   },
+  // The user did something: push the auto-lock time further away.
   async activity(session) {
     const sessionIdleMinutes = await this.idleMinutes(session.userId);
     const now = new Date();
@@ -54,13 +64,16 @@ export const sessionService = {
     if (!updated.count) throw new AppError(401, 'This session has ended. Please sign in again.');
     return sessionView({ ...session, lastActiveAt: now }, sessionIdleMinutes);
   },
+  // Lock the screen now.
   async lock(session) {
     await prisma.authSession.updateMany({ where: { id: session.id, generation: session.generation, revokedAt: null }, data: { lockedAt: new Date() } });
   },
+  // How many quiet minutes are allowed before the warning, for this user.
   async idleMinutes(userId) {
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { sessionIdleMinutes: true, role: true } });
     return user?.sessionIdleMinutes ?? (user?.role === 'PATIENT' ? 60 : 30);
   },
+  // Let the user choose their own auto-lock time, within the allowed range.
   async setIdleMinutes(session, minutes) {
     if (!Number.isInteger(minutes) || minutes < 15 || minutes > 120) throw new AppError(400, 'Choose an inactivity timeout between 15 and 120 minutes.');
     return serializable(async tx => {
@@ -81,9 +94,11 @@ export const sessionService = {
       return sessionView(saved, minutes);
     });
   },
+  // Sign out: the session can no longer be used.
   async revoke(session) {
     await prisma.authSession.updateMany({ where: { id: session.id, generation: session.generation }, data: { revokedAt: new Date() } });
   },
+  // Unlock the screen with the user's password. Wrong attempts are counted to stop guessing.
   async unlock(session, password, authenticatedUser) {
     const now = new Date();
     if (session.retryAfter && session.retryAfter > now) throw new AppError(429, 'Too many attempts. Wait 15 minutes before trying again.');

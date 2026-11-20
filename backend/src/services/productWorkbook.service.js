@@ -1,3 +1,5 @@
+// Reads the product Excel sheet used for bulk updates.
+
 import ExcelJS from 'exceljs';
 import { checkWorkbookArchive } from './deliveryWorkbook.service.js';
 import { AppError } from '../utils/AppError.js';

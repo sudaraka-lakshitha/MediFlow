@@ -1,3 +1,5 @@
+// Turns liquid doses into millilitres.
+
 const massInMg = (value, unit) => {
   if (unit.toLowerCase() === 'g') return Number(value) * 1000;
   if (['mcg', 'µg'].includes(unit.toLowerCase())) return Number(value) / 1000;

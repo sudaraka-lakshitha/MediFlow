@@ -1,3 +1,5 @@
+// Makes drug names comparable (same spelling and order).
+
 const aliases = new Map([
   // DDInter uses the USAN name; product catalogues in Sri Lanka commonly use INN.
   ['paracetamol', 'acetaminophen'],

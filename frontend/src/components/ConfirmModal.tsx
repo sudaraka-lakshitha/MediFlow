@@ -1,3 +1,5 @@
+// A simple "Are you sure?" window.
+
 import { Modal } from './Modal';
 
 export function ConfirmModal({ title, message, confirmLabel='Delete', danger=true, onConfirm, onClose, busy=false }:{ title:string; message:string; confirmLabel?:string; danger?:boolean; onConfirm():void; onClose():void; busy?:boolean }) {

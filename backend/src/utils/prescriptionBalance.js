@@ -1,5 +1,13 @@
+// WHAT IS STILL OWED TO THE CUSTOMER
+// When less medicine is given than the doctor prescribed (for example not enough stock), the
+// pharmacist
+// records why and whether the rest will be given later. These helpers work out the "balance to
+// collect"
+// and the "will not be issued" lists shown on bills and receipts.
+
 import { Prisma } from '@prisma/client';
 
+// The prescription line details needed to work out what is still owed.
 export const balanceItemSelect = {
   id: true, prescribedQuantity: true, dispensedQuantity: true, cancelledQuantity: true,
   product: { select: { genericName: true, strength: true, unit: true } },
@@ -9,12 +17,15 @@ export const balanceItemSelect = {
 // (stock or the customer's choice) and whether the rest will be issued later.
 // The decision lives in the bill's event history; the latest record wins.
 export const PARTIAL_SUPPLY_EVENT = 'PARTIAL_SUPPLY_RECORDED';
+// Plain words shown to staff and customers for each reason.
 export const partialReasonLabels = { OUT_OF_STOCK: 'not enough stock', CANNOT_AFFORD: 'customer could not pay for all of it now', CUSTOMER_REQUEST: 'customer asked for less' };
+// The most recent "supplied less" decision for each medicine on a bill.
 export const latestPartialDecisions = (events = []) => {
   const latest = (events || []).filter((event) => event.kind === PARTIAL_SUPPLY_EVENT).pop();
   return new Map((latest?.details?.lines || []).map((line) => [Number(line.prescriptionItemId), line]));
 };
 
+// A readable medicine name with its strength, for example "Paracetamol 500 mg".
 export const medicineName = (product = {}) => `${product.genericName || 'Medicine'}${product.strength && product.strength !== 'N/A' ? ` ${product.strength}` : ''}`;
 
 // later: prescribed quantities not on this bill and not yet supplied or closed,
@@ -46,6 +57,7 @@ export const supplyBalance = (prescriptionItems = [], bill = null, decisions = l
   return { later, notIssued };
 };
 
+// Only the part the customer will still collect later.
 export const balanceToCollect = (prescriptionItems = [], bill = null) => supplyBalance(prescriptionItems, bill).later;
 
 // Prescribed against bought, per medicine, as recorded when the bill was issued

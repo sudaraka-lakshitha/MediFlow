@@ -1,3 +1,12 @@
+// TURNS ANY ERROR INTO A CLEAR REPLY
+// - Our own expected errors (AppError) are sent with their message as it is.
+// - Wrong form input is explained field by field (see config/zodMessages.js).
+// - Database errors such as "already exists" are turned into plain messages.
+// - Anything unexpected is logged in full on the server, but the user only sees a general message
+// with a
+//   reference number. Search the server log for that number to find the real cause.
+// Failed actions are also written to the audit log.
+
 import { Prisma } from '@prisma/client';
 import { ZodError } from 'zod';
 import { logger } from '../config/logger.js';
@@ -5,6 +14,7 @@ import { recordAudit } from '../services/audit.service.js';
 import { AppError } from '../utils/AppError.js';
 import { describeZodError } from '../config/zodMessages.js';
 
+// No route matched the address.
 export const notFound = (_req, _res, next) => next(new AppError(404, 'Route not found.'));
 
 export const errorHandler = (error, req, res, _next) => {

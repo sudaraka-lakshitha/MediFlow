@@ -1,3 +1,6 @@
+// Finds close matches even with small typing mistakes (for example "paracetmol" still finds
+// Paracetamol).
+
 export type FuzzyOption = {
   value: string | number;
   label: string;

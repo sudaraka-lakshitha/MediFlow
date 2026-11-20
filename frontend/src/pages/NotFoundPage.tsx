@@ -1,3 +1,5 @@
+// Shown when an address does not exist.
+
 import { Link } from 'react-router-dom';
 
 export function NotFoundPage() {

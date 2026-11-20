@@ -1,3 +1,6 @@
+// Makes sure the person saving a change still holds the "one person at a time" lock for that record
+// (see services/workflowLease.service.js).
+
 import { workflowLeaseService, requestResource } from '../services/workflowLease.service.js';
 import { logger } from '../config/logger.js';
 

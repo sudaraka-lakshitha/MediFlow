@@ -1,3 +1,5 @@
+// Works out the free stock of a product (on the shelf minus set aside) and shows it in words.
+
 export type ProductStockSummary = {
   available: number;
   inDateOnHand: number;

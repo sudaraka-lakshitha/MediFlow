@@ -1,3 +1,5 @@
+// The "Actions" button with a drop-down list of actions for a table row.
+
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 

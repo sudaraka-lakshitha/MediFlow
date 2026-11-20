@@ -1,3 +1,6 @@
+// Builds simple printable pages (bills, labels). Every value is made safe so nothing in it can run
+// as code.
+
 import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]!);
 const money = (value: unknown) => escape(`Rs. ${Number(value || 0).toFixed(2)}`);

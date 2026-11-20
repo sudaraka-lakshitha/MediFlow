@@ -1,3 +1,6 @@
+// Gives each upload a retry key so a double click does not create two uploads. The prescription
+// itself is never stored here.
+
 import { createBrowserId, fingerprintPayload } from './browserCrypto';
 
 // Store only an opaque retry key and payload hash, never prescription contents.

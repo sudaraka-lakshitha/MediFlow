@@ -1,3 +1,5 @@
+// Rules for sending a returned parcel again.
+
 import { AppError } from './AppError.js';
 import { Prisma } from '@prisma/client';
 

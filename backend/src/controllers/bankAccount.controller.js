@@ -1,3 +1,8 @@
+// Receives the web requests for the pharmacy's bank accounts that customers pay into, calls the
+// matching service, writes the audit log entry and sends the reply.
+// The real rules are in services/bankAccount.service.js. To trace a button: route -> this
+// controller -> service.
+
 import { z } from 'zod';
 import { bankAccountService } from '../services/bankAccount.service.js';
 import { recordAudit } from '../services/audit.service.js';

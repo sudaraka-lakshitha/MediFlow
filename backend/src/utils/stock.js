@@ -1,3 +1,14 @@
+// SETTING STOCK ASIDE AND TAKING IT OFF THE SHELF
+// Simple picture:
+//   1. reserveStock: when a bill is paid (or a prepared order is billed), the medicine is "set
+// aside".
+//      The shelf count does not change; only quantity_reserved goes up.
+//   2. releaseReservations: if the bill is cancelled or the hold runs out, the set-aside stock is
+// freed.
+//   3. consumePaymentRequestStock: when the medicine is handed over, the set-aside stock is removed
+//      from the shelf for real (quantity_available and quantity_reserved both go down).
+// The stock_reservations table remembers exactly which batch each set-aside amount came from.
+
 import { Prisma } from '@prisma/client';
 import { AppError } from './AppError.js';
 
@@ -71,6 +82,8 @@ const consumeReservations = async (tx, paymentRequestId) => {
   return consumed;
 };
 
+// True when the set-aside stock no longer matches the bill (for example a batch expired or the bill
+// changed), so it must be set aside again from fresh batches.
 const reservationsNeedReallocation = (reservations, items, now = new Date()) => {
   if (!reservations.length) return false;
   const reservedByItem = new Map();

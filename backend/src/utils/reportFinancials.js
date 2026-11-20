@@ -1,3 +1,5 @@
+// Money maths for reports (sales, cost, profit, refunds).
+
 import { Prisma } from '@prisma/client';
 const money = (value) => Number(new Prisma.Decimal(value || 0).toDecimalPlaces(2)) || 0;
 

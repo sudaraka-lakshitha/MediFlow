@@ -1,3 +1,5 @@
+// Window where a cashier's day is checked and confirmed (money expected vs money counted).
+
 import { useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { Alert } from './Ui';

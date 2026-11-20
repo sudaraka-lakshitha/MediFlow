@@ -1,3 +1,10 @@
+// THE LIST OF ALL API ADDRESSES
+// Each feature has its own routes file (prescriptions, bills, deliveries...). This file joins them
+// all under /api.
+// To find the code for a button, find its address here, then open that feature's routes file, then
+// its controller,
+// then its service (services/*.js), which holds the real rules.
+
 import { Router } from 'express';
 import { masterDataBulkRoutes } from './masterDataBulk.routes.js';
 import { calendarDate, calendarMonth, reportRange } from '../validators/calendar.js';

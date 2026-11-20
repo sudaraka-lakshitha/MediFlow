@@ -1,3 +1,5 @@
+// A search box that suggests matches while typing.
+
 import { useId, useMemo, useState, type KeyboardEvent } from 'react';
 import { fuzzySuggestions } from '../utils/fuzzy';
 

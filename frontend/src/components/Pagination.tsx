@@ -1,3 +1,5 @@
+// Page number buttons for long lists.
+
 export function Pagination({ page, pageCount, total, pageSize, onPageChange }: { page: number; pageCount: number; total: number; pageSize: number; onPageChange(page: number): void }) {
   if (pageCount <= 1) return null;
   const first = (page - 1) * pageSize + 1;

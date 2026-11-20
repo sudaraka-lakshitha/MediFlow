@@ -1,3 +1,6 @@
+// Gives payments, sales and stock changes a retry key, so pressing the button twice never does the
+// action twice.
+
 import { createBrowserId, fingerprintPayload } from './browserCrypto';
 
 const attempts = new Map<string, string>();

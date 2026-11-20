@@ -1,3 +1,6 @@
+// Shows stored times (UTC) in Sri Lanka time (UTC + 5 hours 30 minutes), and gives today's Sri
+// Lanka date for date boxes.
+
 export const PHARMACY_TIME_ZONE = "Asia/Colombo";
 
 type DateValue = string | number | Date | null | undefined;

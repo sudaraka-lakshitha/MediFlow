@@ -1,3 +1,6 @@
+// DISCOUNTS PAGE
+// Create and manage discount rules and coupon codes.
+
 import { formatPharmacyDate, formatPharmacyDateTimeInput, pharmacyDateTimeInputToISOString } from "../utils/pharmacyTime";
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, errorMessage } from '../api/client';

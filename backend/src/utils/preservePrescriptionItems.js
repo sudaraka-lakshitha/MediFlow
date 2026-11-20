@@ -1,3 +1,6 @@
+// When a prescription is edited, keeps lines that already have history and only adds, changes or
+// removes what is needed.
+
 import { Prisma } from '@prisma/client';
 import { AppError } from './AppError.js';
 

@@ -1,3 +1,5 @@
+// Add or update many stock batches from a spreadsheet, checked first and saved in small groups.
+
 import { createHash, randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { Prisma } from '@prisma/client';

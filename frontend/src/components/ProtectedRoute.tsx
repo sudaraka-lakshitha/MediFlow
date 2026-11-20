@@ -1,3 +1,5 @@
+// Only lets signed-in users with the right role open a page; others go to the sign-in page.
+
 import { Navigate, Outlet } from "react-router-dom";
 import { type Role } from "../auth/AuthSession";
 import { useAuth } from "../auth/useAuth";

@@ -1,3 +1,6 @@
+// Input rules for discount rules and coupon codes. Wrong or missing input is stopped here with a
+// clear message, before it reaches the services.
+
 import { z } from 'zod';
 
 export const discountRuleSchema = z.object({

@@ -1,9 +1,14 @@
+// DRUG RESEARCH PAGE
+// Search drug information (uses, warnings, label sections). It only reads information; it does not
+// change prescriptions or stock.
+
 import { formatPharmacyTime } from "../utils/pharmacyTime";
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, errorMessage } from '../api/client';
 import { Alert, Empty, Loading } from '../components/Ui';
 import { PredictiveSearchInput } from '../components/PredictiveSearchInput';
 
+// The page.
 export function DrugResearchPage() {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<any[]>([]);
@@ -12,6 +17,7 @@ export function DrugResearchPage() {
   const [loading, setLoading] = useState(false);
   const sequence = useRef(0);
 
+  // Search for a drug name and show the results.
   const runSearch = async (term: string) => {
     const normalized = term.trim();
     if (normalized.length < 2) {
@@ -54,6 +60,7 @@ export function DrugResearchPage() {
     };
   }, [query]);
 
+  // Search when the form is sent.
   const submit = (event: FormEvent) => {
     event.preventDefault();
     runSearch(query);
@@ -432,6 +439,7 @@ export function DrugResearchPage() {
   );
 }
 
+// One section of a drug label (for example warnings or dosage).
 function LabelSection({
   title,
   text,

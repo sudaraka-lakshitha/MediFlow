@@ -1,3 +1,5 @@
+// Staff accounts: create, edit, switch off, reset password, and give a pharmacist cashier access.
+
 import bcrypt from 'bcrypt';
 import { prisma } from '../config/prisma.js';
 import { userRepository } from '../repositories/user.repository.js';

@@ -1,3 +1,10 @@
+// SETTINGS FROM THE .env FILE
+// Every setting the server needs is checked here when it starts. If one is missing or wrong
+// (for example JWT_SECRET shorter than 32 characters), the server stops at once with a clear
+// message,
+// instead of failing later in a confusing way.
+// REPORT_TIMEZONE_OFFSET_MINUTES = 330 means Sri Lanka time (UTC + 5 hours 30 minutes).
+
 import 'dotenv/config';
 import { z } from 'zod';
 

@@ -1,3 +1,5 @@
+// Shows a PDF (bill, receipt, invoice) inside the page, with download and print buttons.
+
 import { useEffect, useRef, useState } from 'react';
 import { deliveryStatusLabel } from '../utils/deliveryStatus';
 import { api, errorMessage } from '../api/client';

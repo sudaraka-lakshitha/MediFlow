@@ -1,3 +1,7 @@
+// STAFF ACCOUNTS PAGE (admin)
+// Create and edit staff, reset passwords, give a pharmacist cashier access, switch accounts off,
+// and sign a user out of every device.
+
 import { formatPharmacyDate, formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { personNameInputProps } from '../utils/personName';
 import { useCallback, useEffect, useState, type FormEvent } from "react";
@@ -39,6 +43,7 @@ const empty = {
   deliveryRefundApprovalAccess: false,
 };
 
+// The page.
 export function UsersPage() {
   const { user: current } = useAuth();
   const navigate = useNavigate();
@@ -67,12 +72,14 @@ export function UsersPage() {
     return () => clearTimeout(timer);
   }, [load]);
   const pagination = useClientPagination(rows, 25);
+  // Open an empty form for a new staff member.
   const openCreate = () => {
     setError("");
     setSelected(null);
     setForm({ ...empty });
     setModal("create");
   };
+  // Open the form filled with this person's details.
   const openEdit = (row: UserRow) => {
     setError("");
     setSelected(row);
@@ -88,12 +95,14 @@ export function UsersPage() {
     });
     setModal("edit");
   };
+  // Open the password reset window.
   const openReset = (row: UserRow) => {
     setError("");
     setSelected(row);
     setForm({ ...empty, password: "" });
     setModal("reset");
   };
+  // Save the staff form (new or edited).
   const save = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
@@ -124,6 +133,7 @@ export function UsersPage() {
       setBusy(false);
     }
   };
+  // Switch an account off or on.
   const toggle = async (row: UserRow) => {
     try {
       setNotice("");
@@ -133,6 +143,7 @@ export function UsersPage() {
       setError(errorMessage(e));
     }
   };
+  // Delete or deactivate a staff account.
   const remove = async () => {
     if (!confirm) return;
     setBusy(true);
@@ -147,6 +158,7 @@ export function UsersPage() {
       setBusy(false);
     }
   };
+  // Sign this user out of every device at once.
   const revokeSessions = async () => {
     if (!revokeTarget) return;
     setBusy(true);

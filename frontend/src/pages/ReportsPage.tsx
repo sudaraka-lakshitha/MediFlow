@@ -1,3 +1,6 @@
+// REPORTS PAGE
+// Sales, profit and stock reports for a chosen date range, with charts and downloads.
+
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { Alert, Empty, Loading, Metric } from '../components/Ui';

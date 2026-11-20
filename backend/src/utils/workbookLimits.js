@@ -1,3 +1,5 @@
+// Size limits for uploaded spreadsheets.
+
 export const workbookLimits = {
   delivery: { maxBytes: 1_000_000, maxRows: 1000, maxColumns: 20 },
   stock: { maxBytes: 2_000_000, maxRows: 2000, maxColumns: 30 },

@@ -1,3 +1,5 @@
+// Keeps a delivery in step when its bill is cancelled.
+
 import { AppError } from './AppError.js';
 
 // Run inside the invoice cancellation transaction. No payout is performed here.

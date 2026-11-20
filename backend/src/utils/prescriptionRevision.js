@@ -1,3 +1,5 @@
+// Detects whether a change to a prescription matters, so it must be checked again by a pharmacist.
+
 const text = (value) => value == null || value === '' ? null : String(value);
 const number = (value) => value == null ? null : Number(value);
 const date = (value) => value ? new Date(value).toISOString() : null;

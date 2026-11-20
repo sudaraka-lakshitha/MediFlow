@@ -1,3 +1,6 @@
+// DATA EXPORTS PAGE (admin)
+// Download copies of the data as CSV, Excel or PDF. Times are shown in Sri Lanka time.
+
 import { useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { Alert } from '../components/Ui';

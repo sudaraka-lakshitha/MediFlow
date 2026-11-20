@@ -1,3 +1,5 @@
+// Window to upload many products from a spreadsheet, with a preview before saving.
+
 import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { Modal } from './Modal';

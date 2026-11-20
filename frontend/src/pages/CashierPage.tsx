@@ -1,3 +1,13 @@
+// CASHIER PAGE
+// Where the cashier takes payment for bills, checks bank slips, cancels bills (fully or partly) and
+// makes
+// over-the-counter sales. After payment the customer gets a collection PIN, except for home-
+// delivery orders.
+// How this file is laid out:
+//   1. Small helpers at the top
+//   2. CashierPage: loading data, then the actions behind each button, then the layout
+// Server rules: backend/src/services/paymentRequest.service.js
+
 import { formatPharmacyDate, formatPharmacyDateTime } from "../utils/pharmacyTime";
 import {
   useCallback,
@@ -22,10 +32,13 @@ import { SearchableSelect } from "../components/SearchableSelect";
 import { Alert, Empty, Loading, Metric, Status, LockedReason } from "../components/Ui";
 import { lockReason } from "../utils/lockReason";
 
+// Shows an amount as Sri Lankan rupees.
 const money = (value: unknown) => `Rs. ${Number(value || 0).toFixed(2)}`;
+// A short key that identifies one cancellation choice, so the same preview is not fetched twice.
 const cancellationKey = (value: any) => `${value.id}:${value.selectedItemIds.join(',')}:${JSON.stringify(value.quantities || {})}`;
 // Home-delivery orders and delivery-fee bills leave by courier: no collection PIN.
 const isHomeDelivery = (bill: any) => Boolean(bill?.deliveryFeeFor) || Boolean(bill?.delivery && bill.delivery.status !== "CANCELLED");
+// A blank over-the-counter sale form.
 const emptyRetail = () => ({
   patientId: "",
   couponCode: "",
@@ -36,6 +49,7 @@ const emptyRetail = () => ({
 });
 
 import { WorkflowGuard } from '../components/WorkflowGuard';
+// The page. State first, then loading data, then button actions, then the layout.
 export function CashierPage() {
   const [documentPreview, setDocumentPreview] = useState<DocumentTarget | null>(null);
   const { user } = useAuth();
@@ -154,19 +168,25 @@ export function CashierPage() {
       ),
     [rows, search, status],
   );
+  // Open the payment window for a bill.
   const openPayment = (row: any) => {
     const total = Number(row.total);
     // Delivery fees are paid by bank transfer only.
     setPayment({ ...row, paymentMethod: row.deliveryFeeFor ? "BANK_TRANSFER" : "CASH", paymentReference: "", tenderedAmount: String(total), splitCashAmount: "", splitNonCashMethod: "CARD", splitNonCashAmount: "", splitNonCashReference: "", splitCashTendered: "" });
   };
+  // A cashier may cancel a paid bill themselves only on the same day it was paid (Sri Lanka date).
+  // Older ones need an admin.
   const canDirectlyCancelPaidBill = (row: any) => isAdmin || (
     (user?.role === "CASHIER" || (user?.role === "PHARMACIST" && user.cashierAccess))
     && Boolean(row.paidAt)
     && formatPharmacyDate(row.paidAt) === formatPharmacyDate(new Date())
   );
+  // Show the bill or receipt PDF.
   const openPdf = async (row: any, kind: "handoff" | "receipt") => {
     setDocumentPreview({ id: row.id, kind, name: row.requestNumber });
   };
+  // Take the payment (cash, card or split). The server checks the amounts again and returns the
+  // collection PIN.
   const submitPayment = async (event: FormEvent) => {
     event.preventDefault();
     if (!payment) return;
@@ -259,6 +279,7 @@ export function CashierPage() {
       setBusy(false);
     }
   };
+  // Cancel a paid bill. Any money to give back becomes a refund waiting for payout.
   const submitRevoke = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -282,6 +303,7 @@ export function CashierPage() {
       setBusy(false);
     }
   };
+  // Remove some lines from a bill.
   const submitPartialCancel = async (event: FormEvent) => {
     event.preventDefault();
     if (!partialCancel) return;
@@ -319,6 +341,7 @@ export function CashierPage() {
       setBusy(false);
     }
   };
+  // Cancel an unpaid bill.
   const submitCancelBill = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -342,6 +365,7 @@ export function CashierPage() {
       setBusy(false);
     }
   };
+  // When the cashier is not allowed to cancel a paid bill, send it to an administrator to approve.
   const sendCancellationForAdminApproval = async () => {
     if (!cancellationOverride || busy) return;
     const reason = String(cancellationOverride.customerCancellationReason || "").trim();
@@ -399,6 +423,7 @@ export function CashierPage() {
     };
   }, [slipReview?.row?.id, slipReview?.slip?.id, slipReview?.slip]);
 
+  // Accept or reject a customer's bank slip.
   const submitSlipReview = async (approved: boolean) => {
     setBusy(true);
     setError("");
@@ -426,6 +451,7 @@ export function CashierPage() {
     }
   };
 
+  // Open the over-the-counter sale window.
   const openRetail = async () => {
     setError("");
     try {
@@ -436,6 +462,7 @@ export function CashierPage() {
       setError(errorMessage(caught));
     }
   };
+  // Change one line of the over-the-counter sale.
   const updateRetailItem = (index: number, changes: object) =>
     setRetail({
       ...retail,
@@ -456,9 +483,11 @@ export function CashierPage() {
         0,
       )
     : 0;
+  // Show a sale's invoice PDF.
   const openSaleInvoice = async (sale: any) => {
     setDocumentPreview({ id: sale.id, kind: 'invoice', name: sale.invoiceNumber });
   };
+  // Save the over-the-counter sale.
   const submitRetail = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);

@@ -1,3 +1,5 @@
+// Settings for the API documentation pages (/docs).
+
 import swaggerJsdoc from 'swagger-jsdoc';
 
 const operation = (summary, tags, options = {}) => ({

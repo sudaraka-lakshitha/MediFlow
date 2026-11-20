@@ -1,3 +1,6 @@
+// MY PROFILE (patient)
+// A patient sees and updates their own details and notices from the pharmacy.
+
 import { personNameInputProps } from '../utils/personName';
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api/client";

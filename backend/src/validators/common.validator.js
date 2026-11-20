@@ -1,3 +1,6 @@
+// Input rules for shared things such as record numbers in addresses and search boxes. Wrong or
+// missing input is stopped here with a clear message, before it reaches the services.
+
 import { z } from 'zod';
 
 export const idParams = z.object({ id: z.coerce.number().int().positive() });

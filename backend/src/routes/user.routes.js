@@ -1,3 +1,7 @@
+// API addresses for staff accounts.
+// For each address: who may use it (signed in, which role), which input checks run first, and which
+// controller handles it.
+
 import { Router } from 'express';
 import { userController } from '../controllers/user.controller.js';
 import { authenticate } from '../middleware/authenticate.js';

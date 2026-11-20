@@ -1,3 +1,5 @@
+// Builds Excel files for downloads.
+
 import ExcelJS from 'exceljs';
 import { AppError } from '../utils/AppError.js';
 

@@ -1,3 +1,5 @@
+// Small shared pieces: the message box (Alert) and the "locked because..." note (LockedReason).
+
 import type { ReactNode } from 'react';
 
 export const Loading = () => <div className="loading" role="status" aria-live="polite"><span className="spinner-border spinner-border-sm" aria-hidden="true" /> Loading...</div>;

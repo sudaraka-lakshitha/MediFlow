@@ -1,3 +1,6 @@
+// Upload many categories, manufacturers or suppliers from a spreadsheet. Rows are checked first and
+// saved in small groups.
+
 import { createHash, randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import ExcelJS from 'exceljs';

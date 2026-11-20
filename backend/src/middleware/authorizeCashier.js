@@ -1,3 +1,6 @@
+// Cashier pages: allowed for admins, cashiers, and pharmacists that an admin has given cashier
+// access.
+
 import { AppError } from '../utils/AppError.js';
 
 export const authorizeCashier = (req, _res, next) => {

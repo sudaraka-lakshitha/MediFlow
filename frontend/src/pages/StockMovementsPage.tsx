@@ -1,3 +1,7 @@
+// STOCK MOVEMENTS PAGE
+// The history of every stock change (received, sold, dispensed, adjusted, disposed), to trace any
+// stock number.
+
 import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { errorMessage } from "../api/client";

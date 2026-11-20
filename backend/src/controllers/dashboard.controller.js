@@ -1,3 +1,8 @@
+// DASHBOARD
+// Works out the numbers and charts on the dashboard (today's sales, prescriptions by status, stock warnings,
+// recent activity). Unlike most features, the queries are written directly in this file, not in a service.
+// "Today" and "this month" use Sri Lanka days (see REPORT_TIMEZONE_OFFSET_MINUTES).
+
 import { prisma } from '../config/prisma.js';
 import { env } from '../config/env.js';
 import { operationSettingsService } from '../services/operationSettings.service.js';

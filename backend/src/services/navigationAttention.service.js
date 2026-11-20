@@ -1,3 +1,6 @@
+// Counts the items that need attention for each menu entry (new uploads, bills to check, deliveries
+// to dispatch...).
+
 import { prisma } from '../config/prisma.js';
 import { operationSettingsService } from './operationSettings.service.js';
 import { lowStockState } from '../utils/lowStock.js';

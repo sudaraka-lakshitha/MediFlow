@@ -1,3 +1,5 @@
+// Products, categories, manufacturers and suppliers: list, add, edit and switch off.
+
 import { prisma } from '../config/prisma.js';
 import { DEFAULT_TRANSACTION_OPTIONS } from '../utils/serializable.js';
 import { catalogRepository } from '../repositories/catalog.repository.js';

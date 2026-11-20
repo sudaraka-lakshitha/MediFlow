@@ -1,3 +1,5 @@
+// Lets a patient add or remove extra files on an upload.
+
 import { useEffect, useState } from 'react';
 import { api, errorMessage } from '../api/client';
 export function UploadAttachmentSelector({ uploadId, onLoad }: { uploadId: number; onLoad(blob: Blob): void }) {

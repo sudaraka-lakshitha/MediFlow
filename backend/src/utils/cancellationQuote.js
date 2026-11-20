@@ -1,3 +1,5 @@
+// Works out the new total and the refund when lines are removed from a bill.
+
 import { Prisma } from '@prisma/client';
 import { AppError } from './AppError.js';
 import { stockQuantity } from './stockQuantity.js';

@@ -1,3 +1,5 @@
+// Shows what a bill will look like before it is saved.
+
 import { patientMedicineInstructions } from './patientMedicineInstructions.js';
 // Deliberately exclude PIN secrets, attachment data and unrelated patient records.
 export const billingPreview = (record) => ({

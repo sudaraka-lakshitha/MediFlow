@@ -1,3 +1,6 @@
+// Searches drug information for the Drug Research page. It only reads data; nothing here changes
+// stock or prescriptions.
+
 import { AppError } from '../utils/AppError.js';
 import { prisma } from '../config/prisma.js';
 

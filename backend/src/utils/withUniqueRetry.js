@@ -1,3 +1,5 @@
+// Tries again with a new number if a generated bill or invoice number already exists.
+
 import { Prisma } from '@prisma/client';
 
 // Retries a record-creation callback a few times if it collides on a unique

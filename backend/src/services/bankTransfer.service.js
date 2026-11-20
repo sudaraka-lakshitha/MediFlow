@@ -1,3 +1,8 @@
+// CONFIRMED BANK TRANSFERS
+// When the cashier sees money arrive in the pharmacy's bank account, they record it here.
+// That money can then be used to pay one or more of the customer's bills.
+// The same transfer (same account, reference and date) can never be recorded twice.
+
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { serializable } from '../utils/serializable.js';
@@ -5,12 +10,15 @@ import { assertUnusedBankReference } from '../utils/bankReference.js';
 import { AppError } from '../utils/AppError.js';
 import { bankAccountIdentity } from '../utils/bankAccountIdentity.js';
 const include = { bankAccount: { select: { bankName: true, accountNumber: true } }, patient: { select: { fullName: true } }, allocations: { include: { paymentRequest: { select: { requestNumber: true, status: true } } }, orderBy: { id: 'asc' } } };
+// Only cashier-level staff can record transfers.
 const cashier = user => { if (!(user.role === 'ADMIN' || user.role === 'CASHIER' || (user.role === 'PHARMACIST' && user.cashierAccess))) throw new AppError(403, 'Cashier access is required.'); };
 export const bankTransferService = {
+  // List recorded transfers.
   async list(user, { page = 1, pageSize = 50, search } = {}) {
     cashier(user);
     return prisma.bankTransfer.findMany({ where: search ? { OR: [{ reference: { contains: search } }, { patient: { fullName: { contains: search } } }, { bankAccount: { accountNumber: { contains: search } } }] } : {}, include, orderBy: { id: 'desc' }, skip: (page - 1) * pageSize, take: pageSize });
   },
+  // Record a transfer that the cashier has confirmed on the bank statement.
   async create(input, user) {
     cashier(user);
     if (input.bankVerified !== true) throw new AppError(400, 'Confirm receipt against the bank statement, not only the uploaded slip.');
@@ -37,6 +45,7 @@ export const bankTransferService = {
       return transfer;
     });
   },
+  // Unpaid bills of the same customer that this transfer could pay.
   async invoices(transferId, search, user) {
     cashier(user);
     const transfer = await prisma.bankTransfer.findUnique({ where: { id: transferId } });

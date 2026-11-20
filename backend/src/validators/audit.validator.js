@@ -1,3 +1,6 @@
+// Input rules for the audit log page and "My activity". Wrong or missing input is stopped here with
+// a clear message, before it reaches the services.
+
 import { z } from 'zod';
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);

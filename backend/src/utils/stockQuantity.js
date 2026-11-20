@@ -1,3 +1,5 @@
+// Checks stock quantities are sensible (whole units, or millilitres for liquids).
+
 import { Prisma } from '@prisma/client';
 import { AppError } from './AppError.js';
 import { isCountableUnit } from './unitMeasure.js';

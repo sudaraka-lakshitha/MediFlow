@@ -1,3 +1,6 @@
+// The shapes of a user and of the sign-in information shared by all pages (roles: ADMIN,
+// PHARMACIST, CASHIER, PATIENT).
+
 import { createContext } from "react";
 
 export type Role = "ADMIN" | "PHARMACIST" | "CASHIER" | "PATIENT";

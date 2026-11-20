@@ -1,3 +1,6 @@
+// Checks that a delivery action has the details it needs (for example a tracking number for
+// dispatch).
+
 import { AppError } from './AppError.js';
 
 export async function validateDeliveryAction(tx, delivery, input) {

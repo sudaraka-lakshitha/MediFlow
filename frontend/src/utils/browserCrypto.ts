@@ -1,3 +1,5 @@
+// Makes random IDs and fingerprints in the browser (used for retry keys and window IDs).
+
 const cryptoApi = () =>
   typeof globalThis.crypto === "undefined" ? undefined : globalThis.crypto;
 

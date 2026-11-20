@@ -1,3 +1,5 @@
+// Starts the website: loads the styles and shows the App.
+
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import 'bootstrap/dist/css/bootstrap.min.css'

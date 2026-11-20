@@ -1,3 +1,9 @@
+// ONE PERSON AT A TIME
+// When a staff member opens a prescription, bill or upload to work on it, they get a short "lock"
+// (called a lease). Anyone else who tries to change the same record gets a message to wait.
+// This stops two people, or two browser windows, changing the same order at the same moment.
+// Locks run out by themselves if the window is closed, so a record is never stuck for long.
+
 import crypto from 'node:crypto';
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
@@ -11,6 +17,8 @@ const authorize = (patientId, user) => {
 };
 
 export const workflowLeaseService = {
+  // Works out which record is really being edited. For example, a bill belongs to its prescription,
+  // so both share one lock.
   async resource(kind, id, user) {
     id = Number(id);
     if (!Number.isSafeInteger(id) || id <= 0) throw missing();
@@ -38,11 +46,13 @@ export const workflowLeaseService = {
     }
     throw missing();
   },
+  // Who is asking for the lock: the user, their sign-in session and their browser window.
   owner(req) {
     const clientId = req.get('X-Workflow-Client');
     if (!clientId || !/^[a-f0-9-]{36}$/i.test(clientId) || !req.authSession?.id) throw new AppError(400, 'Refresh the page before processing this request.');
     return { userId: req.user.id, sessionId: req.authSession.id, clientId };
   },
+  // Take the lock, or renew it if you already have it. Refused if someone else holds it.
   async acquire(resourceKey, owner, expectedToken = null) {
     const now = new Date(), expiresAt = new Date(now.getTime() + TTL);
     if (expectedToken) {
@@ -75,6 +85,7 @@ export const workflowLeaseService = {
     if (!claimed.count) throw conflict();
     return { resourceKey, token, expiresAt, processing: false };
   },
+  // Keep the lock alive while a long action (such as a payment) is still running.
   async renewProcessing(resourceKey, owner, token) {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + TTL);
@@ -82,9 +93,11 @@ export const workflowLeaseService = {
     if (!renewed.count) throw conflict();
     return { resourceKey, token, expiresAt, processing: true };
   },
+  // Give the lock back when the person closes the record.
   async release(resourceKey, owner, token) {
     await prisma.workflowLease.deleteMany({ where: { resourceKey, ...owner, token, processing: false } });
   },
+  // Mark that a save has started, so the lock cannot run out halfway through.
   async begin(resourceKey, owner, token) {
     const transient = !token;
     const lease = token ? { resourceKey, token } : await this.acquire(resourceKey, owner);
@@ -99,6 +112,7 @@ export const workflowLeaseService = {
     }
     return { ...lease, transient };
   },
+  // Check, inside a save, that the lock still belongs to this person.
   async pinForTransaction(tx, lease, owner) {
     const now = new Date();
     // Updating these rows inside the business transaction also locks them until
@@ -106,12 +120,14 @@ export const workflowLeaseService = {
     const pinned = await tx.workflowLease.updateMany({ where: { resourceKey: lease.resourceKey, ...owner, token: lease.token, processing: true, expiresAt: { gt: now } }, data: { expiresAt: new Date(now.getTime() + TTL) } });
     if (!pinned.count) throw conflict();
   },
+  // Clear the "save in progress" mark when the save ends.
   async finish(lease, owner) {
     if (lease.transient) await prisma.workflowLease.deleteMany({ where: { resourceKey: lease.resourceKey, ...owner, token: lease.token } });
     else await prisma.workflowLease.updateMany({ where: { resourceKey: lease.resourceKey, ...owner, token: lease.token }, data: { processing: false, expiresAt: new Date(Date.now() + TTL) } });
   },
 };
 
+// Reads which record a web request is about.
 export function requestResource(req) {
   // Express accepts trailing slashes, case variations and encoded route params.
   // Normalize the same forms so a URL spelling cannot bypass the workflow lock.

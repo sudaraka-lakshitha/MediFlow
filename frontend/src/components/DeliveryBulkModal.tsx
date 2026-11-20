@@ -1,3 +1,5 @@
+// Window to update many deliveries at once from a spreadsheet (for example tracking numbers).
+
 import { useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { parseCsv } from '../utils/csv';

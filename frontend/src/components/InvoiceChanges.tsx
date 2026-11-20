@@ -1,3 +1,5 @@
+// Shows what changed on a bill since the customer last accepted it.
+
 import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 const money = (value: unknown) => `Rs. ${Number(value || 0).toFixed(2)}`;
 

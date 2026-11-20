@@ -1,3 +1,5 @@
+// Creates CSV files. Values that could run as spreadsheet formulas are made safe.
+
 import { Prisma } from '@prisma/client';
 import { once } from 'node:events';
 

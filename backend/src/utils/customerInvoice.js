@@ -1,3 +1,5 @@
+// The invoice details shown to a customer.
+
 import { patientMedicineInstructions } from './patientMedicineInstructions.js';
 // Explicit allowlist: new internal invoice fields must not become customer data by default.
 const pick = (record, keys) => Object.fromEntries(keys.filter((key) => record[key] !== undefined).map((key) => [key, record[key]]));

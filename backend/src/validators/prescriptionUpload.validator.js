@@ -1,3 +1,6 @@
+// Input rules for prescriptions uploaded by patients. Wrong or missing input is stopped here with a
+// clear message, before it reaches the services.
+
 import { optionalPersonNameSchema } from './personName.js';
 import { z } from 'zod';
 import { notFutureCalendarDate } from './calendar.js';

@@ -1,3 +1,5 @@
+// A password box with a show/hide button.
+
 import { useId, useState } from 'react';
 
 export function PasswordField({ value, onChange, label='Password', required=true, autoComplete='new-password' }:{ value:string; onChange(value:string):void; label?:string; required?:boolean; autoComplete?:string }) {

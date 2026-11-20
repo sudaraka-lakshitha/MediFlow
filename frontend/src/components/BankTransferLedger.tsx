@@ -1,3 +1,6 @@
+// Cashier list of confirmed bank transfers, with a form to record a new one from the bank
+// statement.
+
 import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { useCallback, useEffect, useState } from 'react';
 import { api, errorMessage } from '../api/client';

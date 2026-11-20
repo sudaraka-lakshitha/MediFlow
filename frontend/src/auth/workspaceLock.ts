@@ -1,3 +1,5 @@
+// Remembers whether the screen is locked and how many saves are still running.
+
 let locked = false;
 let writes = 0;
 let version = 0;

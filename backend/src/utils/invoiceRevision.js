@@ -1,3 +1,5 @@
+// Detects whether a change to a bill matters to the customer, so they must accept it again.
+
 const number = (value) => Number(value || 0).toFixed(3);
 export const invoiceSnapshot = (bill) => ({
   subtotal: number(bill.subtotal), discount: number(bill.discount), tax: number(bill.tax),

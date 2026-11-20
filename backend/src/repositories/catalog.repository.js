@@ -1,3 +1,5 @@
+// Ready-made database queries for the product catalogue.
+
 import { prisma } from '../config/prisma.js';
 
 export const catalogRepository = {

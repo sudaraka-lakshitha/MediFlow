@@ -1,3 +1,8 @@
+// DELIVERY FEE BILL
+// A home delivery gets its own small bill for the courier fee, separate from the medicines.
+// It can only be paid by bank transfer, so it needs a fee amount and an active pharmacy bank
+// account.
+
 import crypto from 'node:crypto';
 import { AppError } from './AppError.js';
 

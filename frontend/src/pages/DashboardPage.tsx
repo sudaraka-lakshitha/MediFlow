@@ -1,3 +1,8 @@
+// DASHBOARD PAGE
+// The first page after signing in: today's figures, prescriptions by status, stock warnings, a
+// sales chart and recent activity. The numbers come from
+// backend/src/controllers/dashboard.controller.js.
+
 import { formatPharmacyDate, formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
@@ -6,6 +11,7 @@ import { useAuth } from "../auth/useAuth";
 import { Alert, Empty, Loading, Metric, Status } from "../components/Ui";
 import { DashboardActivity } from "../components/DashboardActivity";
 
+// Shows an amount as Sri Lankan rupees.
 const money = (value: number) =>
   `Rs. ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const prescriberLabel = (prescription: any) =>
@@ -21,6 +27,7 @@ const statusColours = [
   "#78908c",
 ];
 
+// Draws the smooth line of the sales chart.
 const buildSmoothPath = (
   points: { x: number; y: number }[],
   yBounds?: [number, number],
@@ -43,6 +50,7 @@ const buildSmoothPath = (
   return d;
 };
 
+// The sales chart for the last days.
 function SalesActivityChart({ series }: { series: any[] }) {
   const width = 700;
   const height = 240;
@@ -143,6 +151,7 @@ function SalesActivityChart({ series }: { series: any[] }) {
   );
 }
 
+// The page.
 export function DashboardPage() {
   const { user } = useAuth();
   const [data, setData] = useState<any>(null);

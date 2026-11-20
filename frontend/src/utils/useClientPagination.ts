@@ -1,3 +1,5 @@
+// Splits a list into pages in the browser.
+
 import { useEffect, useMemo, useState } from 'react';
 
 export function useClientPagination<T>(rows: T[], pageSize = 25) {

@@ -1,3 +1,11 @@
+// STARTS THE SERVER
+// Also starts three small background clean-ups:
+//   - every minute: free stock held for unpaid cash orders whose time has run out
+//   - every hour: delete uploaded prescription files past their keeping period (order history is
+// kept)
+//   - every hour: permanently delete audit-log trash older than the keeping period
+// On shutdown it closes the database connection cleanly.
+
 import { app } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';

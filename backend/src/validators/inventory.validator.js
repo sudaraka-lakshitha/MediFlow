@@ -1,3 +1,6 @@
+// Input rules for stock batches: receiving, correcting, restricting and disposing of stock. Wrong
+// or missing input is stopped here with a clear message, before it reaches the services.
+
 import { z } from 'zod';
 import { moneySchema } from './money.js';
 import { base64WorkbookLimit } from '../utils/workbookLimits.js';

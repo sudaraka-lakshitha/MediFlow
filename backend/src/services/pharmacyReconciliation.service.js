@@ -1,3 +1,5 @@
+// The pharmacy's end-of-day confirmation that the day's money and records match.
+
 import { pharmacyBalanceFingerprint } from '../utils/pharmacyBalanceFingerprint.js';
 import { prisma } from '../config/prisma.js';
 import { reconciliationService } from './reconciliation.service.js';

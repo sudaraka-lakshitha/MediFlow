@@ -1,3 +1,8 @@
+// SALES (invoices)
+// A sale is the final record made when medicines are actually handed over.
+// This file lists sales, records over-the-counter sales, and voids a sale when it was a mistake
+// (the stock goes back on the shelf and a refund record is made).
+
 import crypto from 'node:crypto';
 import { historySearch } from '../utils/historySearch.js';
 import { Prisma } from '@prisma/client';
@@ -17,9 +22,11 @@ import { assertRetailAgeSuitability } from '../utils/ageSuitability.js';
 import { usableQuantity, usableStockTotal } from '../utils/stock.js';
 import { invoiceDispensingInclude } from '../utils/patientMedicineInstructions.js';
 
+// The related details loaded with every sale (people, items, payments).
 const saleDetailInclude = { patient: { select: { fullName: true } }, pharmacist: { select: { fullName: true } }, cashier: { select: { fullName: true } }, paymentRequest: { select: { requestNumber: true } }, items: { include: { product: true, batch: true } }, discountApplications: true };
 
 export const saleService = {
+  // List sales page by page. Patients only see their own.
   async list(user, { page = 1, pageSize = 300, search } = {}) {
     const sales = await prisma.sale.findMany({
       where: { ...(user.role === 'PATIENT' ? { patientId: user.id } : {}), ...historySearch(search, ['invoiceNumber', 'patient.fullName', 'paymentRequest.requestNumber']) },
@@ -28,6 +35,7 @@ export const saleService = {
     });
     return user.role === 'PATIENT' ? sales.map(customerInvoice) : sales.map((sale) => ({ ...sale, financials: saleFinancials(sale) }));
   },
+  // Load one sale, checking the person may see it.
   async getForUser(id, user) {
     const sale = await prisma.sale.findFirst({
       // Pharmacy staff share invoice read access, as they do in the sales list.
@@ -41,6 +49,7 @@ export const saleService = {
     const withBalance = { ...sale, balanceToCollect: later, notToBeIssued: notIssued, supplyRows: sale.status === 'VOIDED' ? [] : supplyRows(sale.paymentRequest?.events) };
     return user.role === 'PATIENT' ? customerInvoice(withBalance) : withBalance;
   },
+  // Record payment against a sale that was not fully paid.
   async pay(id, amount, paymentMethod, cashierId, reference) {
     return serializable(async (tx) => {
     const sale = await tx.sale.findUnique({ where: { id } });
@@ -59,6 +68,7 @@ export const saleService = {
     return tx.sale.findUnique({ where: { id } });
     });
   },
+  // A quick over-the-counter sale: stock is taken off the shelf and payment is recorded at once.
   async createRetail(input, pharmacistId) {
     return serializable(async (tx) => {
       const actor = await tx.user.findUnique({ where: { id: pharmacistId }, select: { role: true, cashierAccess: true } });
@@ -106,6 +116,8 @@ export const saleService = {
       return tx.sale.findUnique({ where: { id: sale.id }, include: { patient: { select: { fullName: true } }, items: { include: { product: true, batch: true } }, discountApplications: true } });
     });
   },
+  // Cancel a finished sale by mistake. The stock is returned and a refund record is created. The
+  // reason is saved in the audit log.
   async voidSale(id, reason, userId, userRole) {
     return serializable(async (tx) => {
       const sale = await tx.sale.findUnique({ where: { id }, include: { items: true } });

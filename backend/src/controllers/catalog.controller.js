@@ -1,3 +1,8 @@
+// Receives the web requests for the product catalogue: products, categories, manufacturers and
+// suppliers, calls the matching service, writes the audit log entry and sends the reply.
+// The real rules are in services/catalog.service.js. To trace a button: route -> this controller ->
+// service.
+
 import { catalogService } from '../services/catalog.service.js';
 import { recordAudit } from '../services/audit.service.js';
 import { toCsv, streamCsv } from '../utils/csv.js';

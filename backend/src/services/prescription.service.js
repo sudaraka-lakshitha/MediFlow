@@ -1,3 +1,10 @@
+// PRESCRIPTIONS
+// This file covers a prescription's life on the pharmacist's side: entering it, editing it,
+// checking (verifying) it, sending it to the cashier, giving out the medicines, refills,
+// rejecting it and closing a balance that will never be supplied.
+// Status steps: PENDING -> VERIFIED -> PARTIALLY_DISPENSED / DISPENSED, or REJECTED.
+// Most actions run as one all-or-nothing database step, so a half-finished change is never saved.
+
 import crypto from 'node:crypto';
 import { patientDirections } from '../utils/patientDirections.js';
 import { Prisma } from '@prisma/client';
@@ -21,10 +28,14 @@ import { cancelPrescriptionQuantity, remainingPrescriptionQuantity } from '../ut
 import { prescriptionMaterialChanged, prescriptionSnapshot } from '../utils/prescriptionRevision.js';
 import { planPrescriptionItems } from '../utils/preservePrescriptionItems.js';
 import { localDateKey } from '../utils/localDate.js';
+// True for syrups and other liquids. Liquids are counted in millilitres, so their quantities are
+// worked out differently.
 const isLiquidProduct = (product) =>
   ['ml', 'millilitre', 'milliliter', 'l', 'litre', 'liter'].includes(String(product?.unit || '').toLowerCase())
   || /syrup|suspension|solution|elixir|liquid/i.test(String(product?.dosageForm || ''));
 
+// Stops a medicine being given to someone too young or too old for it, using the date of birth of
+// the person the medicine is for.
 const validatePatientAge = async (data, products, db = prisma) => {
   let dateOfBirth = data.recipientDateOfBirth;
   if (data.orderedForSelf) {
@@ -42,6 +53,7 @@ const validatePatientAge = async (data, products, db = prisma) => {
   if (unsuitable.length) throw new AppError(400, `${unsuitable.map((product) => product.genericName).join(', ')} ${unsuitable.length === 1 ? 'is' : 'are'} outside the configured age range for this medicine recipient (${age} years). Review the medicine or update its verified age guidance.`);
 };
 
+// The version of a prescription a patient sees: staff details are trimmed down to names only.
 const patientView = (prescription) => {
   return {
     ...prescription,
@@ -58,18 +70,26 @@ const patientView = (prescription) => {
 };
 
 
+// All the prescription actions the routes can call.
 export const prescriptionService = {
+  // List prescriptions page by page. Patients only get their own.
   async list(user, pagination) {
     if (user.role !== 'PATIENT') return prescriptionRepository.list({}, pagination);
     const profile = await prisma.patientProfile.findUnique({ where: { userId: user.id } });
     return profile ? (await prescriptionRepository.list({ patientId: profile.id }, pagination)).map(patientView) : [];
   },
+  // Load one prescription, checking the person may see it.
   async get(id, user) {
     const data = await prescriptionRepository.findById(id);
     if (!data) return null;
     if (user.role === 'PATIENT' && data.patient.user.id !== user.id) throw new AppError(403, 'This prescription does not belong to you.');
     return user.role === 'PATIENT' ? patientView(data) : data;
   },
+  // Save a new prescription and its medicine lines.
+  // If it came from a patient's upload, the upload is linked to it.
+  // For a bill-first upload whose bank slip was already accepted, the bill is created as paid
+  // straight away and the stock is set aside.
+  // If "send to cashier" was ticked, the bill is created in the same step.
   async create(data, userId) {
     let sourceUpload = null;
     let patientUserId = null;
@@ -236,6 +256,8 @@ export const prescriptionService = {
     return tx.prescription.findUnique({ where: { id: prescription.id }, include: { items: { include: { product: true } }, patient: { include: { user: { select: { id: true, fullName: true } } } } } });
     }, 3, { maxWait: 10_000, timeout: 30_000 });
   },
+  // Edit a prescription that has not been fully given out. If the change matters (medicine,
+  // quantity, directions), it must be checked again before it can be billed.
   async update(id, data, actorId) {
     return serializable(async (tx) => {
     const current = await tx.prescription.findUnique({ where: { id }, include: { items: true, retailItems: true, paymentRequest: true } });
@@ -308,6 +330,8 @@ export const prescriptionService = {
     return prescriptionRepository.findById(id, tx);
     });
   },
+  // Save when the customer plans to collect and any note for the pharmacy. The pickup time cannot
+  // be in the past.
   async updatePickupDetails(id, data, user) {
     const current = await prisma.prescription.findUnique({
       where: { id },
@@ -345,11 +369,15 @@ export const prescriptionService = {
     });
     return patientView(refreshed);
   },
+  // Delete a prescription. Only allowed while it is still PENDING (nothing billed or given out
+  // yet).
   async remove(id) {
     const removed = await prisma.prescription.deleteMany({ where: { id, status: 'PENDING' } });
     if (removed.count !== 1) throw new AppError(409, 'This prescription is already being processed or is no longer pending.');
     return { id };
   },
+  // Mark the prescription as checked by a pharmacist. Fails safely if someone else changed it at
+  // the same moment.
   async verify(id, userId) {
     const verified = await prisma.prescription.updateMany({ where: { id, status: 'PENDING' }, data: { status: 'VERIFIED', verifiedById: userId, verifiedAt: new Date() } });
     if (verified.count !== 1) throw new AppError(409, 'This prescription was just processed by another staff member. Refresh to see its latest status.');
@@ -386,6 +414,8 @@ export const prescriptionService = {
     return prescriptionRepository.findById(id, tx);
     });
   },
+  // Make a new prescription from an old one, when the doctor allowed refills. The new one remembers
+  // which prescription it came from.
   async refill(id, data, userId) {
     return serializable(async (tx) => {
     const current = await tx.prescription.findUnique({
@@ -497,6 +527,8 @@ export const prescriptionService = {
       return prescriptionRepository.findById(id, tx);
     });
   },
+  // Reject a prescription with a reason. If a bill exists and is unpaid it is cancelled. If it was
+  // already paid, the payment must be cancelled and refunded first.
   async reject(id, reason, userId) {
     return prisma.$transaction(async (tx) => {
       const current = await tx.prescription.findUnique({ where: { id }, select: { paymentRequest: { select: { id: true, status: true } } } });
@@ -526,6 +558,8 @@ export const prescriptionService = {
     }, DEFAULT_TRANSACTION_OPTIONS);
   },
 
+  // Work out prices, discounts and totals for a bill, and check there is enough stock that is not
+  // already set aside for other customers.
   async quoteDispensing(prescriptionId, input, db = prisma) {
     const prescription = await db.prescription.findUnique({
       where: { id: prescriptionId },
@@ -607,6 +641,8 @@ export const prescriptionService = {
       paymentStatus: amountPaid.greaterThanOrEqualTo(total) ? 'PAID' : 'PENDING' };
   },
 
+  // Give out the medicines at the counter after the customer shows their PIN. The real work happens
+  // in utils/prescriptionDispense.js.
   async dispense(prescriptionId, input, pharmacistId) {
     const operationSettings = await operationSettingsService.get();
     const pinRequired = operationSettings.requirePickupPin;

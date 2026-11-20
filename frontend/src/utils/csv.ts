@@ -1,3 +1,5 @@
+// Reads an uploaded CSV file into rows, with clear line-numbered errors when a cell is badly quoted.
+
 export function parseCsv(text: string, options = { requiredColumn: 'sku', maxRows: 2000, guideRows: false }) {
   const matrix: { cells: string[]; line: number }[] = []; let row: string[] = []; let field = ''; let quoted = false; let closed = false; let line = 1; let startLine = 1;
   text = text.replace(/^\uFEFF/, '');

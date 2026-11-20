@@ -1,3 +1,5 @@
+// Works out how much medicine is needed from the dose, times per day and number of days.
+
 import { Prisma } from '@prisma/client';
 import { AppError } from './AppError.js';
 import { isCountableUnit } from './unitMeasure.js';

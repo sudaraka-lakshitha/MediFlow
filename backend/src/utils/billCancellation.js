@@ -1,3 +1,6 @@
+// WHO MAY CANCEL A BILL, AND WHEN
+// Rules depend on the person's role and how far the order has gone (paid, handed over, dispatched).
+
 import { isSameLocalDay } from './localDate.js';
 
 // Cancelling a bill covers two different real-world actions that happen to share one end

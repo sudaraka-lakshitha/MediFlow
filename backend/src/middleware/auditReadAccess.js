@@ -1,3 +1,8 @@
+// RECORDS WHO OPENED SENSITIVE RECORDS
+// Opening a prescription, an uploaded file, an invoice or a staff security record is written to the
+// audit log.
+// Ordinary list pages are not logged, to keep the log useful.
+
 import { recordAudit } from '../services/audit.service.js';
 
 const rules = [
@@ -12,6 +17,8 @@ const rules = [
   { pattern: /^\/api\/users(?:\/|$)/, action: 'STAFF_RECORDS_VIEWED', entityType: 'USER' },
 ];
 
+// Runs after the reply is sent: if the address matches one of the rules above and the request
+// succeeded, save an audit entry.
 export const auditReadAccess = (req, res, next) => {
   if (req.method !== 'GET') return next();
   res.on('finish', () => {

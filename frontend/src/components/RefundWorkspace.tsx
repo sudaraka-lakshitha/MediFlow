@@ -1,3 +1,5 @@
+// Where the cashier creates a refund for a paid sale and confirms the payout.
+
 import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { useCallback, useEffect, useState } from 'react';
 import { api, errorMessage } from '../api/client';

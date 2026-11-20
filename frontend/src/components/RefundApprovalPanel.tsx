@@ -1,3 +1,5 @@
+// Where staff ask for, and an administrator approves, refunds that need special approval.
+
 import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { useCallback, useEffect, useState } from 'react';
 import { api, errorMessage } from '../api/client';

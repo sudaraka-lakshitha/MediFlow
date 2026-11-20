@@ -1,3 +1,6 @@
+// A fingerprint of the day's figures, so a balance confirmation fails if the figures changed
+// meanwhile.
+
 import crypto from 'node:crypto';
 const cents = value => value == null ? null : Math.round(Number(value) * 100);
 // Names, confirmation IDs/timestamps and reviewer notes are audit/display data,

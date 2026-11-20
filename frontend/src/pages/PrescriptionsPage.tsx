@@ -1,3 +1,19 @@
+// PRESCRIPTIONS PAGE (pharmacist)
+// The main working page for prescriptions. From here a pharmacist can:
+//   - enter a new prescription or edit one (the editor window)
+//   - check (verify) it, then send it to the cashier as a bill
+//   - give out the medicines after payment, or bill only part of it and the rest later
+//   - close a balance that will not be supplied, reject, refill or delete a prescription
+//   - print bag labels and open bills / receipts
+// How this file is laid out:
+//   1. Small helper functions at the top (dose maths, labels, dates)
+//   2. PrescriptionsPage: the page itself (data loading, then the button actions, then the screen
+// layout)
+//   3. FriendlyDateTimePicker and PatientClinicalWarning at the bottom
+// The real rules are checked again on the server (backend/src/services/prescription.service.js), so
+// if the
+// screen and the server disagree, the server's error message explains why.
+
 import { formatPharmacyDate, formatPharmacyDateTime, formatPharmacyDateTimeInput, formatPharmacyTime, pharmacyDateTimeInputToISOString, pharmacyTodayDateInput } from "../utils/pharmacyTime";
 import { personNameInputProps } from '../utils/personName';
 import { UploadAttachmentSelector } from '../components/UploadAttachmentSelector';
@@ -168,6 +184,7 @@ type Line = {
   overrideQuantity: number | string;
   overrideReason: string;
 };
+// An empty medicine line for the editor.
 const line = (): Line => ({
   productId: 0,
   quantityPerDose: 1,
@@ -190,9 +207,11 @@ const line = (): Line => ({
   overrideQuantity: "",
   overrideReason: "",
 });
+// Date and time in the format a date-time box expects.
 const localDateTime = (value: Date | string = new Date()) => {
   return formatPharmacyDateTimeInput(value);
 };
+// A blank prescription form.
 const emptyForm = () => ({
   patientId: 0,
   sourceUploadId: null as number | null,
@@ -217,18 +236,23 @@ const emptyForm = () => ({
   retailItems: [] as { productId: number; quantity: number }[],
 });
 // A paid order with an active home delivery is dispensed at dispatch, not here.
+// True when the order is going by home delivery (and that delivery is not cancelled).
 const isDeliveryOrder = (rx: any) => Boolean(rx?.paymentRequest?.delivery && rx.paymentRequest.delivery.status !== "CANCELLED");
 // Walk-in partial supply: for each medicine issued in part, why less is issued and
 // whether the rest will be issued later. Returns null if a choice is missing.
+// Collects the reasons for giving less than prescribed. Returns nothing if a reason is missing, so
+// the bill cannot be sent.
 const partialSupplyFor = (dispense: any) => {
   const short = dispense.items.filter((item: any) => Number(item.quantity || 0) < Number(item.maximum));
   const choices = short.map((item: any) => ({ prescriptionItemId: item.prescriptionItemId, ...(dispense.partial?.[item.prescriptionItemId] || {}) }));
   return choices.every((choice: any) => choice.reason && typeof choice.issueLater === "boolean") ? choices : null;
 };
 // Lines with nothing to issue now are left off the bill (walk-in partial supply).
+// Only the lines that are actually being charged on this bill.
 const billedLines = (items: any[]) => items
   .filter((item) => Number(item.quantity) > 0)
   .map((item) => ({ prescriptionItemId: item.prescriptionItemId, quantity: Number(item.quantity) }));
+// Shows an amount as Sri Lankan rupees.
 const money = (value: unknown) =>
   `Rs. ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const prescriberLabel = (
@@ -237,11 +261,13 @@ const prescriberLabel = (
   [prescription.prescriberTitle, prescription.prescriberName]
     .filter(Boolean)
     .join(" ") || "Not mentioned";
+// Rough date of birth when only an age is known.
 const dobFromAge = (age: number) => {
   const date = new Date();
   date.setFullYear(date.getFullYear() - age);
   return date.toISOString().slice(0, 10);
 };
+// Age in years from a date of birth.
 const ageFromDob = (dob?: string) => {
   if (!dob) return "";
   const birth = new Date(dob);
@@ -255,9 +281,11 @@ const ageFromDob = (dob?: string) => {
   return String(age);
 };
 const usableStock = usableProductStock;
+// True for syrups and other liquids (measured in ml).
 const isLiquid = (product?: any) =>
   /^(ml|millilitre|milliliter)s?$/i.test(product?.unit || "") ||
   /syrup|suspension|solution|elixir|liquid/i.test(product?.dosageForm || "");
+// Reads strengths like "125 mg/5 ml" so liquid doses can be worked out.
 const parseConcentration = (strength?: string) => {
   const match = strength?.match(
     /([\d.]+)\s*(mcg|µg|mg|g)\s*(?:\/|per)\s*([\d.]*)\s*(ml|mL)/i,
@@ -271,6 +299,7 @@ const parseConcentration = (strength?: string) => {
     : null;
 };
 const cleanNumber = (value: number) => Number(value.toFixed(3)).toString();
+// Shows doses nicely, for example 0.5 as "½" and 1.25 as "1¼".
 const doseText = (value: number) => {
   const whole = Math.floor(value);
   const fraction = Number((value - whole).toFixed(3));
@@ -290,6 +319,7 @@ const displayUnit = (unit: string, quantity: number) => {
   if (Math.abs(quantity) <= 1 || /mg|mcg|g/i.test(unit)) return unit;
   return unit.endsWith("s") ? unit : `${unit}s`;
 };
+// Words for how often to take it, for example 3 -> "three times daily".
 const frequencyText = (times: number) =>
   (
     ({
@@ -303,6 +333,7 @@ const frequencyText = (times: number) =>
       24: "every hour",
     }) as Record<number, string>
   )[times] || `${times} times daily`;
+// The start of the directions, for example "Take 1 tablet" or "Apply".
 const instructionOpening = (route: string, quantity: number, unit: string) => {
   const dose = `${doseText(quantity)} ${displayUnit(unit || "unit", quantity)}`;
   if (route === "Topical") return `Apply ${dose} to the affected area`;
@@ -316,6 +347,7 @@ const instructionOpening = (route: string, quantity: number, unit: string) => {
     return `Administer ${dose} by ${route.toLowerCase()} injection`;
   return `Take ${dose} by mouth`;
 };
+// Medicine name with its strength.
 const medicineLabel = (product: { genericName: string; strength?: string }) => {
   const name = String(product.genericName || "").trim();
   const strength = String(product.strength || "").trim();
@@ -325,6 +357,8 @@ const medicineLabel = (product: { genericName: string; strength?: string }) => {
 };
 
 import { WorkflowGuard } from '../components/WorkflowGuard';
+// The page. State (the remembered values) comes first, then loading data, then the actions behind
+// each button, then the layout.
 export function PrescriptionsPage() {
   const [documentPreview, setDocumentPreview] = useState<DocumentTarget | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -350,6 +384,7 @@ export function PrescriptionsPage() {
   const [sourceFileUrl, setSourceFileUrl] = useState("");
   const [sourceFileText, setSourceFileText] = useState("");
   const [sourceFileMimeType, setSourceFileMimeType] = useState("");
+  // Show the patient's uploaded prescription file next to the editor.
   const loadSourceAttachment = async (blob: Blob) => {
     if (sourceFileUrl) URL.revokeObjectURL(sourceFileUrl);
     setSourceFileUrl(URL.createObjectURL(blob)); setSourceFileMimeType(blob.type);
@@ -651,6 +686,7 @@ export function PrescriptionsPage() {
     };
   }, [action?.type, action?.rx.id, action?.rx.paymentRequest, dispense]);
 
+  // Open the editor: empty for a new prescription, or filled in when editing one.
   const openEditor = (rx?: Rx) => {
     setError("");
     if (rx)
@@ -709,6 +745,7 @@ export function PrescriptionsPage() {
     setSourceFileMimeType(rx?.sourceUpload?.mimeType || "");
     setEditor({ mode: rx ? "edit" : "create", rx });
   };
+  // Close the editor and clear it.
   const closeEditor = () => {
     if (sourceFileUrl) URL.revokeObjectURL(sourceFileUrl);
     setSourceFileUrl("");
@@ -716,6 +753,7 @@ export function PrescriptionsPage() {
     setSourceFileMimeType("");
     setEditor(null);
   };
+  // Change one medicine line and work out its quantity again.
   const updateLine = (index: number, changes: Partial<Line>) => {
     const items = [...form.items];
     const structured = [
@@ -747,6 +785,7 @@ export function PrescriptionsPage() {
     };
     setForm({ ...form, items });
   };
+  // The dose actually used for the quantity (liquids are turned into ml).
   const effectiveDose = (item: Line) => {
     const product = products.find(
       (candidate) => candidate.id === Number(item.productId),
@@ -763,6 +802,7 @@ export function PrescriptionsPage() {
       ? Number(((dose / concentration) * volume).toFixed(3))
       : 0;
   };
+  // Quantity needed = dose x times per day x number of days (whole bottles for liquids).
   const calculated = (item: Line) => {
     const product = products.find(
       (candidate) => candidate.id === Number(item.productId),
@@ -788,6 +828,7 @@ export function PrescriptionsPage() {
       packSizeMissing, doseMissing,
     };
   };
+  // Builds the directions text automatically from the dose, timing and route.
   const generatedDirections = (item: Line) => {
     const { product, dose } = calculated(item);
     if (!Number.isFinite(dose) || dose <= 0) return "";
@@ -807,6 +848,7 @@ export function PrescriptionsPage() {
     const special = item.specialInstructions.trim().replace(/[.!]+$/, "");
     return `${sentence}${special ? `. ${special}` : ""}.`;
   };
+  // When a medicine is chosen on a line, fill in its unit and suggested directions.
   const selectMedicine = (index: number, productId: number) => {
     const product = products.find(
       (candidate) => candidate.id === Number(productId),
@@ -834,6 +876,7 @@ export function PrescriptionsPage() {
       quantityPerDose: "",
     });
   };
+  // Turns the form into the data sent to the server.
   const payload = () => ({
     ...form,
     patientId: Number(form.patientId),
@@ -904,6 +947,8 @@ export function PrescriptionsPage() {
     containerFee: Number(form.containerFee || 0),
     tax: Number(form.tax || 0),
   });
+  // Save the prescription (new or edited). Errors from the server are shown at the top of the
+  // editor.
   const save = async (
     event?: FormEvent,
     options?: { autoVerify?: boolean; sendToCashier?: boolean },
@@ -944,6 +989,7 @@ export function PrescriptionsPage() {
       setBusy(false);
     }
   };
+  // Verify the prescription, and optionally send it to the cashier straight after.
   const confirmVerify = async (event?: FormEvent, andSendToCashier = false) => {
     if (event) event.preventDefault();
     if (!reverify) return;
@@ -967,6 +1013,7 @@ export function PrescriptionsPage() {
       setBusy(false);
     }
   };
+  // Open the window for the planned collection time and note.
   const openCollectionModal = (rx: Rx) => {
     setError("");
     setCollectionModal(rx);
@@ -975,6 +1022,7 @@ export function PrescriptionsPage() {
       pickupNote: rx.pickupNote || "",
     });
   };
+  // Save the planned collection time.
   const saveCollection = async (event: FormEvent) => {
     event.preventDefault();
     if (!collectionModal) return;
@@ -993,6 +1041,7 @@ export function PrescriptionsPage() {
       setBusy(false);
     }
   };
+  // Quick verify from the list.
   const verify = async (rx: Rx) => {
     try {
       await api.post(`/prescriptions/${rx.id}/verify`);
@@ -1001,6 +1050,7 @@ export function PrescriptionsPage() {
       setError(errorMessage(caught));
     }
   };
+  // Open one of the action windows: reject, bill/dispense, history, withdraw bill or close balance.
   const openAction = (
     type: "reject" | "dispense" | "history" | "withdraw" | "closeBalance",
     rx: Rx,
@@ -1121,6 +1171,7 @@ export function PrescriptionsPage() {
       setSearchParams(nextParams, { replace: true });
     });
   }, [staff, user, searchParams, setSearchParams, openAction]);
+  // Close the action window and clear it.
   const closeAction = () => {
     if (sourceFileUrl) URL.revokeObjectURL(sourceFileUrl);
     setSourceFileUrl("");
@@ -1132,6 +1183,7 @@ export function PrescriptionsPage() {
     ...dispense.items,
     ...dispense.retailItems,
   ].some((item: any) => isLiquid(item));
+  // Add or remove the bottle (container) fee on the bill.
   const updateDispenseBottleFee = (
     bottleCount: number,
     bottleFeePerBottle: number,
@@ -1147,6 +1199,7 @@ export function PrescriptionsPage() {
         : 0,
     });
   };
+  // Run the action chosen in the action window (reject, dispense, withdraw, close balance).
   const saveAction = async (event: FormEvent) => {
     event.preventDefault();
     if (!action) return;
@@ -1187,12 +1240,14 @@ export function PrescriptionsPage() {
       setBusy(false);
     }
   };
+  // Show the bill or receipt PDF in the preview window.
   const openPaymentPdf = async (
     request: any,
     kind: "handoff" | "receipt" = "handoff",
   ) => {
     setDocumentPreview({ id: request.id, kind, name: request.requestNumber });
   };
+  // Print the medicine bag label with the patient's name and directions.
   const printBagLabel = (rx: Rx, issue: Dispensing) => {
     const win = window.open("", "_blank", "width=600,height=800");
     if (!win) return;
@@ -1358,6 +1413,8 @@ export function PrescriptionsPage() {
     `);
     win.document.close();
   };
+  // Send the bill to the cashier. For a walk-in, it can be for part of the medicines with a reason
+  // for each shortage.
   const sendToCashier = async () => {
     if (!action || action.type !== "dispense") return;
     const partialSupply = action.rx.sourceUpload ? [] : partialSupplyFor(dispense);
@@ -1389,6 +1446,7 @@ export function PrescriptionsPage() {
       setBusy(false);
     }
   };
+  // Change a bill that is already with the cashier but not yet paid.
   const updateCashierBill = async () => {
     if (!action || action.type !== "dispense") return;
     const partialSupply = action.rx.sourceUpload ? [] : partialSupplyFor(dispense);
@@ -1422,6 +1480,7 @@ export function PrescriptionsPage() {
       setBusy(false);
     }
   };
+  // Delete a prescription (only possible while it is still pending).
   const remove = async () => {
     if (!confirm) return;
     setBusy(true);
@@ -1436,9 +1495,11 @@ export function PrescriptionsPage() {
       setBusy(false);
     }
   };
+  // Open the refill window for a prescription.
   const handleRefill = async (rx: Rx) => {
     setRefillTarget(rx);
   };
+  // Create the refill (a new prescription linked to the old one).
   const issueRefill = async () => {
     if (!refillTarget) return;
     setBusy(true);
@@ -1453,6 +1514,7 @@ export function PrescriptionsPage() {
       setBusy(false);
     }
   };
+  // Quickly register a new patient from inside the editor.
   const createPatient = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -1473,6 +1535,7 @@ export function PrescriptionsPage() {
       setBusy(false);
     }
   };
+  // Ask for the bill to be cancelled (a reason is required).
   const submitRequestCancel = async (event: FormEvent) => {
     event.preventDefault();
     if (!requestCancel?.rx.paymentRequest) return;
@@ -4559,6 +4622,8 @@ export function PrescriptionsPage() {
 const padDatePart = (value: number) => String(value).padStart(2, "0");
 const localPickerValue = (date: Date) => `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}T${padDatePart(date.getHours())}:${padDatePart(Math.floor(date.getMinutes() / 15) * 15)}`;
 
+// A simple date and time chooser with quick buttons (today, tomorrow...). Can be limited to future-
+// only or past-only.
 function FriendlyDateTimePicker({ value, onChange, futureOnly = false, pastOnly = false, optional = false, required = false }: { value: string; onChange(value: string): void; futureOnly?: boolean; pastOnly?: boolean; optional?: boolean; required?: boolean }) {
   const fallback = new Date();
   if (futureOnly) fallback.setDate(fallback.getDate() + 1);
@@ -4634,6 +4699,7 @@ function FriendlyDateTimePicker({ value, onChange, futureOnly = false, pastOnly 
   );
 }
 
+// Shows the patient's allergies and conditions as a warning while prescribing.
 function PatientClinicalWarning({
   patient,
   recipientDateOfBirth,

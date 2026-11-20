@@ -1,3 +1,5 @@
+// Creates the bill PDF and the receipt PDF (times in Sri Lanka time).
+
 import PDFDocument from 'pdfkit';
 import { createCollectionSlipPdf } from './collectionSlipPdf.js';
 import { formatPharmacyTimestamp } from './pharmacyTime.js';

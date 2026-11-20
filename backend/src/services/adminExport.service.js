@@ -1,3 +1,5 @@
+// What each admin data download contains (which table, which columns).
+
 import { Prisma } from '@prisma/client';
 import { formatPharmacyIsoTimestamp } from '../utils/pharmacyTime.js';
 import { prisma } from '../config/prisma.js';

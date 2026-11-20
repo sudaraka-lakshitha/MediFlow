@@ -1,3 +1,12 @@
+// AUDIT LOG (activity history)
+// Every important action (sign-in, creating a bill, taking payment, changing stock...) is written
+// here
+// with who did it, what they did, when, and from which address.
+// This is how we can later prove who did what. Failed actions are saved too, as warnings.
+// Admins can move old entries to a "trash" area; entries there are deleted for good after the
+// number
+// of days set in the operation settings.
+
 import { prisma } from '../config/prisma.js';
 import { logger } from '../config/logger.js';
 import { env } from '../config/env.js';
@@ -8,11 +17,14 @@ import { operationContext } from '../utils/operationContext.js';
 
 const offsetMs = env.REPORT_TIMEZONE_OFFSET_MINUTES * 60_000;
 const roleCache = new Map();
+// Turns a date such as 2026-11-20 into the moment that day starts in Sri Lanka (stored times are in
+// UTC).
 const localBoundary = (dateText, extraDays = 0) => {
   const [year, month, day] = dateText.split('-').map(Number);
   return new Date(Date.UTC(year, month - 1, day + extraDays) - offsetMs);
 };
 
+// The "from" and "to" date range filter, using Sri Lanka days.
 const dateFilter = (from, to) => {
   if (!from && !to) return undefined;
   return {
@@ -21,6 +33,8 @@ const dateFilter = (from, to) => {
   };
 };
 
+// The audit page shows staff and system actions, and any failed action (including patients' failed
+// sign-ins).
 const staffOrSystem = {
   OR: [
     { userId: null },
@@ -29,6 +43,7 @@ const staffOrSystem = {
   ],
 };
 
+// Builds the search filter for the audit page from the options the admin picked.
 export const buildAuditWhere = ({ userId, action, entityType, success, from, to, q, view = 'active' } = {}) => ({
   ...(userId ? { userId } : {}),
   ...(action ? { action } : {}),
@@ -51,6 +66,8 @@ export const buildAuditWhere = ({ userId, action, entityType, success, from, to,
   ],
 });
 
+// Looks up a user's role, remembering it for a short time so we do not ask the database on every
+// action.
 const userRole = async (userId) => {
   if (!userId) return null;
   const cached = roleCache.get(userId);
@@ -61,6 +78,9 @@ const userRole = async (userId) => {
   return role;
 };
 
+// Save one audit entry. If saving fails, the error is logged but the user's action still succeeds:
+// we never want a logging problem to block real work.
+// A repeated request (same button pressed twice) is not logged twice.
 export const recordAudit = async ({
   userId, action, entityType, entityId, details, success = true, ipAddress, requestId, method, path,
 }) => {
@@ -77,6 +97,7 @@ export const recordAudit = async ({
   }
 };
 
+// Same as recordAudit, but fills in the user, address and request details from the web request.
 export const recordRequestAudit = (req, payload) => recordAudit({
   ...payload,
   userId: payload.userId ?? req.user?.id,
@@ -98,7 +119,9 @@ const auditInclude = {
   },
 };
 
+// Audit actions used by the audit page and the "My activity" window.
 export const auditService = {
+  // A staff member's own recent actions, for the "My activity" window.
   async myActivity(userId, { from, to }) {
     await this.purgeExpiredTrash();
     const where = {
@@ -142,6 +165,7 @@ export const auditService = {
     };
   },
 
+  // The audit page list, page by page, with filters.
   async list(query) {
     await this.purgeExpiredTrash();
     const operationSettings = await operationSettingsService.get();
@@ -191,6 +215,7 @@ export const auditService = {
     };
   },
 
+  // How many actions each staff member did in a date range, for the staff activity report.
   async staffSummary({ from, to }) {
     const staff = await prisma.user.findMany({
       where: { role: { not: 'PATIENT' } },
@@ -251,6 +276,7 @@ export const auditService = {
     };
   },
 
+  // The rows used when the audit log is downloaded as a file.
   exportRows(query) {
     return exportPages(prisma.auditLog, {
       where: buildAuditWhere(query),
@@ -258,6 +284,7 @@ export const auditService = {
     });
   },
 
+  // Mark failed-action warnings as seen.
   async markWarningsRead(query = {}) {
     const result = await prisma.auditLog.updateMany({
       where: { ...buildAuditWhere({ ...query, view: 'active' }), success: false, readAt: null },
@@ -266,6 +293,7 @@ export const auditService = {
     return { updated: result.count };
   },
 
+  // Move the filtered entries to the trash area (only if trash is switched on in settings).
   async moveToTrash(query) {
     const operationSettings = await operationSettingsService.get();
     if (!operationSettings.auditTrashEnabled) {
@@ -278,6 +306,7 @@ export const auditService = {
     return { moved: result.count, retentionDays: operationSettings.auditTrashRetentionDays };
   },
 
+  // Move the ticked entries to the trash area.
   async moveSelectedToTrash(ids) {
     const operationSettings = await operationSettingsService.get();
     if (!operationSettings.auditTrashEnabled) {
@@ -293,6 +322,7 @@ export const auditService = {
     return { moved: result.count, retentionDays: operationSettings.auditTrashRetentionDays };
   },
 
+  // Bring one entry back from the trash.
   async restore(id) {
     const result = await prisma.auditLog.updateMany({
       where: { id, deletedAt: { not: null } },
@@ -301,6 +331,7 @@ export const auditService = {
     return { restored: result.count };
   },
 
+  // Bring every entry back from the trash.
   async restoreAll() {
     await this.purgeExpiredTrash();
     const result = await prisma.auditLog.updateMany({
@@ -310,6 +341,7 @@ export const auditService = {
     return { restored: result.count };
   },
 
+  // Permanently delete trash entries older than the keeping period.
   async purgeExpiredTrash() {
     const operationSettings = await operationSettingsService.get();
     const cutoff = new Date(

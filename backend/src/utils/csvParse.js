@@ -1,3 +1,5 @@
+// Reads an uploaded CSV file into rows.
+
 export const parseCsv = (text) => {
   const rows = [];
   let row = []; let field = ''; let quoted = false;

@@ -1,3 +1,6 @@
+// Remembers this browser window's "one person at a time" lock, so saving waits until the lock is
+// ready.
+
 import { createBrowserId } from "../utils/browserCrypto";
 
 export const workflowClientId = createBrowserId();

@@ -1,3 +1,7 @@
+// API addresses for uploading many categories, manufacturers or suppliers from a spreadsheet.
+// For each address: who may use it (signed in, which role), which input checks run first, and which
+// controller handles it.
+
 import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate } from '../middleware/authenticate.js';

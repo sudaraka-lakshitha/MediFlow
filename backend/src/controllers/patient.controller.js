@@ -1,3 +1,8 @@
+// Receives the web requests for patient profiles and notices, calls the matching service, writes
+// the audit log entry and sends the reply.
+// The real rules are in services/patient.service.js. To trace a button: route -> this controller ->
+// service.
+
 import { patientService } from '../services/patient.service.js';
 import { recordAudit } from '../services/audit.service.js';
 import { listPagination } from '../utils/listPagination.js';

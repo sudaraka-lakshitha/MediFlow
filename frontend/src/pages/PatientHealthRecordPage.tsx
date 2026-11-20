@@ -1,3 +1,6 @@
+// PATIENT HEALTH RECORD
+// A patient's prescriptions and medicines given over time.
+
 import { formatPharmacyDate, formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { useEffect, useState } from "react";
 import { errorMessage } from "../api/client";

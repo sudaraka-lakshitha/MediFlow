@@ -1,3 +1,12 @@
+// HOME DELIVERY WORK AREA
+// Used on the Deliveries page by staff (and patients for their own deliveries). It shows deliveries
+// in queues
+// (all, ready to dispatch, needs attention, waiting for payment) and the buttons for each step:
+// confirm the fee, dispatch with courier and tracking number, mark delivered, returned, reship or
+// cancel.
+// If a button is locked, a short note under it explains why (for example "waiting for the delivery
+// fee").
+
 import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorMessage } from '../api/client';
@@ -11,6 +20,7 @@ import { personNameInputProps } from '../utils/personName';
 import { Link } from 'react-router-dom';
 import { deliveryStatusLabel } from '../utils/deliveryStatus';
 
+// The delivery list and its actions. onChange lets the parent page refresh its own counters.
 export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unknown> }) {
   const { get: readInvoices, controls: invoiceHistoryControls } = useHistoryPage('Paid invoices eligible for delivery');
   const { user } = useAuth();
@@ -39,6 +49,7 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
   const [references, setReferences] = useState<Record<number, string>>({});
   const [couriers, setCouriers] = useState<Record<number, string>>({});
   const [draftVersions, setDraftVersions] = useState<Record<number, string>>({});
+  // Forget a courier/tracking number that was typed but not saved.
   const discardTracking = (id: number) => {
     setDraftVersions(current => { const next = { ...current }; delete next[id]; return next; });
     setReferences(current => { const next = { ...current }; delete next[id]; return next; });
@@ -74,10 +85,12 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
       document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, [patient, load]);
+  // Run one action, then reload the list and show a success or error message.
   const run = async (operation: () => Promise<unknown>, success: string) => {
     setBusy(true); setError(''); setMessage('');
     try { await operation(); await load(); await onChange?.(); setMessage(success); } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
+  // Save a changed delivery fee.
   const saveFee = async () => {
     if (!editingFee || busy) return;
     setBusy(true); setError(''); setMessage('');
@@ -96,6 +109,8 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
         && (!previous.feePaymentRequest || previous.feePaymentRequest.status === 'CANCELLED')
         && !previous.feePaymentRequest?.refunds?.length));
   });
+  // True when both the medicine bill and the delivery fee are paid and checked, so it can be
+  // dispatched.
   const ready = (row: any) => row.status === 'AWAITING_FEE' && row.paymentRequest.status === 'PAID' && row.feePaymentRequest?.status === 'PAID'
     && !row.paymentRequest.customerCancellationReason && !row.feePaymentRequest.customerCancellationReason
     && !row.paymentRequest.refunds?.length && !row.feePaymentRequest.refunds?.length
@@ -103,6 +118,7 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
     && Number(row.feePaymentRequest.amountPaid) - Number(row.feePaymentRequest.refundedAmount) >= Number(row.feePaymentRequest.total);
   // Spell out what an undispatched delivery is waiting for, so neither the
   // patient nor staff mistake an unpaid bill for a pharmacy delay.
+  // Plain words for what the delivery is still waiting for.
   const waitingFor = (row: any) => {
     const medicine = row.paymentRequest, fee = row.feePaymentRequest;
     const reasons: string[] = [];
@@ -118,6 +134,7 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
     if (medicine.refunds?.length || fee?.refunds?.length) reasons.push('a refund is pending');
     return reasons.length ? `Waiting: ${reasons.join('; ')}.` : 'Processing — awaiting verified payment';
   };
+  // A patient may cancel their delivery only before it is paid and dispatched.
   const patientCanCancelBeforePayment = (row: any) => patient
     && ['REQUESTED', 'AWAITING_FEE'].includes(row.status)
     && !row.dispatchedAt
@@ -126,9 +143,11 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
     && !row.feePaymentRequest?.customerCancellationReason;
   // Mirrors the server queues: ATTENTION needs pharmacy action; AWAITING_PAYMENT
   // waits on the customer (or the cashier checking a slip).
+  // True when staff must do something (failed, returned, fee missing, cancellation asked).
   const needsStaff = (row: any) => ['DELIVERY_FAILED', 'RETURNING', 'RETURNED', 'RESHIP_REQUESTED'].includes(row.status)
     || (['REQUESTED', 'AWAITING_FEE'].includes(row.status) && (!row.feePaymentRequest || row.feePaymentRequest.status === 'CANCELLED'
       || Boolean(row.paymentRequest.customerCancellationReason) || Boolean(row.feePaymentRequest.customerCancellationReason)));
+  // Which tab (queue) a delivery belongs to.
   const inQueue = (row: any, value: string) => value === 'ALL' || (value === 'READY' ? ready(row) || row.status === 'RESHIP_READY'
     : value === 'ATTENTION' ? needsStaff(row) && !ready(row)
     : value === 'AWAITING_PAYMENT' ? ['REQUESTED', 'AWAITING_FEE'].includes(row.status) && !needsStaff(row) && !ready(row)

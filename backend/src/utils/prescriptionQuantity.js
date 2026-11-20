@@ -1,3 +1,6 @@
+// HOW MUCH OF A MEDICINE IS LEFT TO GIVE
+// remaining = prescribed - already given - cancelled (never below zero).
+
 import { Prisma } from '@prisma/client';
 import { AppError } from './AppError.js';
 

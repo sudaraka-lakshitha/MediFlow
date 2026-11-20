@@ -1,3 +1,5 @@
+// Builds the staff activity report rows (who did what, in Sri Lanka time).
+
 import { prisma } from '../config/prisma.js';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';

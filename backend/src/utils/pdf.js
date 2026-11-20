@@ -1,3 +1,5 @@
+// Creates simple table PDFs for reports and exports.
+
 import PDFDocument from 'pdfkit';
 import { formatPharmacyTimestamp } from './pharmacyTime.js';
 

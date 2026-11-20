@@ -1,3 +1,5 @@
+// The dosage directions text shown to a patient.
+
 export const patientDirections = prescription => {
   const released = prescription.status === 'DISPENSED' || ['PAID', 'FULFILLED'].includes(prescription.paymentRequest?.status);
   const fields = ['dosageInstructions', 'specialInstructions', 'frequency', 'duration', 'administrationRoute', 'mealTiming', 'timesPerDay', 'quantityPerDose', 'doseInputAmount', 'doseInputUnit', 'concentrationAmount', 'concentrationUnit', 'concentrationVolume', 'asNeeded', 'notes'];

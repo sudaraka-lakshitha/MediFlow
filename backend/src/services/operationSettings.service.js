@@ -1,3 +1,12 @@
+// PHARMACY SETTINGS (set by the admin)
+// - stock allocation: FIFO (oldest delivery first) or FEFO (soonest expiry first)
+// - near-expiry warning days
+// - audit trash on/off and how long trash is kept
+// - whether a collection PIN is required
+// - whether the cashier can hand over medicines at payment
+// - how many hours stock is set aside for an unpaid cash order
+// - default auto-lock minutes
+
 import { prisma } from "../config/prisma.js";
 import { DEFAULT_TRANSACTION_OPTIONS } from "../utils/serializable.js";
 
@@ -12,6 +21,7 @@ const keys = {
   sessionIdleMinutes: "sessionIdleMinutes",
 };
 
+// Values used until the admin changes them.
 const defaults = {
   allocationMethod: "FIFO",
   nearExpiryDays: 90,
@@ -26,12 +36,15 @@ const defaults = {
 const settingMap = (rows) =>
   Object.fromEntries(rows.map((setting) => [setting.key, setting.value]));
 
+// Which batch to take stock from first: FIFO = the oldest delivery, FEFO = the batch that expires
+// soonest.
 export const batchAllocationOrder = (method) =>
   method === "FEFO"
     ? [{ expiryDate: "asc" }, { receivedAt: "asc" }, { id: "asc" }]
     : [{ receivedAt: "asc" }, { expiryDate: "asc" }, { id: "asc" }];
 
 export const operationSettingsService = {
+  // Read the current settings (missing ones fall back to the defaults).
   async get(client = prisma) {
     const rows = await client.systemSetting.findMany({
       where: { key: { in: Object.values(keys) } },
@@ -78,6 +91,7 @@ export const operationSettingsService = {
     };
   },
 
+  // Save new settings.
   async update(data) {
     await prisma.$transaction([
       prisma.systemSetting.upsert({

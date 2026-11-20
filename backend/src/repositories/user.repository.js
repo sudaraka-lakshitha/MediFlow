@@ -1,3 +1,5 @@
+// Ready-made database queries for users.
+
 import { prisma } from '../config/prisma.js';
 
 export const userRepository = {

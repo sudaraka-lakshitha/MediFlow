@@ -1,3 +1,5 @@
+// Plain words for each delivery status, used on screens and documents.
+
 // Customer-facing delivery status names for printed documents (mirrors the
 // frontend's utils/deliveryStatus.ts).
 const labels = {

@@ -1,3 +1,6 @@
+// Links older form labels to their boxes for screen readers, and marks wide tables that can scroll
+// sideways.
+
 import { useEffect } from 'react';
 
 // Legacy screens predate the shared form-field components. This bridge links their

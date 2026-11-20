@@ -1,3 +1,6 @@
+// Checks whether a medicine is suitable for a person's age (minimum and maximum age on the
+// product).
+
 import { prisma } from '../config/prisma.js';
 import { AppError } from './AppError.js';
 import { ageOnDate } from './age.js';

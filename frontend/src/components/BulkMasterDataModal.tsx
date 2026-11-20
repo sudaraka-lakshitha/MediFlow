@@ -1,3 +1,6 @@
+// Window to upload many categories, manufacturers or suppliers from a spreadsheet, with a preview
+// before saving.
+
 import { useRef, useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { parseCsv } from '../utils/csv';

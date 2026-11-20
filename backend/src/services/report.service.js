@@ -1,3 +1,5 @@
+// Numbers for the reports page (sales, profit, stock), grouped by Sri Lanka days.
+
 import { prisma } from '../config/prisma.js';
 import { env } from '../config/env.js';
 import { reportEvents, eventSummary } from './reportEvents.js';

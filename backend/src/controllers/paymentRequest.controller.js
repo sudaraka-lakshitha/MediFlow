@@ -1,3 +1,8 @@
+// Receives the web requests for bills (payment requests), cashier payments and bank slips, calls
+// the matching service, writes the audit log entry and sends the reply.
+// The real rules are in services/paymentRequest.service.js. To trace a button: route -> this
+// controller -> service.
+
 import { z } from 'zod';
 import { billingPreview } from '../utils/billingPreview.js';
 import { paymentRequestService } from '../services/paymentRequest.service.js';

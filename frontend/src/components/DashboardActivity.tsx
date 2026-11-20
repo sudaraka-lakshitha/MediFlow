@@ -1,3 +1,5 @@
+// The recent activity list on the dashboard.
+
 import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { Empty } from './Ui';
 

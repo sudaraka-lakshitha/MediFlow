@@ -1,3 +1,6 @@
+// Waits until the user stops typing before searching, so the server is not asked on every key
+// press.
+
 import { useEffect, useState } from "react";
 
 export function useDebouncedValue<T>(value: T, delayMs = 300): T {

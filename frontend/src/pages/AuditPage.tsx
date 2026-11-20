@@ -1,3 +1,11 @@
+// AUDIT PAGE (admin)
+// Shows the activity history: who did what and when, failed actions (warnings), the staff activity
+// summary
+// and the server error log. Admins can filter, download, mark warnings as read, move entries to
+// trash and
+// restore them.
+// Server rules: backend/src/services/audit.service.js
+
 import { formatPharmacyDateTime } from "../utils/pharmacyTime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -26,6 +34,8 @@ export interface AuditStatusCodeInfo {
   origin: string;
 }
 
+// Explanations of the error numbers (400, 401, 403, 404, 409...) shown in the audit log, in plain
+// words.
 export const AUDIT_STATUS_CODES: AuditStatusCodeInfo[] = [
   {
     code: 400,
@@ -229,16 +239,20 @@ export const AUDIT_STATUS_CODES: AuditStatusCodeInfo[] = [
   },
 ];
 
+// A date in the format a date box expects, using this computer's own date.
 const dateValue = (date: Date) => {
   const offset = date.getTimezoneOffset() * 60_000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 };
 const today = dateValue(new Date());
 const thirtyDaysAgo = dateValue(new Date(Date.now() - 29 * 86_400_000));
+// Turns an action name such as PRESCRIPTION_VERIFIED into "prescription verified".
 const actionLabel = (value?: string | null) =>
   value ? value.replaceAll("_", " ").toLowerCase() : "No activity";
+// Shows a number with thousands separators.
 const number = (value: number) => Number(value || 0).toLocaleString();
 
+// The page. State first, then loading data, then button actions, then the layout.
 export function AuditPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialStaff = searchParams.get("staff") || "";
@@ -358,6 +372,7 @@ export function AuditPage() {
     loadErrors().catch((caught) => setError(errorMessage(caught)));
   }, [loadErrors]);
 
+  // Change one filter and go back to page 1.
   const updateFilter = (name: string, value: string | number) => {
     setFilters((current) => ({
       ...current,
@@ -366,6 +381,7 @@ export function AuditPage() {
     }));
   };
 
+  // Show only one staff member's actions.
   const showStaffActivity = (userId: number) => {
     const value = String(userId);
     setFilters((current) => ({ ...current, userId: value, page: 1 }));
@@ -373,6 +389,7 @@ export function AuditPage() {
     setTab("audit");
   };
 
+  // Reset all filters to the last 30 days.
   const clearFilters = () => {
     setFilters({
       userId: "",
@@ -388,6 +405,7 @@ export function AuditPage() {
     setSearchParams({});
   };
 
+  // Download the filtered audit entries.
   const exportAudit = async () => {
     setBusy(true);
     setError("");
@@ -410,9 +428,11 @@ export function AuditPage() {
     }
   };
 
+  // Update the warning counter on the side menu.
   const refreshAttention = () =>
     window.dispatchEvent(new Event("mediflow:attention-refresh"));
 
+  // Mark the warnings in the current view as read.
   const markWarningsRead = async () => {
     setBusy(true);
     setError("");
@@ -433,6 +453,7 @@ export function AuditPage() {
     }
   };
 
+  // Mark every unread warning as read.
   const clearAllWarnings = async () => {
     setBusy(true);
     setError("");
@@ -453,6 +474,7 @@ export function AuditPage() {
     }
   };
 
+  // Move all filtered entries to trash.
   const moveReportToTrash = async () => {
     setBusy(true);
     setError("");
@@ -475,6 +497,7 @@ export function AuditPage() {
     }
   };
 
+  // Move the ticked entries to trash.
   const moveSelectedToTrash = async () => {
     setBusy(true);
     setError("");
@@ -495,6 +518,7 @@ export function AuditPage() {
     }
   };
 
+  // Bring one entry back from trash.
   const restoreAuditRecord = async (id: number) => {
     setBusy(true);
     setError("");
@@ -511,6 +535,7 @@ export function AuditPage() {
     }
   };
 
+  // Bring all entries back from trash.
   const restoreAllAuditRecords = async () => {
     setBusy(true);
     setError("");
@@ -528,6 +553,7 @@ export function AuditPage() {
     }
   };
 
+  // Empty the server error log file.
   const clearErrorLog = async () => {
     setBusy(true);
     setError("");
@@ -545,6 +571,7 @@ export function AuditPage() {
     }
   };
 
+  // When a trashed entry will be deleted for good.
   const deletionDate = (deletedAt: string) =>
     new Date(
       new Date(deletedAt).getTime() +
@@ -582,12 +609,14 @@ export function AuditPage() {
   const allPageAuditSelected =
     pageAuditIds.length > 0 &&
     pageAuditIds.every((id) => selectedAuditIds.includes(id));
+  // Tick or untick one entry.
   const toggleAuditRecord = (id: number) =>
     setSelectedAuditIds((current) =>
       current.includes(id)
         ? current.filter((selectedId) => selectedId !== id)
         : [...current, id],
     );
+  // Tick or untick every entry on this page.
   const toggleCurrentAuditPage = () =>
     setSelectedAuditIds((current) =>
       allPageAuditSelected

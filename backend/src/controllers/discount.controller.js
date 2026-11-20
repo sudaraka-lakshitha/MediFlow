@@ -1,3 +1,8 @@
+// Receives the web requests for discount rules and coupon codes, calls the matching service, writes
+// the audit log entry and sends the reply.
+// The real rules are in services/discount.service.js. To trace a button: route -> this controller
+// -> service.
+
 import { discountService } from '../services/discount.service.js';
 import { recordAudit } from '../services/audit.service.js';
 

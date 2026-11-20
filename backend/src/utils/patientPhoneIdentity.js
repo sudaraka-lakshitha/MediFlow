@@ -1,3 +1,5 @@
+// Keeps one phone number linked to one patient, in a standard format.
+
 import { AppError } from './AppError.js';
 
 export const normalizePatientPhone = (value) => {

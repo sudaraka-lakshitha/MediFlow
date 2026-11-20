@@ -1,3 +1,5 @@
+// Creates the sales invoice PDF (times in Sri Lanka time).
+
 import PDFDocument from 'pdfkit';
 import { billingPreview } from './billingPreview.js';
 

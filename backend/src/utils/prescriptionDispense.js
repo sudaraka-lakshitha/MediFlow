@@ -1,3 +1,14 @@
+// GIVING OUT A PRESCRIPTION (the hand-over)
+// This one function is used for every hand-over: at the counter with a PIN, by the cashier at
+// payment,
+// and when a home delivery is dispatched. Keeping it in one place means all three always behave the
+// same.
+// In one all-or-nothing step it: marks the bill as collected, takes the stock off the shelf,
+// records which
+// batch was used, updates how much of each medicine has been given, makes the sale (invoice) and
+// sets the
+// prescription to DISPENSED or PARTIALLY_DISPENSED.
+
 import crypto from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { AppError } from './AppError.js';

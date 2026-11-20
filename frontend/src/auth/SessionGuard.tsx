@@ -1,3 +1,10 @@
+// AUTO-LOCK GUARD
+// Watches for inactivity. Shortly before the time runs out it shows a warning; then it locks the
+// screen.
+// The user unlocks by typing their password. The server is the real judge of the time, so the
+// screen
+// asks the server regularly and follows its answer.
+
 import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEvent } from 'react';
 import { api, errorMessage } from '../api/client';
 import { useAuth } from './useAuth';
@@ -10,6 +17,7 @@ import './sessionLock.css';
 
 type SessionView = { serverNow: number; warningAt: number; lockAt: number; expiresAt: number; locked: boolean; idleMinutes: number };
 
+// Wraps all signed-in pages and shows the warning or lock screen on top when needed.
 export function SessionGuard({ children }: { children: ReactNode }) {
   const { user, acceptSession, logout } = useAuth();
   const [view, setView] = useState<SessionView | null>(null);
@@ -126,6 +134,7 @@ export function SessionGuard({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timer);
   }, [checking]);
 
+  // Unlock with the password.
   const unlock = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError('');
     try {
@@ -137,10 +146,12 @@ export function SessionGuard({ children }: { children: ReactNode }) {
     } catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   };
+  // Sign out from the lock screen.
   const signOut = async () => {
     setBusy(true); setError('');
     try { await logout(); } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
+  // The user chose to lock now and confirm their password.
   const verifyEarly = async () => {
     setRenew(true); setWorkspaceLocked(true); setError('');
     try { await api.post('/auth/session/lock'); setWorkspaceLocked(true); }

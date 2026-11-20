@@ -1,3 +1,5 @@
+// Creates the deliveries CSV download (times in Sri Lanka time).
+
 const columns = ['invoice_number', 'version', 'action', 'recipient_name', 'address', 'phone', 'courier', 'tracking', 'current_status', 'dispatched_at', 'delivered_at'];
 const sriLankaTime = (value?: string | null) => value ? new Intl.DateTimeFormat('sv-SE', {
   timeZone: 'Asia/Colombo', year: 'numeric', month: '2-digit', day: '2-digit',

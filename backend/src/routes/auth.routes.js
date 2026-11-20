@@ -1,3 +1,7 @@
+// API addresses for signing in, registering, passwords and the auto-lock session.
+// For each address: who may use it (signed in, which role), which input checks run first, and which
+// controller handles it.
+
 import { Router } from 'express';
 import { authController } from '../controllers/auth.controller.js';
 import { authenticate, authenticateSessionControl } from '../middleware/authenticate.js';

@@ -1,3 +1,5 @@
+// The refund details a patient is allowed to see.
+
 const pick = (record, keys) => Object.fromEntries(keys.filter(key => record[key] !== undefined).map(key => [key, record[key]]));
 export const patientRefund = refund => ({
   ...pick(refund, ['id', 'saleId', 'paymentRequestId', 'category', 'amount', 'reason', 'approvalReason', 'status', 'method', 'reference', 'createdAt', 'decidedAt', 'settledAt']),

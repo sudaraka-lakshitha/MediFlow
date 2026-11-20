@@ -1,3 +1,6 @@
+// Input rules for the pharmacy settings page. Wrong or missing input is stopped here with a clear
+// message, before it reaches the services.
+
 import { z } from "zod";
 
 export const operationSettingsSchema = z.object({

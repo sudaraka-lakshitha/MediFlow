@@ -1,3 +1,6 @@
+// Update many deliveries at once from a spreadsheet (for example courier tracking numbers). Each
+// row is checked first; nothing is saved if a row is wrong.
+
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';

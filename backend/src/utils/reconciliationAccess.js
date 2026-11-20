@@ -1,3 +1,5 @@
+// Who may confirm the pharmacy balance.
+
 import { AppError } from './AppError.js';
 export const canReconcilePharmacy = user => user.role === 'ADMIN' || (user.pharmacyReconciliationAccess === true
   && (user.role === 'CASHIER' || (user.role === 'PHARMACIST' && user.cashierAccess === true)));

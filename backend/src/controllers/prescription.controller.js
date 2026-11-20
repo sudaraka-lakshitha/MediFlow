@@ -1,3 +1,8 @@
+// Receives the web requests for prescriptions, calls the matching service, writes the audit log
+// entry and sends the reply.
+// The real rules are in services/prescription.service.js. To trace a button: route -> this
+// controller -> service.
+
 import { prescriptionService } from '../services/prescription.service.js';
 import { recordAudit } from '../services/audit.service.js';
 import { AppError } from '../utils/AppError.js';

@@ -1,3 +1,6 @@
+// Rules for dates typed into date boxes (YYYY-MM-DD), report date ranges, and "not in the future"
+// checks that use the Sri Lanka date.
+
 import { z } from 'zod';
 import { localDateKey } from '../utils/localDate.js';
 export const calendarDate = z.iso.date();

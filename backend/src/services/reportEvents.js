@@ -1,3 +1,5 @@
+// Turns bill events (paid, refunded, cancelled...) into report rows.
+
 import { prisma } from '../config/prisma.js';
 import { itemFinancials, itemCreditFinancials, saleFinancials, combineFinancials } from '../utils/reportFinancials.js';
 import { Prisma } from '@prisma/client';

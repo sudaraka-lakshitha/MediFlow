@@ -1,3 +1,9 @@
+// RELEASING OLD HOLDS
+// Stock set aside for an unpaid cash order is only kept for a limited time (24 hours by default).
+// This clean-up frees the stock for any order whose time has passed. It runs when the server
+// starts,
+// on a timer, and just before a cashier takes a payment.
+
 import { prisma } from '../config/prisma.js';
 import { serializable } from './serializable.js';
 import { releaseReservations } from './stock.js';

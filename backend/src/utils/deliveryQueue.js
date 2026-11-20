@@ -1,3 +1,8 @@
+// DELIVERY QUEUES
+// Groups deliveries into the tabs staff see (to confirm, waiting for fee, ready to dispatch, on the
+// way...),
+// with search, courier and date filters, page by page.
+
 import { Prisma } from '@prisma/client';
 
 // Compare DECIMAL balances in MySQL, before pagination. A paid status alone

@@ -1,3 +1,5 @@
+// Patient profiles: register, edit, deactivate, reset password, and notices shown to a patient.
+
 import crypto from 'node:crypto';
 import bcrypt from 'bcrypt';
 import { prisma } from '../config/prisma.js';
