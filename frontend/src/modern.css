@@ -410,6 +410,14 @@ a:hover { color: var(--c-navy-hover); }
 }
 
 /* ─── Metrics ───────────────────────────────────────────── */
+/* Four cards: 4 across on wide screens, 2 + 2 on tablets (never 3 + 1). */
+.metric-grid:has(> .metric-card:nth-child(4):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 1100px) {
+  .metric-grid:has(> .metric-card:nth-child(4):last-child) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 430px) {
+  .metric-grid:has(> .metric-card:nth-child(4):last-child) { grid-template-columns: 1fr; }
+}
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -441,7 +449,8 @@ a:hover { color: var(--c-navy-hover); }
 .metric-icon.blue   { background: #E4EFF8; color: var(--c-info); }
 .metric-icon.navy   { background: #E4EAF0; color: var(--c-navy); }
 
-.metric-card > div { display: flex; flex-direction: column; min-width: 0; }
+/* Label at the top, value at the bottom: values line up across a row even when one label wraps. */
+.metric-card > div { display: flex; flex-direction: column; justify-content: space-between; align-self: stretch; min-width: 0; }
 .metric-card small { color: var(--c-text-muted); font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
 .metric-card strong { margin-top: 3px; color: var(--c-text); font-size: 1.45rem; font-weight: 600; letter-spacing: -.02em; }
 
@@ -484,6 +493,10 @@ a:hover { color: var(--c-navy-hover); }
 }
 
 textarea.form-control { min-height: 80px; resize: vertical; }
+/* Small controls match small buttons (30px), so they line up in the same row. */
+.form-control-sm,
+.form-select-sm { min-height: 30px; padding: 4px 8px; font-size: .78rem; }
+.form-select-sm { padding-right: 28px; }
 
 .form-check-input:checked { background-color: var(--c-navy); border-color: var(--c-navy); }
 .form-check-input:focus { box-shadow: 0 0 0 3px rgba(22,50,79,.1); }
@@ -506,7 +519,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 36px;
+  min-height: 38px;
   padding: 7px 14px;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
@@ -565,6 +578,12 @@ textarea.form-control { min-height: 80px; resize: vertical; }
   color: var(--c-danger);
 }
 .btn-outline-danger:hover:not(:disabled) { background: #FDEAEC; }
+.btn-outline-warning { color: #8A5A00; background: transparent; border-color: #F0C36A; }
+.btn-outline-warning:hover:not(:disabled) { color: #6B4600; background: #FEF8EC; border-color: #E0A93B; }
+.btn-outline-success { color: #0D6B52; background: transparent; border-color: #7CC3A9; }
+.btn-outline-success:hover:not(:disabled) { background: #E2F4EE; }
+.btn-outline-dark { color: var(--c-text); background: transparent; border-color: var(--c-border-dark); }
+.btn-outline-dark:hover:not(:disabled) { background: var(--c-surface-2); }
 
 .btn-light {
   background: var(--c-surface-2);
@@ -587,7 +606,8 @@ textarea.form-control { min-height: 80px; resize: vertical; }
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
-.scrollable-table-region { position: relative; scrollbar-gutter: stable; }
+.scrollable-table-region { position: relative; }
+.scrollable-table-region.has-overflow::after { display: block; }
 .scrollable-table-region:focus-visible { outline: 2px solid var(--c-navy); outline-offset: 2px; }
 .scrollable-table-region::after {
   position: sticky;
@@ -745,6 +765,33 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 .toolbar > .form-control,
 .toolbar > .form-select { flex: 1 1 160px; max-width: 280px; }
 .toolbar > .search-select { flex: 1 1 200px; max-width: 320px; }
+/* The input must fill its wrapper, or the search icon floats outside the box. */
+.toolbar .search-select > .form-control { width: 100%; min-width: 0; }
+
+/* Delivery filters: search on its own row, then four equal filters and the Clear button. */
+.delivery-filter-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; align-items: end; gap: 10px; }
+.delivery-filter-grid .delivery-filter-search { grid-column: 1 / -1; }
+@media (max-width: 900px) { .delivery-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .delivery-filter-grid { grid-template-columns: 1fr; } }
+
+/* Export cards: buttons in an even 2-column grid, pinned to the bottom of each card. */
+.export-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+
+/* "Prescribed and bought" tables sit inside cards and modals: compact headers so all six columns fit. */
+.supply-table thead th { white-space: normal; text-transform: none; letter-spacing: 0; font-size: .72rem; }
+.supply-table td:last-child { min-width: 140px; }
+
+/* Row actions in data tables: one button per line, all the same width. */
+.table-action-stack { display: grid; grid-template-columns: minmax(150px, max-content); gap: 4px; }
+.table-action-stack > .btn { justify-content: flex-start; }
+
+/* History navigation: record count on the left, Previous/Next together on the right. */
+.history-nav-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.history-nav-buttons { display: flex; gap: 6px; }
+@media (max-width: 480px) {
+  .history-nav-buttons { width: 100%; }
+  .history-nav-buttons .btn { flex: 1; }
+}
 
 .record-count { color: var(--c-text-muted); font-size: .76rem; font-weight: 600; white-space: nowrap; }
 .data-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 14px; color: var(--c-text-muted); font-size: .76rem; }
@@ -881,8 +928,10 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 .not-found-icon { display: inline-grid; width: 52px; height: 52px; place-items: center; color: var(--c-navy); background: var(--c-surface-2); border-radius: 14px; font-size: 1.35rem; }
 
 /* ─── Alerts ─────────────────────────────────────────────── */
+/* Block by default: several alerts stack a heading, lines and a table.
+   Add d-flex where an icon or button must sit beside the text. */
 .alert {
-  display: flex;
+  display: block;
   gap: 10px;
   padding: 10px 14px;
   border: 1px solid transparent;
@@ -1078,10 +1127,11 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 .demo-note-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .demo-note-heading small { color: var(--c-text-muted); text-align: right; }
 .demo-account-list { display: grid; gap: 6px; }
+/* Role above the email, so long addresses are not broken in the middle. */
 .demo-account {
   display: grid;
-  grid-template-columns: 82px minmax(0, 1fr);
-  gap: 8px;
+  grid-template-columns: 1fr;
+  gap: 1px;
   width: 100%;
   padding: 7px 9px;
   border: 1px solid transparent;
@@ -1369,16 +1419,22 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 .inventory-toolbar > div:first-child { display: flex; flex-direction: column; gap: 2px; }
 .inventory-toolbar > div:first-child small { color: var(--c-text-2); font-size: .74rem; }
 
+/* Four equal segments in one row, so "All time" never drops onto its own line. */
 .workflow-period-filter {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
   margin: -2px 0 12px;
 }
 .workflow-period-filter .btn {
   min-height: 32px;
-  padding: 4px 10px;
+  padding: 4px 6px;
   white-space: nowrap;
+}
+/* On a narrow card use two rows of two instead of squeezing the labels. */
+.workflow-panel { container-type: inline-size; }
+@container (max-width: 340px) {
+  .workflow-period-filter { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .inventory-attention-strip {
@@ -2137,7 +2193,7 @@ textarea.form-control { min-height: 80px; resize: vertical; }
   .low-stock-buttons { justify-content: stretch; width: 100%; }
   .low-stock-buttons .btn { flex: 1; text-align: center; justify-content: center; }
   .table-responsive { border-radius: var(--r-sm); }
-  .scrollable-table-region::after { display: block; }
+
   .table > :not(caption) > * > * { padding: 9px 10px; }
   .my-activity-toolbar { flex-direction: column; align-items: stretch; }
   .my-activity-presets { width: 100%; }
@@ -2288,3 +2344,12 @@ textarea.form-control { min-height: 80px; resize: vertical; }
   .topbar { gap: 10px; }
   .topbar-context { min-width: 0; flex: 1; }
 }
+
+/* Inventory alert chips: one per line on phones so long labels never spill out. */
+@media (max-width: 480px) {
+  .inventory-alert-chips { display: grid; grid-template-columns: 1fr; width: 100%; }
+}
+
+/* Why an action is locked: shown next to disabled buttons. */
+.locked-reason { display: flex; align-items: flex-start; gap: 6px; width: 100%; margin: 6px 0 0; color: #7A5000; font-size: .78rem; line-height: 1.45; }
+.locked-reason .bi { margin-top: 1px; font-size: .72rem; }

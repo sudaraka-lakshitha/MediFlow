@@ -19,7 +19,8 @@ import { useAuth } from "../auth/useAuth";
 import { Modal, ModalActions } from "../components/Modal";
 import { PredictiveSearchInput } from "../components/PredictiveSearchInput";
 import { SearchableSelect } from "../components/SearchableSelect";
-import { Alert, Empty, Loading, Metric, Status } from "../components/Ui";
+import { Alert, Empty, Loading, Metric, Status, LockedReason } from "../components/Ui";
+import { lockReason } from "../utils/lockReason";
 
 const money = (value: unknown) => `Rs. ${Number(value || 0).toFixed(2)}`;
 const cancellationKey = (value: any) => `${value.id}:${value.selectedItemIds.join(',')}:${JSON.stringify(value.quantities || {})}`;
@@ -580,8 +581,8 @@ export function CashierPage() {
               {filtered.map((row) => (
                 <tr key={row.id}>
                   <td>
-                    <strong>{row.requestNumber}</strong>
-                    <small className="d-block">
+                    <strong className="text-nowrap">{row.requestNumber}</strong>
+                    <small className="d-block text-nowrap">
                       {row.prescription?.prescriptionNumber || "Retail goods"}
                     </small>
                     <small>{formatPharmacyDateTime(row.createdAt)}</small>
@@ -623,7 +624,7 @@ export function CashierPage() {
                       </small>
                     ))}
                   </td>
-                  <td>
+                  <td className="text-nowrap">
                     <strong>{money(row.total)}</strong>
                   </td>
                   <td>
@@ -641,14 +642,15 @@ export function CashierPage() {
                     )}
                   </td>
                   <td>
-                    <div className="d-flex flex-wrap gap-1">
+                    <div className="table-action-stack">
                       {row.customerCancellationReason && !["CANCELLED", "FULFILLED"].includes(row.status) && <button className="btn btn-sm btn-warning" onClick={() => setCancellationOverride({ ...row, resolutionReason: "" })}>Resolve cancellation request</button>}
                       <button
                         className="btn btn-sm btn-outline-secondary"
                         onClick={() => openPdf(row, "handoff")}
                         title="Open pharmacist handoff"
                       >
-                        <i className="bi bi-file-earmark-text" />
+                        <i className="bi bi-file-earmark-text me-1" />
+                        Handoff note
                       </button>
                       {row.status === "AWAITING_PAYMENT" && (!(row.prescription?.isOnline || row.prescription?.sourceUploadId) || row.acknowledgedRevision === row.revision) && (
                         <button
@@ -768,7 +770,8 @@ export function CashierPage() {
             <p>Verify the customer's identity first. The previous PIN will stop working. Give the customer a new receipt; payment and reserved stock will not change.</p>
             <label className="form-label" htmlFor="pin-reset-reason">Reason for reissuing</label>
             <textarea id="pin-reset-reason" className="form-control mb-3" required minLength={3} maxLength={500} value={pinReset.reason} onChange={(event) => setPinReset({ ...pinReset, reason: event.target.value })} />
-            <button className="btn btn-primary" disabled={busy || pinReset.reason.trim().length < 3}>Reissue PIN</button>
+            <LockedReason reason={pinReset.reason.trim().length < 3 ? "Enter a reason of at least 3 characters to reissue the PIN." : ""} />
+            <button className="btn btn-primary mt-2" disabled={busy || pinReset.reason.trim().length < 3}>Reissue PIN</button>
           </form>
         </Modal>
       )}
@@ -819,7 +822,8 @@ export function CashierPage() {
             {payment.supplyRows?.length > 0 && (
               <div className="alert alert-warning small mb-3">
                 <strong>Prescribed and bought — charge only what is on this bill</strong>
-                <table className="table table-sm small mb-1">
+                <div className="table-responsive mt-2 bg-white">
+                <table className="table table-sm small mb-0 supply-table">
                   <thead><tr><th>Medicine</th><th>Prescribed</th><th>Earlier</th><th>Bought now</th><th>Not bought</th><th>Rest of it</th></tr></thead>
                   <tbody>
                     {payment.supplyRows.map((row: any) => (
@@ -834,6 +838,7 @@ export function CashierPage() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
             )}
             {!payment.supplyRows?.length && payment.balanceToCollect?.length > 0 && (
@@ -1555,9 +1560,15 @@ export function CashierPage() {
                 Number(payment.splitCashTendered || payment.splitCashAmount || 0) >= Number(payment.splitCashAmount || 0)
               );
               const canSubmit = isCashSufficient && isSplitValid;
+              const paymentLock = lockReason(
+                [!isCashSufficient, `The cash received must be at least ${money(total)}.`],
+                [!isSplitValid, `The cash part and the card/bank part must add up to ${money(total)}, and the cash received must cover the cash part.`],
+              );
 
               return (
-                <div className="d-flex justify-content-end gap-2 mt-4">
+                <div className="mt-4">
+                <LockedReason reason={paymentLock} />
+                <div className="d-flex justify-content-end gap-2 mt-2">
                   <button
                     type="button"
                     className="btn btn-light"
@@ -1572,6 +1583,7 @@ export function CashierPage() {
                   >
                     {busy ? "Processing..." : `Confirm Payment of ${money(payment.total)}`}
                   </button>
+                </div>
                 </div>
               );
             })()}
@@ -1698,6 +1710,13 @@ export function CashierPage() {
               <p className="small text-secondary mt-2">The bank-verified amount, customer's declared amount and invoice total must match. Reconcile any underpayment or excess before approval.</p>
 
               <Alert message={error} />
+              <LockedReason reason={lockReason(
+                [slipReview.row.customerCancellationReason, "The customer has asked to cancel. Resolve the cancellation request before verifying this slip."],
+                [!slipReview.verifiedReference?.trim(), "To verify: enter the bank transaction reference from the bank statement."],
+                [Number(slipReview.verifiedAmount) !== Number(slipReview.row.total), `To verify: the amount seen in the bank statement must equal the invoice total (${money(slipReview.row.total)}).`],
+                [Number(slipReview.verifiedAmount) !== Number(slipReview.slip.declaredAmount), `To verify: the bank amount must equal the amount the customer declared (${money(slipReview.slip.declaredAmount)}).`],
+              )} />
+              <LockedReason reason={slipReview.reason.trim().length < 3 ? "To reject: enter a reason of at least 3 characters." : ""} />
               <div className="d-flex justify-content-end gap-2 mt-3">
                 <button
                   type="button"
@@ -1959,6 +1978,7 @@ export function CashierPage() {
                 </label>
               )}
               <Alert message={error} />
+              <LockedReason reason={cancellationPreview?.key !== cancellationKey(partialCancel) ? "Choose the items and quantities to cancel, then wait for the new total to be calculated." : ""} />
               <div className="d-flex justify-content-end gap-2 mt-3">
                 <button
                   type="button"
@@ -2289,7 +2309,7 @@ export function CashierPage() {
       )}
       {cancellationOverride && (
         <Modal title="Customer requested cancellation" onClose={() => setCancellationOverride(null)} size="sm">
-          <div className="alert alert-warning"><i className="bi bi-exclamation-triangle" aria-hidden="true" /><div><strong>Do not collect payment unless the customer has changed their mind.</strong><div className="small mt-1">Reason: {cancellationOverride.customerCancellationReason}</div></div></div>
+          <div className="alert alert-warning d-flex gap-2"><i className="bi bi-exclamation-triangle" aria-hidden="true" /><div><strong>Do not collect payment unless the customer has changed their mind.</strong><div className="small mt-1">Reason: {cancellationOverride.customerCancellationReason}</div></div></div>
           <p className="text-secondary small">Choose how to handle this request. Cancelling a paid bill creates a refund obligation; a cashier must separately record the payout.</p>
           {['AWAITING_PAYMENT', 'SLIP_SUBMITTED'].includes(cancellationOverride.status) && <button type="button" className="btn btn-outline-danger w-100 mb-2" disabled={busy} onClick={() => { setError(''); setCancelBill({ ...cancellationOverride, reason: cancellationOverride.customerCancellationReason || '' }); setCancellationOverride(null); }}>Cancel unpaid bill</button>}
           {cancellationOverride.status === 'PAID' && canDirectlyCancelPaidBill(cancellationOverride) && <button type="button" className="btn btn-outline-danger w-100 mb-2" disabled={busy} onClick={() => { setError(''); setRevoke({ ...cancellationOverride, reason: cancellationOverride.customerCancellationReason || '' }); setCancellationOverride(null); }}>Refund and cancel bill</button>}
@@ -2297,6 +2317,7 @@ export function CashierPage() {
           <p className="text-secondary small">Continue only when the customer confirms they want to keep the order.</p>
           <label className="form-label" htmlFor="cancellation-resolution">Reason for continuing (record the customer's agreement)</label><textarea id="cancellation-resolution" className="form-control" maxLength={500} value={cancellationOverride.resolutionReason} onChange={(event) => setCancellationOverride({ ...cancellationOverride, resolutionReason: event.target.value })} />
           <Alert message={error} />
+          <LockedReason reason={cancellationOverride.resolutionReason.trim().length < 3 ? "Record the customer's agreement (at least 3 characters) to continue with the order." : ""} />
           <div className="modal-actions"><button type="button" className="btn btn-light" disabled={busy} onClick={() => setCancellationOverride(null)}>Leave request pending</button><button type="button" className="btn btn-warning" disabled={busy || cancellationOverride.resolutionReason.trim().length < 3} onClick={async () => { setBusy(true); setError(''); try { await api.post(`/payment-requests/${cancellationOverride.id}/resolve-cancellation`, { revision: cancellationOverride.revision, requestReason: cancellationOverride.customerCancellationReason, reason: cancellationOverride.resolutionReason }); setCancellationOverride(null); await load(); } catch (caught) { setError(errorMessage(caught)); } finally { setBusy(false); } }}>Resolve and allow order to continue</button></div>
         </Modal>
       )}

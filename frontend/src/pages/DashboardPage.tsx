@@ -437,7 +437,7 @@ export function DashboardPage() {
           </div>
         </div>
         <div className="col-xl-4">
-          <div className="panel h-100">
+          <div className="panel h-100 workflow-panel">
             <div className="panel-header">
               <div>
                 <h3>Prescription workflow</h3>

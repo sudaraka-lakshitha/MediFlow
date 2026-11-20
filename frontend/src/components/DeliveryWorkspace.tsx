@@ -109,10 +109,12 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
     if (medicine.customerCancellationReason || fee?.customerCancellationReason) reasons.push('a cancellation request is under review');
     if (medicine.status === 'AWAITING_PAYMENT') reasons.push('the medicine bill is unpaid');
     if (medicine.status === 'SLIP_SUBMITTED') reasons.push('the medicine bank slip is being checked');
+    if (medicine.status === 'PAID' && Number(medicine.amountPaid) - Number(medicine.refundedAmount) < Number(medicine.total)) reasons.push('the medicine bill is only partly paid');
     if (!fee) reasons.push(medicine.status === 'PAID' ? 'the pharmacy still has to issue the delivery-fee bill' : 'the pharmacy will issue the delivery-fee bill');
     else if (fee.status === 'AWAITING_PAYMENT') reasons.push('the delivery fee is unpaid');
     else if (fee.status === 'SLIP_SUBMITTED') reasons.push('the delivery-fee bank slip is being checked');
     else if (fee.status === 'CANCELLED') reasons.push('the delivery-fee bill was cancelled and must be reissued');
+    else if (fee.status === 'PAID' && Number(fee.amountPaid) - Number(fee.refundedAmount) < Number(fee.total)) reasons.push('the delivery fee is only partly paid');
     if (medicine.refunds?.length || fee?.refunds?.length) reasons.push('a refund is pending');
     return reasons.length ? `Waiting: ${reasons.join('; ')}.` : 'Processing — awaiting verified payment';
   };
@@ -138,8 +140,8 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
       && (!from || (!!localDay && localDay >= from)) && (!to || (!!localDay && localDay <= to))
       && [row.paymentRequest.requestNumber, row.paymentRequest.patient?.fullName, row.recipientName, row.courierService, row.trackingReference].join(' ').toLowerCase().includes(search.toLowerCase());
   });
-  return <section className="panel mt-3">
-    <h3>Home delivery</h3>
+  return <section className="panel">
+    <h3 className="h6 fw-semibold mb-1">Home delivery</h3>
     <p className="text-secondary">Medicines and delivery fees must be paid and cashier-verified before dispatch. Delivery fees are paid by bank transfer only. Request delivery before collecting your medicines.</p>
     <Alert message={error} />
     {deliveryHistoryControls}
@@ -147,8 +149,8 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
     {message && <div className="alert alert-success" role="status">{message}</div>}
     <p>Standard delivery fee: {fee === null ? 'Not configured' : `Rs. ${fee.toFixed(2)}`}. Pharmacy confirmation is required.</p>
     {user?.role === 'ADMIN' && <form className="d-flex flex-wrap align-items-end gap-2 mb-3" onSubmit={e => { e.preventDefault(); void saveFee(); }}>
-      <label>Standard fee (Rs.)
-        <div className="input-group">
+      <label className="form-label mb-0">Standard fee (Rs.)
+        <div className="input-group mt-1">
           <input
             className="form-control"
             type="number"
@@ -163,14 +165,14 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
             style={{ background: editingFee ? undefined : '#f8f9fa', cursor: editingFee ? 'text' : 'not-allowed' }}
           />
           <span className="input-group-text" title={editingFee ? 'Editing' : 'Locked – click Edit to change'}>
-            {editingFee ? '✏️' : '🔒'}
+            <i className={`bi ${editingFee ? 'bi-pencil' : 'bi-lock'}`} aria-hidden="true" />
           </span>
         </div>
       </label>
       {editingFee ? <>
         <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save standard fee'}</button>
         <button type="button" className="btn btn-outline-secondary" disabled={busy} onClick={() => { setEditingFee(false); setFeeDraft(''); setError(''); }}>Cancel</button>
-      </> : <button type="button" className="btn btn-outline-primary" disabled={busy} onClick={() => { setFeeDraft(String(fee ?? '')); setEditingFee(true); setError(''); setMessage(''); }}>✏️ Edit standard fee</button>}
+      </> : <button type="button" className="btn btn-outline-primary" disabled={busy} onClick={() => { setFeeDraft(String(fee ?? '')); setEditingFee(true); setError(''); setMessage(''); }}><i className="bi bi-pencil" aria-hidden="true" />Edit standard fee</button>}
     </form>}
     {patient && eligible.length > 0 && <form onSubmit={e => { e.preventDefault(); void run(() => api.post(`/payment-requests/${form.id}/delivery`, { recipientName: form.recipientName, address: form.address, phone: form.phone }), 'Delivery requested. After pharmacy confirmation, the separate delivery-fee invoice will appear here and under Sales & billing.'); }}>
       {rows.some(row => row.paymentRequestId === Number(form.id) && row.status === 'CANCELLED') && <p className="text-secondary">Request delivery again with the recipient details below. The previous cancelled fee remains in your invoice history; the pharmacy will confirm a new delivery fee.</p>}
@@ -197,13 +199,13 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
     <div className="d-flex flex-wrap gap-2 mb-3" role="group" aria-label="Delivery queues">
       {[['ALL', 'All'], ['ATTENTION', 'Needs pharmacy action'], ['AWAITING_PAYMENT', 'Awaiting customer payment'], ['READY', 'Ready to dispatch'], ['DISPATCHED', 'Dispatched'], ['DELIVERY_FAILED', 'Delivery failed'], ['RETURNING', 'Returning to pharmacy'], ['DELIVERED', 'Delivered'], ['RETURNED', 'Returned'], ['RESHIP_REQUESTED', 'Reshipment requested'], ['CANCELLED', 'Cancelled']].map(([value, label]) => <button type="button" key={value} aria-pressed={queue === value} className={`btn btn-sm ${queue === value ? 'btn-primary' : 'btn-outline-secondary'}`} onClick={() => setQueue(value)}>{label}</button>)}
     </div>
-    <label className="d-block mb-3">Search invoice, customer, courier or tracking number<input className="form-control" value={search} onChange={e => setSearch(e.target.value)} /></label>
-    <div className="d-flex flex-wrap gap-2 mb-3 align-items-end">
-      <label>Courier<select className="form-select" value={courierFilter} onChange={e => setCourierFilter(e.target.value)}><option value="">All couriers</option>{courierOptions.map(value => <option key={value}>{value}</option>)}</select></label>
-      <label>Date filter<select className="form-select" value={dateField} onChange={e => setDateField(e.target.value)}><option value="createdAt">Requested date</option><option value="dispatchedAt">Dispatch date</option><option value="deliveredAt">Delivered date</option></select></label>
-      <label>From<input className="form-control" type="date" value={from} max={to || undefined} onChange={e => setFrom(e.target.value)} /></label>
-      <label>To<input className="form-control" type="date" value={to} min={from || undefined} onChange={e => setTo(e.target.value)} /></label>
-      <button className="btn btn-outline-secondary" onClick={() => { setQueue('ALL'); setSearch(''); setCourierFilter(''); setFrom(''); setTo(''); }}>Clear filters</button>
+    <div className="delivery-filter-grid mb-3">
+      <label className="form-label mb-0 delivery-filter-search">Search invoice, customer, courier or tracking number<input className="form-control mt-1" type="search" placeholder="Invoice, customer, courier or tracking number" value={search} onChange={e => setSearch(e.target.value)} /></label>
+      <label className="form-label mb-0">Courier<select className="form-select mt-1" value={courierFilter} onChange={e => setCourierFilter(e.target.value)}><option value="">All couriers</option>{courierOptions.map(value => <option key={value}>{value}</option>)}</select></label>
+      <label className="form-label mb-0">Date filter<select className="form-select mt-1" value={dateField} onChange={e => setDateField(e.target.value)}><option value="createdAt">Requested date</option><option value="dispatchedAt">Dispatch date</option><option value="deliveredAt">Delivered date</option></select></label>
+      <label className="form-label mb-0">From<input className="form-control mt-1" type="date" value={from} max={to || undefined} onChange={e => setFrom(e.target.value)} /></label>
+      <label className="form-label mb-0">To<input className="form-control mt-1" type="date" value={to} min={from || undefined} onChange={e => setTo(e.target.value)} /></label>
+      <button type="button" className="btn btn-outline-secondary" onClick={() => { setQueue('ALL'); setSearch(''); setCourierFilter(''); setFrom(''); setTo(''); }}>Clear filters</button>
     </div>
     <p>{filtered.length} matching deliveries on this history page. Exports include this page only. Date filters use your local calendar dates.</p>
     {pharmacist && <div className="d-flex flex-wrap gap-2 mb-3">
@@ -279,7 +281,9 @@ export function DeliveryWorkspace({ onChange }: { onChange?: () => Promise<unkno
         <label>Tracking number<input className="form-control" disabled={busy} required minLength={3} maxLength={160} value={references[row.id] ?? row.trackingReference ?? ''} onChange={e => { setDraftVersions(current => ({ ...current, [row.id]: current[row.id] ?? row.updatedAt })); setReferences({ ...references, [row.id]: e.target.value }); }} /></label>
         {draftVersions[row.id] && <button type="button" className="btn btn-outline-secondary align-self-end" disabled={busy} onClick={() => discardTracking(row.id)}>Discard tracking edits</button>}
         {draftVersions[row.id] && draftVersions[row.id] !== row.updatedAt && <p className="text-danger w-100">This delivery changed while you were editing. Your draft is preserved. Discard it and review the latest details before saving.</p>}
-        <button className="btn btn-primary align-self-end" disabled={busy || (row.status === 'AWAITING_FEE' && !ready(row))}>{row.status !== 'AWAITING_FEE' ? 'Update courier / tracking' : 'Dispense and dispatch'}</button>
+        <button className="btn btn-primary align-self-end" disabled={busy || (row.status === 'AWAITING_FEE' && !ready(row))} title={row.status === 'AWAITING_FEE' && !ready(row) ? waitingFor(row) : undefined}>{row.status !== 'AWAITING_FEE' ? 'Update courier / tracking' : 'Dispense and dispatch'}</button>
+        {/* Say why dispatch is locked: courier details alone never unlock it. */}
+        {row.status === 'AWAITING_FEE' && !ready(row) && <small className="w-100 text-warning-emphasis">Dispatch is locked. {waitingFor(row)} It unlocks when the medicine bill and the delivery fee are both paid and verified by the cashier.</small>}
       </form>}
       {pharmacist && ['DISPATCHED', 'DELIVERY_FAILED'].includes(row.status) && <button disabled={busy} className="btn btn-outline-primary" onClick={() => { if (!window.confirm('Confirm the courier or recipient has verified that this parcel was delivered? Do not confirm based only on dispatch.')) return; void run(() => api.put(`/payment-requests/${row.paymentRequestId}/delivery`, { expectedUpdatedAt: row.updatedAt, action: 'DELIVERED' }), 'Delivery marked as delivered.'); }}>Confirm delivered to recipient</button>}
       {pharmacist && row.status === 'DELIVERED' && <button type="button" disabled={busy} className="btn btn-outline-warning" onClick={() => { const reason = window.prompt('Use this only if Delivered was recorded by mistake and the parcel is still with the courier. Explain the correction. For an actual return, use Returning to pharmacy.'); if (reason === null) return; if (reason.trim().length < 3 || reason.trim().length > 500) { setError('Enter a correction reason between 3 and 500 characters.'); return; } void run(() => api.put(`/payment-requests/${row.paymentRequestId}/delivery`, { action: 'CORRECT_DELIVERED', reason: reason.trim(), expectedUpdatedAt: row.updatedAt }), 'Incorrect delivered status corrected. The parcel is marked shipped; the previous delivery date remains in its history.'); }}>Correct mistaken delivered status</button>}

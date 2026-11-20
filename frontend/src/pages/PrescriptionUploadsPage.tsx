@@ -10,7 +10,8 @@ import { useAuth } from "../auth/useAuth";
 import { useNavigate } from "react-router-dom";
 import { Modal, ModalActions } from "../components/Modal";
 import { SearchableSelect } from "../components/SearchableSelect";
-import { Alert, Empty, Loading, Status } from "../components/Ui";
+import { Alert, Empty, Loading, Status, LockedReason } from "../components/Ui";
+import { lockReason } from "../utils/lockReason";
 import "../prescriptionUploads.css";
 
 type UploadSlip = {
@@ -950,11 +951,12 @@ export function PrescriptionUploadsPage() {
                 <i className="bi bi-pencil me-2" />Edit retention policy
               </button>
             ) : (
-              <div className="d-flex gap-2">
+              <div className="d-flex flex-wrap gap-2">
                 <button type="button" className="btn btn-light" disabled={busy} onClick={() => { setRetentionDays(savedRetentionDays); setRetentionEditing(false); }}>Cancel</button>
                 <button type="button" className="btn btn-primary" disabled={busy || retentionDays < 1 || retentionDays > 365 || retentionDays === savedRetentionDays} onClick={saveRetention}>
                   <i className="bi bi-check-lg me-2" />{busy ? "Saving…" : "Save policy"}
                 </button>
+                <LockedReason reason={lockReason([retentionDays < 1 || retentionDays > 365, "Enter a number of days from 1 to 365."], [retentionDays === savedRetentionDays, "Change the number of days to save a new policy."])} />
               </div>
             )}
             <small className="text-secondary">
@@ -2434,6 +2436,7 @@ export function PrescriptionUploadsPage() {
               placeholder="For example: The prescription image is unreadable. Please upload a clearer photo."
               value={rejectionReason} onChange={event => setRejectionReason(event.target.value)} disabled={busy} />
             <Alert message={rejectionError} />
+            <LockedReason reason={rejectionReason.trim().length < 3 ? "Explain the rejection (at least 3 characters) so the patient knows what to do next." : ""} />
             <div className="modal-actions">
               <button type="button" className="btn btn-light" disabled={busy} onClick={() => setRejectOpen(false)}>Back to review</button>
               <button type="submit" className="btn btn-danger" disabled={busy || estimateBusy || rejectionReason.trim().length < 3}>

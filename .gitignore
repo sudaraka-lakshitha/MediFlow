@@ -26,3 +26,6 @@ outputs/
 *.pem
 *.inspect.ndjson
 password.txt
+
+# Backups written by reset:transactions (contain patient data)
+backend/backups/

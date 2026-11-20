@@ -15,7 +15,7 @@ import { ActionsDropdown } from "../components/ActionsDropdown";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { Modal, ModalActions } from "../components/Modal";
 import { SearchableSelect } from "../components/SearchableSelect";
-import { Alert, Empty, Loading, Metric, Status } from "../components/Ui";
+import { Alert, Empty, Loading, Metric, Status, LockedReason } from "../components/Ui";
 import { Pagination } from "../components/Pagination";
 import { useClientPagination } from "../utils/useClientPagination";
 import { BulkStockModal } from "../components/BulkStockModal";
@@ -959,8 +959,8 @@ export function InventoryPage() {
               }
             >
               <option value="ALL">All batches</option>
-              <option value="CURRENT">
-                Current stock (hide disposed / returned)
+              <option value="CURRENT" title="Hides disposed and returned batches">
+                Current stock only
               </option>
               <option value="ATTENTION">All attention required</option>
               <option value="LOW_STOCK">Low-stock products</option>
@@ -1538,6 +1538,7 @@ export function InventoryPage() {
         <Modal title={restrictionTarget.restricted ? `Resume batch ${restrictionTarget.batchNumber}?` : `Stop issuing batch ${restrictionTarget.batchNumber}?`} onClose={() => setRestrictionTarget(null)} size="sm">
           <p className="text-secondary small">{restrictionTarget.restricted ? "This batch will become available for allocation and dispensing again." : "This immediately prevents the batch from being allocated to new sales or prescriptions."}</p>
           {!restrictionTarget.restricted && <div><label className="form-label">Reason for restriction</label><textarea className="form-control" value={restrictionReason} onChange={(event) => setRestrictionReason(event.target.value)} minLength={3} maxLength={220} placeholder="Describe the quality, recall, or handling concern." required /></div>}
+          <LockedReason reason={!restrictionTarget.restricted && restrictionReason.trim().length < 3 ? "Describe the concern (at least 3 characters) to stop issuing this batch." : ""} />
           <div className="modal-actions"><button type="button" className="btn btn-light" onClick={() => setRestrictionTarget(null)}>Cancel</button><button type="button" className={`btn ${restrictionTarget.restricted ? 'btn-primary' : 'btn-danger'}`} disabled={busy || (!restrictionTarget.restricted && restrictionReason.trim().length < 3)} onClick={() => toggleRestriction(restrictionTarget)}>{busy ? 'Working…' : restrictionTarget.restricted ? 'Resume issuing' : 'Stop issuing'}</button></div>
         </Modal>
       )}

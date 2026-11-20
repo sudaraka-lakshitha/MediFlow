@@ -3,6 +3,7 @@ import { ZodError } from 'zod';
 import { logger } from '../config/logger.js';
 import { recordAudit } from '../services/audit.service.js';
 import { AppError } from '../utils/AppError.js';
+import { describeZodError } from '../config/zodMessages.js';
 
 export const notFound = (_req, _res, next) => next(new AppError(404, 'Route not found.'));
 
@@ -13,9 +14,11 @@ export const errorHandler = (error, req, res, _next) => {
   let details = error.details;
 
   if (error instanceof ZodError) {
+    // Say which field failed and why, in plain words, instead of a generic message.
+    const described = describeZodError(error);
     status = 400;
-    message = 'Input validation failed.';
-    details = error.flatten();
+    message = described.message;
+    details = { ...error.flatten(), fields: described.fields };
   } else if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === 'P2002') {
       status = 409;

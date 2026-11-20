@@ -20,7 +20,8 @@ import { Modal, ModalActions } from "../components/Modal";
 import { PasswordField } from "../components/PasswordField";
 import { SearchableSelect } from "../components/SearchableSelect";
 import { PredictiveSearchInput } from "../components/PredictiveSearchInput";
-import { Alert, Empty, Loading, Status } from "../components/Ui";
+import { Alert, Empty, Loading, Status, LockedReason } from "../components/Ui";
+import { lockReason } from "../utils/lockReason";
 import { isCountableUnit, issuableTotal, stockQuantityStep } from "../utils/unitMeasure";
 import { isLiquidContainerUnit, liquidPackVolumeMl } from "../utils/liquidPackaging";
 import { productStockDescription, productStockTone, usableProductStock } from "../utils/productStock";
@@ -1677,7 +1678,7 @@ export function PrescriptionsPage() {
                     </div>
                   )}
                   {(rx.isOnline || rx.sourceUpload || rx.paymentRequest) && (
-                    <div className="mt-2">
+                    <div className="mt-2 d-flex flex-wrap align-items-center gap-2">
                       {(rx.isOnline || rx.sourceUpload) && (
                         <span className="badge text-bg-primary">
                           <i className="bi bi-cloud-check me-1" />
@@ -1685,7 +1686,7 @@ export function PrescriptionsPage() {
                         </span>
                       )}
                       {rx.paymentRequest && (
-                        <span className="ms-2 d-inline-flex align-items-center gap-1">
+                        <span className="d-inline-flex align-items-center gap-1">
                           <small className="text-secondary">Billing:</small>
                           <Status value={rx.paymentRequest.status} />
                         </span>
@@ -2860,8 +2861,8 @@ export function PrescriptionsPage() {
                         </option>
                       </select>
                     </div>
-                    <div className="col-md-3 d-flex align-items-end pb-2">
-                      <label className="form-check">
+                    <div className="col-md-3 d-flex align-items-center pt-md-4">
+                      <label className="form-check mb-0">
                         <input
                           className="form-check-input"
                           type="checkbox"
@@ -2877,8 +2878,8 @@ export function PrescriptionsPage() {
                         </span>
                       </label>
                     </div>
-                    <div className="col-md-3 d-flex align-items-end pb-2">
-                      <label className="form-check">
+                    <div className="col-md-3 d-flex align-items-center pt-md-4">
+                      <label className="form-check mb-0">
                         <input
                           className="form-check-input"
                           type="checkbox"
@@ -3546,6 +3547,7 @@ export function PrescriptionsPage() {
                             value={item.quantity}
                             aria-label={`Quantity of ${item.name} to issue now`}
                             disabled={Boolean(action.rx.sourceUpload) || (Boolean(action.rx.paymentRequest) && !["AWAITING_PAYMENT", "CANCELLED"].includes(action.rx.paymentRequest.status))}
+                            title={action.rx.sourceUpload ? "Uploaded orders are billed in full, so this quantity cannot be changed." : action.rx.paymentRequest && !["AWAITING_PAYMENT", "CANCELLED"].includes(action.rx.paymentRequest.status) ? "This bill is already paid or submitted, so its quantities are fixed." : undefined}
                             onChange={(event) => {
                               const items = [...dispense.items];
                               items[index] = {
@@ -4095,6 +4097,8 @@ export function PrescriptionsPage() {
                 ["AWAITING_PAYMENT", "CANCELLED", "FULFILLED"].includes(
                   action.rx.paymentRequest.status,
                 )) && (
+                <>
+                <LockedReason reason={lockReason([quoteBusy, "Calculating the bill total…"], [quoteError, "Fix the problem shown above before sending the bill."], [!quote, "The bill total has not been calculated yet. Check the quantities above."])} />
                 <div className="d-flex justify-content-end gap-2 mt-4">
                   <button
                     type="button"
@@ -4123,6 +4127,7 @@ export function PrescriptionsPage() {
                           : "Send combined invoice to cashier"}
                   </button>
                 </div>
+                </>
               )}
               {action.rx.paymentRequest?.status === "AWAITING_PAYMENT" && (
                 <div className="alert alert-warning mt-3">

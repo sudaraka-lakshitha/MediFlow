@@ -290,7 +290,7 @@ The local baseline fixtures (`npm --prefix backend run prisma:seed`) use **`Demo
 | **Administrator** | `pharmacy.mediflow+admin@gmail.com` | Full system governance, staff management, audit trails, system settings, two-tier refund approvals, financial reconciliation |
 | **Pharmacist** | `pharmacy.mediflow+pharmacist@gmail.com` | Prescription verification, clinical safety review, dispensing, batch inventory receipts & adjustments, reports |
 | **Cashier** | `pharmacy.mediflow+cashier@gmail.com` | Point-of-sale retail checkout, payment collection, bank slip verification, bank statement ledger allocations, customer refund payouts |
-| **Patient** | `pharmacy.mediflow+patient@gmail.com` | Prescription image uploads, estimate acceptance, order & delivery tracking, personal health record portal |
+| **Patient** | `pharmacy.mediflow+patient@gmail.com` | Prescription image uploads, final-bill acknowledgement and payment, order & delivery tracking, personal health record portal |
 
 > Demo credentials are only visible on the login screen during local development (`DEV` mode). Change all credentials and disable demo seeding before any public deployment.
 
@@ -401,7 +401,7 @@ MediFlow/
 │   │       ├── PatientHealthRecordPage.tsx Self-service medical history, allergies, dispensing records
 │   │       ├── PatientProfilePage.tsx      Patient contact details and chronic condition profiles
 │   │       ├── PatientsPage.tsx            Staff registry for managing patient profiles
-│   │       ├── PrescriptionUploadsPage.tsx Patient Rx image submissions, multi-file uploads, quote acceptance
+│   │       ├── PrescriptionUploadsPage.tsx Patient Rx image submissions, multi-file uploads, collection/delivery/bill-first options
 │   │       ├── PrescriptionsPage.tsx       Clinical verification, dosage adjustments, interaction review, dispensing
 │   │       ├── ReportsPage.tsx             Financial metrics, sales trends, stock movement, Excel/CSV/PDF export
 │   │       ├── SalesPage.tsx               Retail billing POS, counter orders, barcode lookup, invoice printing
@@ -428,27 +428,32 @@ MediFlow/
 │   │   │   ├── drugInformation.routes.js   External clinical API integration routes (RxNorm, openFDA)
 │   │   │   ├── inventory.routes.js         Batch receipt, stock adjustment, and disposal routes
 │   │   │   ├── patient.routes.js           Patient profile and clinical history routes
-│   │   │   ├── prescription.routes.js      Prescription recording, review, dispensing, and billing
-│   │   │   ├── prescriptionUpload.routes.js Digital prescription uploads and quoting workflows
+│   │   │   ├── prescription.routes.js      Prescription recording, review, dispensing, billing, close balance
+│   │   │   ├── prescriptionUpload.routes.js Digital prescription uploads, availability review and billing
 │   │   │   ├── reconciliation.routes.js    Cash register, bank receipt, and refund reconciliation
 │   │   │   ├── refund.routes.js            Refund execution and payout recording
 │   │   │   ├── refundApproval.routes.js    Two-tier administrator refund approval endpoints
 │   │   │   ├── staffActivityReport.routes.js Staff operational audit trail routes
 │   │   │   ├── user.routes.js              User administration and credential management
 │   │   │   └── workflowLease.routes.js     Heartbeat-based workflow lease lock acquisition/release
-│   │   └── services/                       Core business logic and transactional units
-│   │       ├── auth.service.js             Password hashing, JWT generation, OTP validation
-│   │       ├── bankTransfer.service.js     Bank ledger and invoice balance allocation engine
-│   │       ├── delivery.service.js         Delivery lifecycle state machine and courier dispatch
-│   │       ├── inventory.service.js        FEFO/FIFO batch allocation and stock adjustments
-│   │       ├── navigationAttention.service.js Badge count aggregation for operational queues
-│   │       ├── paymentRequest.service.js   Invoicing, split payments, receipts, and cash reservations
-│   │       ├── prescription.service.js     Prescription verification, safety review, dispensing
-│   │       ├── prescriptionUpload.service.js File attachment handling and quote generation
-│   │       ├── reconciliation.service.js   Daily register settlement and accounting balances
-│   │       ├── refund.service.js           Refund calculations and inventory return quarantine
-│   │       ├── refundApproval.service.js   Two-tier administrator escalation workflow
-│   │       └── session.service.js          Session tracking, token versioning, and idle logout
+│   │   ├── services/                       Core business logic and transactional units
+│   │   │   ├── auth.service.js             Password hashing, JWT generation, OTP validation
+│   │   │   ├── bankTransfer.service.js     Bank ledger and invoice balance allocation engine
+│   │   │   ├── delivery.service.js         Delivery lifecycle state machine and courier dispatch
+│   │   │   ├── inventory.service.js        FEFO/FIFO batch allocation and stock adjustments
+│   │   │   ├── navigationAttention.service.js Badge count aggregation for operational queues
+│   │   │   ├── paymentRequest.service.js   Invoicing, split payments, receipts, and cash reservations
+│   │   │   ├── prescription.service.js     Prescription verification, safety review, dispensing
+│   │   │   ├── prescriptionUpload.service.js File attachment handling, availability review, legacy quotes
+│   │   │   ├── reconciliation.service.js   Daily register settlement and accounting balances
+│   │   │   ├── refund.service.js           Refund calculations and inventory return quarantine
+│   │   │   ├── refundApproval.service.js   Two-tier administrator escalation workflow
+│   │   │   └── session.service.js          Session tracking, token versioning, and idle logout
+│   │   └── utils/                          Shared helpers (stock holds, dispensing, PDFs, queues)
+│   │       ├── deliveryFee.js              Standard delivery fee and automatic fee-bill issue
+│   │       ├── deliveryQueue.js            Staff delivery queues (action, payment, dispatch)
+│   │       ├── deliveryStatus.js           Plain status names for printed documents
+│   │       └── prescriptionBalance.js      Prescribed vs supplied balance and partial-supply reasons
 │   ├── prisma/
 │   │   ├── schema.prisma                   Comprehensive MySQL relational database schema
 │   │   ├── seed.js                         Demo data population script
@@ -495,7 +500,7 @@ MediFlow/
 - **End-of-Day Reconciliation**: Cash drawer counts, card settlements, bank transfer allocations, and refund payouts reconcile against system totals with automated variance tracking.
 
 ### 4. Home Delivery Logistics
-- **Delivery Queues**: Staff record processing, dispatch, delivery, failure, return and reshipment actions. “Ready to dispatch” is a filtered queue, not a separate persisted status. Patients can see courier details, tracking references and dispatch dates.
+- **Delivery Queues**: Staff record processing, dispatch, delivery, failure, return and reshipment actions. Staff queues are *Needs pharmacy action* (fee missing or cancelled, cancellation request, failed delivery, returned parcel), *Awaiting customer payment* and *Ready to dispatch*; these are filtered views, not persisted statuses. Every screen and printed slip uses the same plain status names. Patients can see courier details, tracking references and dispatch dates.
 - **Payment Before Dispatch**: Both medicines and delivery fees must be fully paid and verified. For a home-delivery upload, the delivery-fee bill is issued together with the medicine bill when a standard delivery fee is configured; otherwise staff issue it from Home deliveries, before or after the medicine bill is paid. A delivery requested after the medicine invoice was paid uses a separate delivery-fee balance.
 - **Delivery fees by bank transfer only**: The customer acknowledges the delivery-fee bill, transfers the fee and uploads the receipt; the cashier verifies it or allocates a matching bank-statement receipt. Cash, card and split payments are refused for delivery-fee bills. A fee bill is issued only when an active pharmacy bank account exists.
 - **Counter handover**: A cashier cannot record a counter handover for an active home-delivery order; its medicines are dispensed at dispatch.
@@ -525,7 +530,7 @@ Walk-in prescriptions and retail requests keep the earlier rule: stock is held o
 1. **Upload and prepare**: Patient submits one or more files and asks the pharmacy to prepare medicines. A pharmacist reviews the original, records the full medicine directions and quantities, adds any requested retail goods, and issues the final invoice. The stock is held from that moment. If it cannot be held, the bill is not issued and the pharmacist must adjust the quantities or receive stock.
 2. **Bill to review first**: The pharmacist issues the same complete final invoice. The patient acknowledges and pays it, or declines it, which sends a cancellation request to the pharmacy. Older uploads that already hold a rough quotation can still finish the legacy quote flow.
 3. **Pay and collect**: Patient reviews and acknowledges the final bill, then pays at the pharmacy or uses the listed bank-transfer process. Cashiers record cash/card payments or verify transfers/slips. When required, the pharmacist checks the receipt PIN before dispensing.
-4. **Pay and deliver**: Patient requests delivery and provides recipient/contact/address details. The medicine bill must already be paid. Any separate delivery-fee bill must also be paid and verified before dispatch. Staff record the courier and tracking number; dispatch time is recorded when staff mark it dispatched.
+4. **Pay and deliver**: For a home-delivery upload, the delivery request and the delivery-fee bill are created with the medicine bill. A customer who already paid for collection can still request delivery from Home deliveries; staff then issue the fee bill. Both bills must be paid and verified before dispatch; the delivery fee is bank transfer only. Staff record the courier and tracking number; dispatch time is recorded when staff mark it dispatched.
 5. **Cancel, return or refund**: Before payment or transfer-slip submission, customers can choose delivery-only or entire-order cancellation; a whole-order request needs a reason. After payment or slip submission, pharmacy staff handle cancellation and any refund review. Returned medicines are quarantined for pharmacist review before any possible restocking. A delivery fee is ordinarily non-refundable; an authorized exception must include a reason. A returned parcel may be approved for reshipment without another delivery fee.
 6. **Retail sale**: Cashier creates a counter sale, checks applicable stock and price, records payment, and produces the receipt. Retail returns/refunds follow authorization and stock-review controls appropriate to the item.
 
@@ -578,7 +583,7 @@ Each chunk commits separately. If a later chunk fails, earlier chunks may alread
 - **Restricted Patient Serialization**: Strict response serializers scrub internal clinical notes, supplier costs, and staff audit metadata before returning payloads to patient accounts.
 - **Financial Validation**: Money validators, decimal database fields and calculation helpers control monetary precision and reject invalid amounts.
 
-Session inactivity can be configured from 15 to 120 minutes; defaults are 30 minutes for staff and 60 for patients, followed by a one-minute warning window. The server caps a session at eight hours or the JWT expiry, whichever is sooner. A manually locked session can be unlocked with the password; an expired or revoked session requires sign-in. Changing `JWT_EXPIRES_IN` to `12h` does not override the eight-hour cap. Closing a tab is not a substitute for explicit logout on a shared device because browsers can restore tabs.
+Each user can choose an inactivity timeout from 15 to 120 minutes (defaults: 30 minutes for staff, 60 for patients). Separately, administrators set the pharmacy-wide `sessionIdleMinutes` operation setting (5–60 minutes, default 15); see `docs/session-security.md`. A one-minute warning appears before logout. The server caps a session at eight hours or the JWT expiry, whichever is sooner. A manually locked session can be unlocked with the password; an expired or revoked session requires sign-in. Changing `JWT_EXPIRES_IN` to `12h` does not override the eight-hour cap. Closing a tab is not a substitute for explicit logout on a shared device because browsers can restore tabs.
 
 ---
 
@@ -746,7 +751,7 @@ The following status codes appear in MediFlow's audit logs (`/audit`), applicati
 | **`403`** | Forbidden | Client (4xx) | Role unauthorized (e.g. Cashier dispensing medicines; Patient viewing inventory); non-admin approving refunds; staff without reconciliation grant. | Switch to an account with appropriate permissions (Admin/Pharmacist) or grant access in User Management. |
 | **`404`** | Not Found | Client (4xx) | Target record ID (prescription, product, batch, delivery, user) does not exist in MySQL (`P2025`); item was deleted before dispensing; invalid route. | Refresh the workspace to pull current records. Check whether the record was cancelled or deleted. |
 | **`409`** | Conflict | Client (4xx) | Duplicate email/batch/invoice (`P2002`); deleting product with sales history (`P2003`); stale record version (`expectedUpdatedAt` mismatch); insufficient usable stock; prescription already dispensed; collection PIN mismatch; idempotency hash collision. | Refresh the record to fetch the latest revision. For unique key collisions, choose an alternative identifier. For stock shortages, review batches. |
-| **`410`** | Gone | Client (4xx) | Password-reset OTP expired (10-minute window); prescription quotation reached acceptance deadline. | Request a new OTP or have the pharmacist re-quote. |
+| **`410`** | Gone | Client (4xx) | Password-reset OTP expired (10-minute window); a legacy prescription quotation reached its acceptance deadline (new uploads use final bills, not quotes). | Request a new OTP, or have the pharmacist issue a bill. |
 | **`413`** | Payload Too Large | Client (4xx) | Upload or export exceeds its size limit. Delivery updates allow up to 200 data rows, Excel 1 MB or CSV 500 KB; validation errors may also use 400. | Reduce the file size and follow the limits shown in the relevant upload dialog. |
 | **`423`** | Locked | Client (4xx) | Workspace explicitly locked (`SESSION_LOCKED`). Expired sessions use 401; competing workflow edits generally use 409. | Use the password unlock prompt for a locked session. Sign in again if it has expired. |
 | **`429`** | Too Many Requests | Client (4xx) | Brute-force rate limiter triggered on login or OTP attempts from same IP or account. | Wait for the cooldown window (1–15 minutes) before retrying. |
@@ -759,28 +764,14 @@ The following status codes appear in MediFlow's audit logs (`/audit`), applicati
 
 ## 17. Current QA Status & Verification Boundaries
 
-Historical automated verification, on **4 November 2026** for the pre-commit working tree:
+Checks run on **20 November 2026** for the current working tree (Linux, Node 22, mocked database):
 
-- **Backend suite:** 739 tests passed across 66 files. These include unit and HTTP-boundary tests; most workflow tests use mocked database dependencies.
-- **Frontend:** `tsc -b && vite build` passed. The lint command exits successfully but reports non-blocking React warnings that still need review.
-- **Database:** Prisma client generation passed; migration `20261104000000_remaining_direction_snapshots` was applied to Aiven, migration status is up to date, and a read-only check confirmed all four new direction columns.
-- **Not verified in that review:** the final hosted Render/Vercel deployment, Android device behavior, Aiven load performance, physical printers/scanners and production email delivery.
+- **Backend suite:** 815 of 817 tests passed across 72 files. The 2 failures also fail on commit `9831de1` and are unrelated to the workflows below: `dashboardActivity` (outdated test mock) and `staffActivityReport` (date format depends on the machine's locale). Most workflow tests use mocked database dependencies.
+- **Frontend:** `tsc -b && vite build` passed; `oxlint` reports 0 errors and 53 existing React warnings.
+- **Covered by new tests:** the three upload options (stock held at billing for collection and delivery, nothing held for "bill first"), delivery-fee bill issued with the medicine bill, bank-transfer-only delivery fees, no collection PIN for home delivery, walk-in partial supply with recorded reasons, *Bill Remaining*, *Close remaining balance*, delivery queues, and the balance tables on printed bills (PDFs generated and inspected).
+- **Not verified:** the workflows against a real MySQL database (local XAMPP or Aiven), browser click-through, the hosted Render/Vercel deployment, Android devices, physical printers/scanners and production email.
 
-Checks run for the **19 November 2026** working-tree revision:
-
-- **Frontend production build:** `npm --prefix frontend run build` passed, including the TypeScript project build.
-- **Backend JavaScript syntax:** `node --check` passed for all 13 changed backend JavaScript files.
-- **Windows setup script syntax:** PowerShell parser check passed for `scripts/setup-local.ps1`.
-- **Patch whitespace:** `git diff --check` passed with CRLF-aware checking.
-- **Test suites:** not run for this revision.
-
-The transaction timeout, retry-protection, cancellation-policy and LAN/API URL changes have not been checked against the hosted database or from a second Wi-Fi device. The 4 November backend test results above are historical and do not cover this revision.
-
-The Windows first-time setup script has passed syntax parsing, but has not yet been run on a clean Windows/XAMPP computer.
-
-These results do not certify every business workflow or a maximum hosted upload time. Review the hosted deployment after pushing, especially its `/ready` health check and required environment variables. HTTP-boundary tests need access to temporary local test-server ports.
-
----
+Test these on a local XAMPP database before a demo: one upload with each option, a home delivery from bill to *Delivered*, and a walk-in prescription supplied in part and then completed with *Bill Remaining*.
 
 ## 18. MediFlow Android Client App (v2.0)
 

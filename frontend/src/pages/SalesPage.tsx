@@ -561,7 +561,7 @@ export function SalesPage() {
                           · {formatPharmacyDate(invoice.createdAt)}
                         </small>
                       </div>
-                      <div className="text-end">
+                      <div className="text-sm-end">
                         <strong className="d-block fs-5">
                           {money(invoice.total)}
                         </strong>
@@ -596,7 +596,8 @@ export function SalesPage() {
                     {invoice.supplyRows?.length > 0 && (
                       <div className="alert alert-warning small mt-3 mb-0">
                         <strong>Prescribed and bought — medicines not bought now are not charged</strong>
-                <table className="table table-sm small mb-1">
+                <div className="table-responsive mt-2 bg-white">
+                <table className="table table-sm small mb-0 supply-table">
                   <thead><tr><th>Medicine</th><th>Prescribed</th><th>Earlier</th><th>Bought now</th><th>Not bought</th><th>Rest of it</th></tr></thead>
                   <tbody>
                     {invoice.supplyRows.map((row: any) => (
@@ -611,6 +612,7 @@ export function SalesPage() {
                     ))}
                   </tbody>
                 </table>
+                </div>
                       </div>
                     )}
                     {!invoice.supplyRows?.length && invoice.balanceToCollect?.length > 0 && (
@@ -712,7 +714,7 @@ export function SalesPage() {
                         ) : !invoice.customerCancellationReason ? (
                           <button
                             type="button"
-                            className="btn btn-sm btn-outline-warning"
+                            className="btn btn-sm btn-outline-warning mb-2"
                             onClick={() => {
                               setError("");
                               setCancelRequestTarget({ invoice, reason: "" });

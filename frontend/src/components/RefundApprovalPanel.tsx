@@ -33,7 +33,7 @@ export function RefundApprovalPanel({ onDecision }: { onDecision: () => Promise<
       <Alert message={error} />{message && <p role="status" className="text-success">{message}</p>}
       <button className="btn btn-outline-primary me-2" disabled={busy} onClick={() => { setError(''); setPreview(null); setDraft({ bill: null, reason: '', partial: false, quantities: {} }); }}>Request administrator approval</button>
       <button className="btn btn-outline-secondary" disabled={busy} onClick={() => void load()}>Refresh requests</button>
-      <label className="d-block mt-3">Approval status<select className="form-select" value={status} onChange={event => { setStatus(event.target.value); setPage(1); }}><option value="PENDING">Pending administrator review</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option></select></label>
+      <label className="form-label d-block mt-3 mb-0">Approval status<select className="form-select mt-1" value={status} onChange={event => { setStatus(event.target.value); setPage(1); }}><option value="PENDING">Pending administrator review</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option></select></label>
       {rows.map(row => <article className="border-top pt-2 mt-2" key={row.id}>
         <strong>{row.requestNumber} · {money(row.amount)} · {row.status}</strong><p className="mb-1">{row.reason}</p>
         {row.selection.lines.map((line: any) => <div className="small" key={line.id}>{line.name} × {line.quantity}</div>)}
@@ -44,7 +44,7 @@ export function RefundApprovalPanel({ onDecision }: { onDecision: () => Promise<
         {row.status === 'PENDING' && row.requestedById === user?.id && <p className="small">A different administrator must review this request.</p>}
       </article>)}
       {!rows.length && <p className="mt-2">No approval requests on this page.</p>}
-      <div className="d-flex gap-2 mt-2"><button className="btn btn-sm btn-outline-secondary" disabled={page === 1 || busy} onClick={() => setPage(page - 1)}>Previous</button><span>Page {page}</span><button className="btn btn-sm btn-outline-secondary" disabled={!hasMore || busy} onClick={() => setPage(page + 1)}>Next</button></div>
+      <div className="d-flex align-items-center gap-2 mt-2"><button className="btn btn-sm btn-outline-secondary" disabled={page === 1 || busy} onClick={() => setPage(page - 1)}>Previous</button><span className="small">Page {page}</span><button className="btn btn-sm btn-outline-secondary" disabled={!hasMore || busy} onClick={() => setPage(page + 1)}>Next</button></div>
     </details>
     {draft && <Modal title="Request restricted-refund approval" onClose={() => !busy && setDraft(null)}>
       <form onSubmit={event => { event.preventDefault(); if (!preview) return; void perform(async () => { await api.post(`/payment-requests/${draft.bill.id}/refund-approval`, { ...payload(), hash: preview.hash }); setDraft(null); setPreview(null); setMessage('Request sent to the administrator. No payment or stock has changed.'); await load(); }); }}>

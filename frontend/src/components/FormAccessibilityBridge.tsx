@@ -5,6 +5,16 @@ import { useEffect } from 'react';
 export function FormAccessibilityBridge() {
   useEffect(() => {
     let sequence = 0;
+    let frame = 0;
+    // Show the "Scroll for more" hint only on tables that really scroll sideways.
+    const markOverflow = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        document.querySelectorAll<HTMLElement>('.scrollable-table-region').forEach((region) => {
+          region.classList.toggle('has-overflow', region.scrollWidth > region.clientWidth + 1);
+        });
+      });
+    };
     const connectLabels = () => {
       document.querySelectorAll<HTMLLabelElement>('label.form-label:not([for])').forEach((label) => {
         if (label.querySelector('input, select, textarea')) return;
@@ -27,18 +37,13 @@ export function FormAccessibilityBridge() {
         region.setAttribute('aria-label', `${heading || 'Data table'}; scroll horizontally to view all columns`);
         region.classList.add('scrollable-table-region');
       });
-      document.querySelectorAll<HTMLElement>('.table-responsive:not([tabindex])').forEach((region) => {
-        region.tabIndex = 0;
-        region.setAttribute('role', 'region');
-        const heading = region.closest('.panel')?.querySelector('h2, h3, h4')?.textContent?.trim();
-        region.setAttribute('aria-label', `${heading || 'Data table'}; scroll horizontally to view all columns`);
-        region.classList.add('scrollable-table-region');
-      });
+      markOverflow();
     };
     connectLabels();
     const observer = new MutationObserver(connectLabels);
     observer.observe(document.body, { childList: true, subtree: true });
-    return () => observer.disconnect();
+    window.addEventListener('resize', markOverflow);
+    return () => { observer.disconnect(); window.removeEventListener('resize', markOverflow); cancelAnimationFrame(frame); };
   }, []);
   return null;
 }

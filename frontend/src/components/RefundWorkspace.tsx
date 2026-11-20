@@ -4,7 +4,7 @@ import { api, errorMessage } from '../api/client';
 import { stockQuantityStep } from "../utils/unitMeasure";
 import { useAuth } from '../auth/useAuth';
 import { Modal, ModalActions } from './Modal';
-import { Alert } from './Ui';
+import { Alert, LockedReason } from './Ui';
 import { RefundApprovalPanel } from './RefundApprovalPanel';
 import { useHistoryPage } from '../api/useHistoryPage';
 const money = (value: unknown) => `Rs. ${Number(value || 0).toFixed(2)}`;
@@ -31,11 +31,11 @@ export function RefundWorkspace({ sales = noSales, refreshToken }: { sales?: any
   const payload = () => ({ expectedRefundCount: draft.refundCount, reason: draft.reason, items: Object.entries(draft.quantities).filter(([,quantity]) => Number(quantity) > 0).map(([id,quantity]) => ({ saleItemId: Number(id), quantity: Number(quantity) })) });
   const save = async (operation: () => Promise<unknown>) => { setBusy(true); setError(''); try { await operation(); setDraft(null); setAction(null); setPreview(null); await load(); } catch (caught) { setError(errorMessage(caught)); } finally { setBusy(false); } };
   return <section className="card p-3 mt-4" aria-label="Refunds and returns">
-    <div className="d-flex flex-wrap align-items-center justify-content-between gap-2"><h3 className="h5 mb-0">Refunds {staff ? '& returned stock' : ''}</h3><button className="btn btn-sm btn-outline-secondary" onClick={load}>Refresh refunds</button></div>
+    <div className="d-flex flex-wrap align-items-center justify-content-between gap-2"><h3 className="h6 fw-semibold mb-0">Refunds {staff ? '& returned stock' : ''}</h3><button className="btn btn-sm btn-outline-secondary" onClick={load}>Refresh refunds</button></div>
     <p className="small text-secondary mt-2">Refund authorization and confirmed payout are tracked separately.{staff && ' Returned goods are not added to saleable stock until a pharmacist reviews them.'}</p>
     <Alert message={error} />
     {staff && <RefundApprovalPanel onDecision={load} />}
-    <label className="d-block mt-3">Refund status<select className="form-select" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="">All refunds</option><option value="PENDING">Awaiting payout</option><option value="AWAITING_APPROVAL">Delivery-fee exception awaiting approval</option><option value="SETTLED">Payout completed</option><option value="REJECTED">Rejected</option></select></label>
+    <label className="form-label d-block mt-3 mb-0">Refund status<select className="form-select mt-1" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="">All refunds</option><option value="PENDING">Awaiting payout</option><option value="AWAITING_APPROVAL">Delivery-fee exception awaiting approval</option><option value="SETTLED">Payout completed</option><option value="REJECTED">Rejected</option></select></label>
     {refundHistoryControls}
     {canPay && sales.some((sale) => sale.status === 'PAID') && <div className="d-flex flex-wrap gap-2 mb-3"><label className="visually-hidden" htmlFor="refund-sale">Completed invoice to refund</label><select id="refund-sale" className="form-select" style={{ maxWidth: 460 }} value={saleId} onChange={(event) => setSaleId(event.target.value)}><option value="">Choose a completed invoice from the current invoice page</option>{sales.filter((sale) => sale.status === 'PAID').map((sale) => <option key={sale.id} value={sale.id}>{sale.invoiceNumber} — {sale.patient?.fullName || 'Walk-in'} — {money(sale.total)}</option>)}</select><button className="btn btn-outline-danger" disabled={!saleId || busy} onClick={async () => { setBusy(true); try { const sale = sales.find((record) => record.id === Number(saleId)); const context = (await api.get(`/refunds/sale/${sale.id}/context`)).data.data; setDraft({ sale, reason: '', quantities: {}, priorQuantities: context.quantities, refundCount: context.expectedRefundCount }); setPreview(null); } catch (caught) { setError(errorMessage(caught)); } finally { setBusy(false); } }}>Create refund / return</button></div>}
     {!refunds.length && <p className="text-secondary mb-0">No refunds recorded.</p>}
@@ -62,6 +62,7 @@ export function RefundWorkspace({ sales = noSales, refreshToken }: { sales?: any
       <label htmlFor="refund-reason" className="form-label">Reason</label><textarea id="refund-reason" className="form-control" minLength={3} maxLength={500} required value={draft.reason} onChange={(event) => { setPreview(null); setDraft({ ...draft, reason: event.target.value }); }} />
       <Alert message={error} />
       {preview && <div className="alert alert-info mt-3">Refund to authorize: <strong>{money(preview.amount)}</strong>. Payout remains pending; no stock is automatically restored.</div>}
+      <LockedReason reason={draft.reason.trim().length < 3 ? "Enter the refund reason (at least 3 characters) to calculate the refund." : !preview ? "Press Preview refund to check the amount before authorising it." : ""} />
       <div className="modal-actions"><button type="button" className="btn btn-light" onClick={() => setDraft(null)}>Cancel</button><button className="btn btn-outline-primary" type="button" disabled={busy || draft.reason.trim().length < 3} onClick={async () => { setBusy(true); try { setPreview((await api.post(`/refunds/sale/${draft.sale.id}/preview`,payload())).data.data); } catch (caught) { setError(errorMessage(caught)); } finally { setBusy(false); } }}>Preview refund</button><button className="btn btn-danger" disabled={busy || !preview}>Authorize refund</button></div>
     </fieldset></form></Modal>}
     {action && <Modal title={action.type === 'settle' ? 'Confirm refund payout' : 'Pharmacist stock review'} onClose={() => !busy && setAction(null)}><form onSubmit={(event) => { event.preventDefault(); save(() => action.type === 'settle' ? api.post(`/refunds/${action.id}/settle`, { method: action.method, reference: action.reference, payoutConfirmed: action.confirmed }) : api.post(`/refunds/lines/${action.id}/stock-review`, { decision: action.decision, reason: action.reason })); }}>

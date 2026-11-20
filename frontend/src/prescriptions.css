@@ -184,10 +184,11 @@
   gap: 8px;
 }
 .patient-picker-row .min-width-0 { min-width: 0; }
+/* Same height as the search box beside it. */
 .patient-picker-add {
-  flex: 0 0 46px;
-  width: 46px;
-  height: 46px;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
   padding: 0;
 }
 .patient-source-summary {
