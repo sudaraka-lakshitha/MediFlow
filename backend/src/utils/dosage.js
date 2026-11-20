@@ -6,7 +6,16 @@ import { isCountableUnit } from './unitMeasure.js';
 import { stockQuantity } from './stockQuantity.js';
 import { isLiquidContainerUnit } from './liquidPackaging.js';
 
-export const calculateQuantity = (unit, item, { liquid = false, packVolumeMl = null } = {}) => {
+export const calculateQuantity = (unit, item, { liquid = false, packVolumeMl = null, multiUse = false } = {}) => {
+  // A tube, drop bottle, spray or inhaler lasts many doses: give 1 pack for the course unless the
+  // pharmacist chose another whole number. No reason is needed for that choice.
+  if (multiUse) {
+    const calculated = new Prisma.Decimal(1);
+    const prescribed = item.overrideQuantity != null ? new Prisma.Decimal(item.overrideQuantity) : calculated;
+    if (!prescribed.isInteger() || prescribed.lessThan(1)) throw new AppError(400, `Enter a whole number of ${unit || 'packs'} (at least 1).`);
+    stockQuantity(prescribed, unit);
+    return { calculated, prescribed, overridden: !prescribed.equals(calculated) };
+  }
   let calculated = new Prisma.Decimal(item.quantityPerDose).mul(item.timesPerDay).mul(item.daysSupply);
   if (liquid && isCountableUnit(unit)) {
     if (!isLiquidContainerUnit(unit)) {

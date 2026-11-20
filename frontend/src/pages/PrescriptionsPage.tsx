@@ -40,6 +40,7 @@ import { Alert, Empty, Loading, Status, LockedReason } from "../components/Ui";
 import { lockReason } from "../utils/lockReason";
 import { isCountableUnit, issuableTotal, stockQuantityStep } from "../utils/unitMeasure";
 import { isLiquidContainerUnit, liquidPackVolumeMl } from "../utils/liquidPackaging";
+import { isMultiUsePack, multiUseDoseWord, multiUsePackWord, suggestedRoute } from "../utils/multiUsePack";
 import { productStockDescription, productStockTone, usableProductStock } from "../utils/productStock";
 import "../prescriptions.css";
 
@@ -281,10 +282,13 @@ const ageFromDob = (dob?: string) => {
   return String(age);
 };
 const usableStock = usableProductStock;
-// True for syrups and other liquids (measured in ml).
-const isLiquid = (product?: any) =>
+// True for anything liquid (used for the bottle fee).
+const holdsLiquid = (product?: any) =>
   /^(ml|millilitre|milliliter)s?$/i.test(product?.unit || "") ||
   /syrup|suspension|solution|elixir|liquid/i.test(product?.dosageForm || "");
+// True for liquids whose dose is measured in ml (syrups and similar). Drops, sprays and other
+// multi-use packs are counted by the pack instead (see utils/multiUsePack.ts).
+const isLiquid = (product?: any) => holdsLiquid(product) && !isMultiUsePack(product);
 // Reads strengths like "125 mg/5 ml" so liquid doses can be worked out.
 const parseConcentration = (strength?: string) => {
   const match = strength?.match(
@@ -807,6 +811,15 @@ export function PrescriptionsPage() {
     const product = products.find(
       (candidate) => candidate.id === Number(item.productId),
     );
+    // A tube, drop bottle, spray or inhaler lasts the course: 1 pack unless the pharmacist chose more.
+    if (isMultiUsePack(product)) {
+      const packs = item.overrideEnabled && Number(item.overrideQuantity) >= 1 ? Math.floor(Number(item.overrideQuantity)) : 1;
+      return {
+        product, dose: Number(item.quantityPerDose) || 1, rawTotal: packs, total: packs as number | null,
+        packVolumeMl: null as number | null, suppliedVolumeMl: null as number | null,
+        packSizeMissing: false, doseMissing: false, multiUse: true,
+      };
+    }
     const dose = effectiveDose(item);
     const raw = dose * Number(item.timesPerDay) * Number(item.daysSupply);
     const liquid = isLiquid(product);
@@ -825,7 +838,7 @@ export function PrescriptionsPage() {
     return {
       product, dose, rawTotal: Number(raw.toFixed(3)), total,
       packVolumeMl, suppliedVolumeMl: packVolumeMl && total != null ? total * packVolumeMl : null,
-      packSizeMissing, doseMissing,
+      packSizeMissing, doseMissing, multiUse: false,
     };
   };
   // Builds the directions text automatically from the dose, timing and route.
@@ -844,7 +857,12 @@ export function PrescriptionsPage() {
       ? `when needed, up to ${times === 1 ? "once a day" : `${times} times a day`}`
       : frequencyText(times);
     const doseUnit = isLiquid(product) ? "ml" : product?.unit || "unit";
-    const sentence = `${instructionOpening(item.administrationRoute, dose, doseUnit)} ${schedule}${timing[item.mealTiming] ? ` ${timing[item.mealTiming]}` : ""} for ${days} day${days === 1 ? "" : "s"}`;
+    // Multi-use packs: say "2 puffs" or "1 drop", never "1 tube"; creams are applied as a thin layer.
+    const packDose = isMultiUsePack(product) ? multiUseDoseWord(product) : null;
+    const opening = isMultiUsePack(product) && !packDose
+      ? "Apply a thin layer to the affected area"
+      : instructionOpening(item.administrationRoute, dose, packDose || doseUnit);
+    const sentence = `${opening} ${schedule}${timing[item.mealTiming] ? ` ${timing[item.mealTiming]}` : ""} for ${days} day${days === 1 ? "" : "s"}`;
     const special = item.specialInstructions.trim().replace(/[.!]+$/, "");
     return `${sentence}${special ? `. ${special}` : ""}.`;
   };
@@ -858,6 +876,9 @@ export function PrescriptionsPage() {
       return updateLine(index, {
         productId,
         quantityPerDose: 1,
+        ...(isMultiUsePack(product)
+          ? { administrationRoute: suggestedRoute(product) || form.items[index].administrationRoute, overrideEnabled: false, overrideQuantity: "", overrideReason: "" }
+          : {}),
         liquidDoseMode: "VOLUME",
         doseInputAmount: 1,
         doseInputUnit: "ml",
@@ -936,7 +957,7 @@ export function PrescriptionsPage() {
         overrideQuantity: item.overrideEnabled
           ? Number(item.overrideQuantity)
           : undefined,
-        overrideReason: item.overrideEnabled ? item.overrideReason : undefined,
+        overrideReason: item.overrideEnabled ? item.overrideReason || undefined : undefined,
       };
     }),
     retailItems: form.retailItems.map((item: any) => ({
@@ -1182,7 +1203,7 @@ export function PrescriptionsPage() {
   const dispenseHasLiquid = [
     ...dispense.items,
     ...dispense.retailItems,
-  ].some((item: any) => isLiquid(item));
+  ].some((item: any) => holdsLiquid(item));
   // Add or remove the bottle (container) fee on the bill.
   const updateDispenseBottleFee = (
     bottleCount: number,
@@ -2643,14 +2664,18 @@ export function PrescriptionsPage() {
                     </div>
                     <div className="col-md-2">
                       <label className="form-label small">
-                        {liquid ? "mL each time" : "Dose each time"}
+                        {liquid
+                          ? "mL each time"
+                          : auto.multiUse
+                            ? `${multiUseDoseWord(auto.product) ? `${multiUseDoseWord(auto.product)}s` : "Applications"} each time`.replace(/^./, (c) => c.toUpperCase())
+                            : "Dose each time"}
                       </label>
                       <input
                         className="form-control"
                         type="number"
-                        list={liquid ? undefined : "solid-dose-options"}
-                        step={liquid ? "0.1" : "0.25"}
-                        min={liquid ? "0.1" : "0.25"}
+                        list={liquid || auto.multiUse ? undefined : "solid-dose-options"}
+                        step={liquid ? "0.1" : auto.multiUse ? "1" : "0.25"}
+                        min={liquid ? "0.1" : auto.multiUse ? "1" : "0.25"}
                         value={
                           liquid && item.liquidDoseMode === "STRENGTH"
                             ? auto.dose > 0 ? auto.dose : ""
@@ -2701,6 +2726,32 @@ export function PrescriptionsPage() {
                       />
                     </div>
                     <div className="col-md-2">
+                      {auto.multiUse ? (
+                        <>
+                          <label className="form-label small">
+                            Number of {multiUsePackWord(auto.product)}s
+                          </label>
+                          <input
+                            className="form-control"
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={item.overrideEnabled ? item.overrideQuantity : 1}
+                            onChange={(event) =>
+                              updateLine(index, {
+                                overrideEnabled: true,
+                                overrideQuantity: event.target.value,
+                                overrideReason: "",
+                              })
+                            }
+                            title={`One ${multiUsePackWord(auto.product)} usually lasts the whole course. Increase it if more is needed.`}
+                          />
+                          <small className="d-block text-secondary">
+                            Lasts the whole course
+                          </small>
+                        </>
+                      ) : (
+                      <>
                       <label className="form-label small">Auto total</label>
                       <div className="form-control bg-light">
                         {auto.doseMissing ? "Enter dose" : auto.total == null ? "Pack size required" : `${auto.total} ${displayUnit(auto.product?.unit || "unit", Number(auto.total))}`}
@@ -2710,6 +2761,8 @@ export function PrescriptionsPage() {
                           </small>
                         )}
                       </div>
+                      </>
+                      )}
                     </div>
                     {liquid && (
                       <div className="col-12">
@@ -2941,6 +2994,7 @@ export function PrescriptionsPage() {
                         </span>
                       </label>
                     </div>
+                    {!auto.multiUse && (
                     <div className="col-md-3 d-flex align-items-center pt-md-4">
                       <label className="form-check mb-0">
                         <input
@@ -2961,6 +3015,7 @@ export function PrescriptionsPage() {
                         </span>
                       </label>
                     </div>
+                    )}
                     <div className="col-md-6">
                       <label className="form-label small">
                         Special instructions
@@ -3011,7 +3066,7 @@ export function PrescriptionsPage() {
                         <i className="bi bi-trash" />
                       </button>
                     </div>
-                    {item.overrideEnabled && (
+                    {item.overrideEnabled && !auto.multiUse && (
                       <>
                         <div className="col-md-3">
                           <label className="form-label small">

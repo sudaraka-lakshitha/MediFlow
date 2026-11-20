@@ -18,7 +18,6 @@ const item = z.object({
   administrationRoute: z.string().trim().min(2).max(80).default('Oral'), mealTiming: z.enum(['ANY_TIME', 'BEFORE_FOOD', 'WITH_FOOD', 'AFTER_FOOD', 'EMPTY_STOMACH']).default('ANY_TIME'),
   asNeeded: z.boolean().default(false), specialInstructions: z.string().trim().max(500).optional().nullable(),
 }).superRefine((data, context) => {
-  if (data.overrideQuantity != null && !data.overrideReason) context.addIssue({ code: 'custom', path: ['overrideReason'], message: 'An override reason is required.' });
   if (data.doseInputUnit && data.doseInputUnit.toLowerCase() !== 'ml' && (!data.doseInputAmount || !data.concentrationAmount || !data.concentrationUnit || !data.concentrationVolume)) context.addIssue({ code: 'custom', path: ['concentrationAmount'], message: 'Dose amount, concentration amount, unit, and volume are required for strength-based liquid doses.' });
 });
 const retailItem = z.object({
