@@ -1,9 +1,8 @@
 import { optionalPersonNameSchema } from './personName.js';
 import { z } from 'zod';
+import { notFutureCalendarDate } from './calendar.js';
 
-const recipientBirthDate = z.coerce.date()
-  .refine((value) => value <= new Date(), 'Recipient date of birth cannot be in the future.')
-  .refine((value) => value.getUTCFullYear() >= 1895, 'Enter a valid recipient date of birth.');
+const recipientBirthDate = notFutureCalendarDate('Recipient date of birth cannot be in the future.', { earliest: '1895-01-01', earliestMessage: 'Enter a valid recipient date of birth.' });
 
 const attachmentSchema = z.object({
   originalName: z.string().trim().min(1).max(180),
@@ -96,7 +95,7 @@ export const uploadSlipSchema = z.object({
   declaredAmount: z.coerce.number().positive().max(100_000_000),
   bankAccountId: z.coerce.number().int().positive().optional().nullable(),
   reference: z.string().trim().max(120).optional().nullable(),
-  paidOn: z.coerce.date().refine((d) => d <= new Date(), 'The payment date cannot be in the future.').optional().nullable(),
+  paidOn: notFutureCalendarDate('The payment date cannot be in the future.').optional().nullable(),
   note: z.string().trim().max(500).optional().nullable(),
 });
 

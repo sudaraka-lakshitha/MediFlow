@@ -1,5 +1,6 @@
 import { personNameSchema, optionalPersonNameSchema } from './personName.js';
 import { z } from 'zod';
+import { notFutureCalendarDate } from './calendar.js';
 
 const item = z.object({
   id: z.coerce.number().int().positive().optional(),
@@ -21,9 +22,7 @@ const retailItem = z.object({
   productId: z.coerce.number().int().positive(),
   quantity: z.coerce.number().positive().max(1_000_000),
 });
-const recipientBirthDate = z.coerce.date()
-  .refine((value) => value <= new Date(), 'Recipient date of birth cannot be in the future.')
-  .refine((value) => value.getUTCFullYear() >= 1895, 'Enter a valid recipient date of birth.');
+const recipientBirthDate = notFutureCalendarDate('Recipient date of birth cannot be in the future.', { earliest: '1895-01-01', earliestMessage: 'Enter a valid recipient date of birth.' });
 const prescriptionDate = z.coerce.date()
   .refine((value) => value <= new Date(Date.now() + 5 * 60 * 1000), 'Prescription date and time cannot be in the future.');
 

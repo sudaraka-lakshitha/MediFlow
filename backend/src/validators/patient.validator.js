@@ -1,8 +1,9 @@
 import { personNameSchema } from './personName.js';
 import { z } from 'zod';
 import { phoneSchema } from './phone.js';
+import { notFutureCalendarDate } from './calendar.js';
 
-const birthDate = z.coerce.date().refine((value) => value <= new Date(), 'Date of birth cannot be in the future.');
+const birthDate = notFutureCalendarDate('Date of birth cannot be in the future.');
 const profileFields = {
   fullName: personNameSchema,
   email: z.string().email().max(190),

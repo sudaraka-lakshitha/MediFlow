@@ -1,9 +1,10 @@
 import { personNameSchema } from './personName.js';
 import { z } from 'zod';
 import { phoneSchema as phone } from './phone.js';
+import { notFutureCalendarDate } from './calendar.js';
 
 const password = z.string().min(8, 'Password requires at least 8 characters.').max(72).regex(/[a-z]/, 'Password requires a lowercase letter.').regex(/[A-Z]/, 'Password requires an uppercase letter.').regex(/\d/, 'Password requires a number.').regex(/[^A-Za-z0-9]/, 'Password requires a symbol.');
-const birthDate = z.coerce.date().refine((value) => value <= new Date(), 'Date of birth cannot be in the future.');
+const birthDate = notFutureCalendarDate('Date of birth cannot be in the future.');
 export const loginSchema = z.object({ email: z.string().email().max(190), password: z.string().min(1) });
 export const registerSchema = z.object({
   fullName: personNameSchema,

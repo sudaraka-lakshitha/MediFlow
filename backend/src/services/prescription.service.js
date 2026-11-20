@@ -20,6 +20,7 @@ import { performPrescriptionDispense } from '../utils/prescriptionDispense.js';
 import { cancelPrescriptionQuantity, remainingPrescriptionQuantity } from '../utils/prescriptionQuantity.js';
 import { prescriptionMaterialChanged, prescriptionSnapshot } from '../utils/prescriptionRevision.js';
 import { planPrescriptionItems } from '../utils/preservePrescriptionItems.js';
+import { localDateKey } from '../utils/localDate.js';
 const isLiquidProduct = (product) =>
   ['ml', 'millilitre', 'milliliter', 'l', 'litre', 'liter'].includes(String(product?.unit || '').toLowerCase())
   || /syrup|suspension|solution|elixir|liquid/i.test(String(product?.dosageForm || ''));
@@ -155,7 +156,7 @@ export const prescriptionService = {
         if (claimed.count !== 1) throw new AppError(409, 'This upload changed or was already processed. Refresh before creating its final invoice.');
       }
       const prescription = await withUniqueRetry(() => tx.prescription.create({ data: {
-        prescriptionNumber: `RX-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
+        prescriptionNumber: `RX-${localDateKey(new Date()).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
         patientId: data.patientId, sourceUploadId: data.sourceUploadId || null, isOnline: Boolean(data.sourceUploadId), prescriberTitle: data.prescriberTitle || null,
         prescriberName: data.prescriberName, prescriberReference: data.prescriberReference,
         prescriptionDate: data.prescriptionDate, orderedForSelf:data.orderedForSelf, recipientName:data.orderedForSelf?null:data.recipientName,
@@ -440,7 +441,7 @@ export const prescriptionService = {
 
       const newRx = await withUniqueRetry(() => tx.prescription.create({
         data: {
-          prescriptionNumber: `RX-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
+          prescriptionNumber: `RX-${localDateKey(new Date()).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
           patientId: current.patientId,
           prescriberTitle: current.prescriberTitle,
           prescriberName: current.prescriberName,

@@ -37,7 +37,7 @@ export const paymentSlipSchema = z.object({
   declaredAmount: z.coerce.number().positive().max(100_000_000),
   bankAccountId: z.coerce.number().int().positive().optional().nullable(),
   reference: z.string().trim().max(120).optional().nullable(),
-  paidOn: z.coerce.date().refine((d) => d <= new Date(), 'The payment date cannot be in the future.').optional().nullable(),
+  paidOn: notFutureCalendarDate('The payment date cannot be in the future.').optional().nullable(),
   note: z.string().trim().max(500).optional().nullable(),
 });
 export const slipReviewSchema = z.object({
@@ -71,6 +71,7 @@ export const invoiceCouponSchema = z.object({
 });
 import { protectWorkflowController } from '../middleware/workflowLease.js';
 import { protectRetryController } from '../utils/operationContext.js';
+import { notFutureCalendarDate } from '../validators/calendar.js';
 export const paymentRequestController = protectRetryController(protectWorkflowController({
   preview: async (req,res) => {
     const bill = await paymentRequestService.get(Number(req.params.id),req.user);
